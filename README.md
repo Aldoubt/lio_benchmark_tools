@@ -39,7 +39,7 @@ cd /path/to/ros2_ws
 
 实验清单中的 `workspace` 指向算法所在 ROS 2 工作区；工具仓库不要求放在工作区内部。当前为了便于迁移，暂放在 `/home/yangxuan/ros2_ws/lio_benchmark_tools`，它自身有独立 `.git`，并被父仓库忽略。
 
-详细流程见 [benchmark_base/README.md](benchmark_base/README.md)，当前 MID360 基线见 [benchmark_base/docs/CURRENT_BASELINE.md](benchmark_base/docs/CURRENT_BASELINE.md)。
+详细流程见 [benchmark_base/README.md](benchmark_base/README.md)，完整中文原理和操作说明见 [USER_MANUAL_ZH.md](benchmark_base/docs/USER_MANUAL_ZH.md)，当前 MID360 基线见 [benchmark_base/docs/CURRENT_BASELINE.md](benchmark_base/docs/CURRENT_BASELINE.md)。
 
 ## DLIO 说明
 
@@ -51,4 +51,3 @@ git -C /path/to/direct_lidar_inertial_odometry apply \
 ```
 
 应用前应确认目标 commit，并将 patch 状态写入实验快照。
-

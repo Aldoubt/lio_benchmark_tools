@@ -93,3 +93,5 @@ runs/<run_id>/
 - `src/mid360_nav_demo`、导航与控制包：不被本基座修改或依赖。
 
 当前完整实验可作为基准样例，见 `config/current_mid360.json` 和 `docs/CURRENT_BASELINE.md`。
+
+完整原理、输入规则、指标解释、四算法命令和故障排查见 [docs/USER_MANUAL_ZH.md](docs/USER_MANUAL_ZH.md)。
