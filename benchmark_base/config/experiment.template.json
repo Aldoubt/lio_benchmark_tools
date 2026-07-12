@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "name": "CHANGE_ME",
+  "workspace": "/absolute/path/to/ros2_ws",
+  "output_root": "/absolute/path/to/ros2_ws/runs",
+  "dataset": {
+    "bag_dir": "/absolute/path/to/rosbag2_directory",
+    "db3": "/absolute/path/to/rosbag2_directory/data_0.db3",
+    "sha256": "FILL_AFTER_COPY",
+    "lidar_topic": "/livox/lidar",
+    "lidar_type": "sensor_msgs/msg/PointCloud2",
+    "imu_topic": "/livox/imu",
+    "imu_type": "sensor_msgs/msg/Imu",
+    "imu_acceleration_unit": "g",
+    "point_time_field": "timestamp",
+    "point_time_unit": "ns_absolute"
+  },
+  "calibration": {
+    "rotation_lidar_to_imu_row_major": [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    "translation_lidar_to_imu_m": [0, 0, 0],
+    "source": "measurement/factory/calibration-file reference"
+  },
+  "evaluation": {
+    "map_scan_step": 5,
+    "map_point_step": 8,
+    "map_voxel_m": 0.12,
+    "near_range_m": 0.5,
+    "dlio_trajectory_min_dt_s": 0.09,
+    "start_end_same_height_confirmed": false,
+    "ground_truth_available": false
+  },
+  "algorithms": {}
+}
+

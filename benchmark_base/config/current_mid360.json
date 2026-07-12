@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "name": "greenhouse_mid360_frontend_baseline",
+  "workspace": "/home/yangxuan/ros2_ws",
+  "output_root": "/home/yangxuan/ros2_ws/runs",
+  "dataset": {
+    "bag_dir": "/home/yangxuan/ros2_ws/date/mid360_init_state2",
+    "db3": "/home/yangxuan/ros2_ws/date/mid360_init_state2/mid360_init_state2_0.db3",
+    "sha256": "adb492a650068845d0777a818aa053ed7ffa5704f7f17167d6f2e32fb05180be",
+    "lidar_topic": "/livox/lidar",
+    "lidar_type": "sensor_msgs/msg/PointCloud2",
+    "imu_topic": "/livox/imu",
+    "imu_type": "sensor_msgs/msg/Imu",
+    "imu_acceleration_unit": "g",
+    "point_time_field": "timestamp",
+    "point_time_unit": "ns_absolute"
+  },
+  "calibration": {
+    "rotation_lidar_to_imu_row_major": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+    "translation_lidar_to_imu_m": [0.011, 0.02329, -0.04412],
+    "source": "MID360 factory/project-confirmed calibration"
+  },
+  "evaluation": {
+    "map_scan_step": 5,
+    "map_point_step": 8,
+    "map_voxel_m": 0.12,
+    "near_range_m": 0.5,
+    "dlio_trajectory_min_dt_s": 0.09,
+    "start_end_same_height_confirmed": false,
+    "ground_truth_available": false
+  },
+  "algorithms": {
+    "fast_livo2": {
+      "mode": "odometry",
+      "source": "src/FAST-LIVO2-ROS2",
+      "runner": "evaluators/run_fast_livo_test.sh",
+      "trajectory_topic": "/aft_mapped_to_init"
+    },
+    "point_lio": {
+      "mode": "odometry",
+      "source": "date/algorithms/point_lio_ros2",
+      "runner": "evaluators/run_point_lio_test.sh",
+      "trajectory_topic": "/aft_mapped_to_init"
+    },
+    "glim_odometry": {
+      "mode": "odometry",
+      "source": "date/algorithms/glim",
+      "runner": "evaluators/run_glim_odometry_test.sh",
+      "trajectory_topic": "/glim_ros/odom"
+    },
+    "glim_full_slam": {
+      "mode": "full_slam",
+      "source": "date/algorithms/glim",
+      "runner": "evaluators/run_glim_full_slam_test.sh",
+      "frontend_topic": "/glim_ros/odom",
+      "global_topic": "/glim_ros/odom_corrected"
+    },
+    "dlio": {
+      "mode": "odometry",
+      "source": "date/algorithms/dlio_ros2",
+      "runner": "evaluators/run_dlio_test.sh",
+      "trajectory_topic": "/dlio/odom_node/odom",
+      "requires_imu_acceleration_scale": 9.80665,
+      "source_patch_record": "date/output/dlio_final/REPORT.md"
+    }
+  }
+}

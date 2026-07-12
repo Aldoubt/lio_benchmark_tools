@@ -1,0 +1,31 @@
+diff --git a/src/dlio/odom.cc b/src/dlio/odom.cc
+index 4e9f190..3f012c5 100755
+--- a/src/dlio/odom.cc
++++ b/src/dlio/odom.cc
+@@ -550,7 +550,7 @@ void dlio::OdomNode::preprocessPoints() {
+     // don't process scans until IMU data is present
+     if (!this->first_valid_scan) {
+ 
+-      if (this->imu_buffer.empty() || this->scan_stamp <= this->imu_buffer.back().stamp) {
++      if (this->imu_buffer.empty() || this->scan_stamp >= this->imu_buffer.back().stamp) {
+         return;
+       }
+ 
+@@ -640,7 +640,7 @@ void dlio::OdomNode::deskewPointcloud() {
+                         boost::range::index_value<PointType&, long> p2)
+       { return p1.value().timestamp != p2.value().timestamp; };
+     extract_point_time = [&sweep_ref_time](boost::range::index_value<PointType&, long> pt)
+-      { return pt.value().timestamp * 1e-9f; };
++      { return pt.value().timestamp * 1e-9; };
+   }
+ 
+   // copy points into deskewed_scan_ in order of timestamp
+@@ -674,7 +674,7 @@ void dlio::OdomNode::deskewPointcloud() {
+ 
+   // don't process scans until IMU data is present
+   if (!this->first_valid_scan) {
+-    if (this->imu_buffer.empty() || this->scan_stamp <= this->imu_buffer.back().stamp) {
++    if (this->imu_buffer.empty() || this->scan_stamp >= this->imu_buffer.back().stamp) {
+       return;
+     }
+ 
