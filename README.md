@@ -1,53 +1,38 @@
 # LIO Benchmark Tools
 
-独立于机器人导航与控制系统的 ROS 2 LiDAR-IMU 离线评测工具仓库。
+ROS 2 Humble 离线 LiDAR/LIO/SLAM 评测工具。当前分支已部署并登记 10 个独立实验配置：KISS-ICP、MOLA-LO、MOLA-LIO、FAST-LIVO2、Point-LIO、DLIO、GLIM odometry、GLIM full SLAM、LIO-SAM no-loop 和 LIO-SAM loop。
 
-## 仓库边界
+仓库只保存编排代码、manifest、参数、测试和必要 patch；外部算法源码、bag、构建目录和运行结果不进入 Git。外部工作区路径全部由 manifest 注入。
 
-本仓库只管理：
-
-- bag、IMU、时间戳和轨迹分析代码；
-- FAST-LIVO2、Point-LIO、GLIM、DLIO 的运行适配脚本；
-- 标准实验清单、run 目录契约和报告模板；
-- 为上游 ROS 2 分支准备的、可审计的必要补丁。
-
-本仓库不管理：
-
-- rosbag2、PCD、PLY、PNG 等数据或结果；
-- ROS `build/`、`install/`、`log/`；
-- FAST-LIVO2、Point-LIO、GLIM、DLIO 的完整源码 clone；
-- 导航、Nav2、底盘驱动和控制系统源码。
-
-## 目录
-
-```text
-lio_benchmark_tools/
-├── benchmark_base/     # 配置驱动的实验编排
-├── evaluators/         # 分析器、转换器和算法运行适配
-└── patches/            # 上游算法必要补丁
-```
-
-## 在任意 ROS 2 工作区使用
+## 当前 MID360 检查点
 
 ```bash
-git clone <your-lio-benchmark-tools-url>
-cd /path/to/ros2_ws
+source /opt/ros/humble/setup.bash
 
-/path/to/lio_benchmark_tools/benchmark_base/bin/lio-benchmark validate \
-  --config /path/to/experiment.json
+benchmark_base/bin/lio-benchmark validate \
+  --config benchmark_base/config/navigation_20260719_164431.json
+
+benchmark_base/bin/lio-benchmark doctor \
+  --config benchmark_base/config/navigation_20260719_164431.json
+
+benchmark_base/bin/lio-benchmark commands \
+  --config benchmark_base/config/navigation_20260719_164431.json
 ```
 
-实验清单中的 `workspace` 指向算法所在 ROS 2 工作区；工具仓库不要求放在工作区内部。当前为了便于迁移，暂放在 `/home/yangxuan/ros2_ws/lio_benchmark_tools`，它自身有独立 `.git`，并被父仓库忽略。
+当前状态是 `PRE_RUN_REVIEW_REQUIRED`：编译、配置、输入字段抽样和无 bag 节点启动已完成；尚未播放 bag。用户审阅后先执行 30–60 秒 smoke，再决定是否跑完整数据。
 
-详细流程见 [benchmark_base/README.md](benchmark_base/README.md)，完整中文原理和操作说明见 [USER_MANUAL_ZH.md](benchmark_base/docs/USER_MANUAL_ZH.md)，当前 MID360 基线见 [benchmark_base/docs/CURRENT_BASELINE.md](benchmark_base/docs/CURRENT_BASELINE.md)。
+关键文档：
 
-## DLIO 说明
+- [实现审计](benchmark_base/docs/IMPLEMENTATION_AUDIT.md)
+- [算法部署与参数](benchmark_base/docs/ALGORITHM_INTEGRATION.md)
+- [实验协议](benchmark_base/docs/EXPERIMENT_PROTOCOL.md)
+- [MID360/LIO-SAM 限制](benchmark_base/docs/MID360_LIO_SAM_LIMITATIONS.md)
+- [中文手册](benchmark_base/docs/USER_MANUAL_ZH.md)
 
-当前 DLIO ROS 2 `feature/ros2` 分支处理大纪元 Livox 纳秒时间时需要补丁：
+## 公平性底线
 
-```bash
-git -C /path/to/direct_lidar_inertial_odometry apply \
-  /path/to/lio_benchmark_tools/patches/dlio_ros2/mid360_time_handling.patch
-```
-
-应用前应确认目标 commit，并将 patch 状态写入实验快照。
+- 所有 bag 播放固定 `--rate 1.0 --clock`。
+- LiDAR-only、LiDAR–IMU odometry、full SLAM 分组，不做跨组总排名。
+- 地图使用真实时间戳、SLERP 和完整 SE(3) 外参，不按轨迹百分比配扫描。
+- 无独立真值时只输出 diagnostic，不生成 ATE/RPE 或“绝对精度”。
+- 任何不兼容或失败配置输出明确失败状态，不生成伪结果。

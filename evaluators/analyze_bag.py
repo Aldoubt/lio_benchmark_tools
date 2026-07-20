@@ -45,10 +45,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("bag", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path)
     args = parser.parse_args()
     if not args.bag.is_dir():
         raise FileNotFoundError(f"rosbag2 目录不存在: {args.bag}")
 
+    manifest = json.loads(args.manifest.read_text(encoding="utf-8")) if args.manifest else {}
+    dataset = manifest.get("dataset", {})
+    lidar_topic = dataset.get("lidar_topic", "/livox/lidar")
+    imu_topic = dataset.get("imu_topic", "/livox/imu")
+    imu_unit = dataset.get("imu_acceleration_unit", "UNRESOLVED")
     reader = rosbag2_py.SequentialReader()
     reader.open(
         rosbag2_py.StorageOptions(uri=str(args.bag), storage_id="sqlite3"),
@@ -62,6 +68,9 @@ def main() -> int:
     frame_ids: dict[str, set[str]] = {topic: set() for topic in type_map}
     acceleration: list[tuple[float, float, float]] = []
     angular_velocity: list[tuple[float, float, float]] = []
+    custom_time_ranges: list[float] = []
+    custom_time_backtracks = 0
+    custom_ring_counts: dict[int, int] = {}
 
     while reader.has_next():
         topic, raw, recorded_ns = reader.read_next()
@@ -75,9 +84,16 @@ def main() -> int:
                 {"name": field.name, "offset": field.offset, "datatype": field.datatype, "count": field.count}
                 for field in message.fields
             ]
-        if topic == "/livox/imu":
+        if topic == imu_topic:
             acceleration.append((message.linear_acceleration.x, message.linear_acceleration.y, message.linear_acceleration.z))
             angular_velocity.append((message.angular_velocity.x, message.angular_velocity.y, message.angular_velocity.z))
+        if topic == lidar_topic and hasattr(message, "points") and hasattr(message, "timebase"):
+            offsets = [int(point.offset_time) for point in message.points]
+            if offsets:
+                custom_time_ranges.append((max(offsets) - min(offsets)) * 1e-9)
+                custom_time_backtracks += sum(b < a for a, b in zip(offsets, offsets[1:]))
+            for point in message.points:
+                custom_ring_counts[int(point.line)] = custom_ring_counts.get(int(point.line), 0) + 1
 
     topics: dict[str, Any] = {}
     for topic in type_map:
@@ -103,8 +119,8 @@ def main() -> int:
 
     accel_norm = [math.sqrt(x * x + y * y + z * z) for x, y, z in acceleration]
     gyro_norm = [math.sqrt(x * x + y * y + z * z) for x, y, z in angular_velocity]
-    lidar_hdr = header_times.get("/livox/lidar", [])
-    imu_hdr = header_times.get("/livox/imu", [])
+    lidar_hdr = header_times.get(lidar_topic, [])
+    imu_hdr = header_times.get(imu_topic, [])
     nearest: list[float] = []
     index = 0
     for lidar_time in lidar_hdr:
@@ -118,14 +134,25 @@ def main() -> int:
         "topics": topics,
         "imu": {
             "note": "全数据集统计；不能假定全程静止，均值不等同于静态零偏。",
-            "linear_acceleration_m_s2": vector_stats(acceleration),
-            "linear_acceleration_norm_m_s2": series_stats(accel_norm),
+            "declared_acceleration_unit": imu_unit,
+            "linear_acceleration": vector_stats(acceleration),
+            "linear_acceleration_norm": series_stats(accel_norm),
             "angular_velocity_rad_s": vector_stats(angular_velocity),
             "angular_velocity_norm_rad_s": series_stats(gyro_norm),
         },
         "lidar_minus_nearest_imu_header_s": series_stats(nearest),
+        "point_time_validation": {
+            "field": dataset.get("point_time_field", "UNRESOLVED"),
+            "datatype": dataset.get("point_time_datatype", "UNRESOLVED"),
+            "unit": dataset.get("point_time_unit", "UNRESOLVED"),
+            "semantics": dataset.get("point_time_semantics", "UNRESOLVED"),
+            "frame_time_range_s": series_stats(custom_time_ranges),
+            "input_order_time_backtracks": custom_time_backtracks,
+            "line_counts": {str(key): value for key, value in sorted(custom_ring_counts.items())},
+            "note": "Livox CustomMsg points can be interleaved by line; adapters sort by offset_time before emitting PointCloud2."
+        },
         "limitations": [
-            "bag 中没有 nav_msgs/msg/Odometry、nav_msgs/msg/Path 或 TF，不能直接计算机器人 Z 轨迹漂移。",
+            "已有 odometry/TF 可作为系统历史输出参考，但不是独立真值，不能用于绝对精度。",
             "IMU 全程统计不能代替已识别静止区间的零偏和噪声估计。",
         ],
     }

@@ -1,0 +1,30 @@
+{
+  "dataset": "navigation_20260719_164431",
+  "method": "rosbag2_py read-only sample; no ros2 bag play",
+  "sampled_lidar_frames": 50,
+  "input_points": 1000608,
+  "output_points": 1000542,
+  "invalid_tag_points": 66,
+  "non_finite_points": 0,
+  "input_time_backtracks": 6885,
+  "output_time_backtracks_after_sort": 0,
+  "time_min_s": 0.0,
+  "time_max_s": 0.102348637,
+  "ring_min": 0,
+  "ring_max": 3,
+  "ring_counts": {"0": 250152, "1": 250119, "2": 250140, "3": 250131},
+  "dropped_ratio": 0.00006595989638299914,
+  "header_stamp_equals_timebase_frames": 50,
+  "pointcloud2_contract": {
+    "point_step": 22,
+    "fields": [
+      {"name": "x", "offset": 0, "datatype": "FLOAT32"},
+      {"name": "y", "offset": 4, "datatype": "FLOAT32"},
+      {"name": "z", "offset": 8, "datatype": "FLOAT32"},
+      {"name": "intensity", "offset": 12, "datatype": "FLOAT32"},
+      {"name": "ring", "offset": 16, "datatype": "UINT16"},
+      {"name": "time", "offset": 18, "datatype": "FLOAT32_SECONDS_RELATIVE"}
+    ]
+  },
+  "conclusion": "line is preserved as real ring 0..3; interleaved raw order must be sorted by offset_time; no synthetic ring is introduced"
+}

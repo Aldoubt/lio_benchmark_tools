@@ -1,0 +1,22 @@
+algorithm: mola_lio
+lidar_topic: /lio_benchmark/points
+imu_topic: /lio_benchmark/imu_si
+base_link_frame: livox_frame
+lidar_fixed_pose_xyz_ypr_deg: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+imu_fixed_pose_xyz_ypr_deg: [-0.011, -0.02329, 0.04412, 0.0, 0.0, 0.0]
+ignore_lidar_pose_from_tf: true
+ignore_imu_pose_from_tf: false
+deskew_method: MotionCompensationMethod::IMU
+use_imu_for_lio: true
+imu_gravity_correction: true
+icp_pipeline: lidar3d-gicp.yaml
+minimum_range_m: 0.5
+maximum_range_m: 70.0
+voxel_parameters:
+  pipeline_default: true
+local_map_parameters:
+  min_nearby_poses_occupied: 2
+  simplemap_min_nearby_poses: 2
+trajectory_output: {topic: /tf, transform: odom->livox_frame}
+publish_tf: false
+use_sim_time: true

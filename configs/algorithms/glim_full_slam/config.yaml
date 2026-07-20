@@ -1,0 +1,15 @@
+algorithm: glim_full_slam
+upstream_config_relpath: src/glim/config
+imu_topic: /lio_benchmark/imu_si
+points_topic: /lio_benchmark/points
+enable_local_mapping: true
+enable_global_mapping: true
+config_odometry: config_odometry_cpu.json
+config_sub_mapping: config_sub_mapping_cpu.json
+config_global_mapping: config_global_mapping_pose_graph.json
+acc_scale: 1.0
+T_lidar_imu_xyzw: [-0.011, -0.02329, 0.04412, 0.0, 0.0, 0.0, 1.0]
+perpoint_relative_time: true
+perpoint_time_scale: 1.0
+minimum_range_m: 0.5
+maximum_range_m: 70.0

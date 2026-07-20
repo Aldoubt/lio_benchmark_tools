@@ -16,16 +16,18 @@ class ImuScaler(Node):
         self.declare_parameter("input_topic", "/livox/imu")
         self.declare_parameter("output_topic", "/lio_eval/imu_si")
         self.declare_parameter("acceleration_scale", 9.80665)
+        self.declare_parameter("output_frame_id", "livox_imu")
         input_topic = str(self.get_parameter("input_topic").value)
         output_topic = str(self.get_parameter("output_topic").value)
         self.scale = float(self.get_parameter("acceleration_scale").value)
+        self.output_frame_id = str(self.get_parameter("output_frame_id").value)
         self.publisher = self.create_publisher(Imu, output_topic, qos_profile_sensor_data)
         self.subscription = self.create_subscription(Imu, input_topic, self.callback, qos_profile_sensor_data)
         self.count = 0
 
     def callback(self, source: Imu) -> None:
         output = copy.deepcopy(source)
-        output.header.frame_id = "livox_imu"
+        output.header.frame_id = self.output_frame_id
         output.linear_acceleration.x *= self.scale
         output.linear_acceleration.y *= self.scale
         output.linear_acceleration.z *= self.scale
@@ -51,4 +53,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

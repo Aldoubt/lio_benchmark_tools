@@ -1,0 +1,18 @@
+suite_name: greenhouse_v1
+datasets:
+  - name: navigation_20260719_164431
+    manifest: benchmark_base/config/navigation_20260719_164431.json
+algorithms:
+  - kiss_icp
+  - mola_lo
+  - fast_livo2
+  - point_lio
+  - dlio
+  - glim_odometry
+  - mola_lio
+  - glim_full_slam
+  - lio_sam_no_loop
+  - lio_sam_loop
+repetitions: 3
+playback_rate: 1.0
+status: PRE_RUN_REVIEW_REQUIRED

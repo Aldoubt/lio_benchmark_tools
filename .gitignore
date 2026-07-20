@@ -12,9 +12,9 @@ output/
 *.mcap
 *.bag
 *.bag2
+navigation_*/
 *.pcd
 *.ply
 *.png
 *.csv
 *.jsonl
-

@@ -1,0 +1,20 @@
+kiss_icp_node:
+  ros__parameters:
+    base_frame: livox_frame
+    lidar_odom_frame: odom_kiss
+    publish_odom_tf: false
+    invert_odom_tf: true
+    data:
+      deskew: true
+      max_range: 70.0
+      min_range: 0.5
+    mapping:
+      voxel_size: 0.5
+      max_points_per_voxel: 20
+    adaptive_threshold:
+      initial_threshold: 2.0
+      min_motion_th: 0.1
+    registration:
+      max_num_iterations: 500
+      convergence_criterion: 0.0001
+      max_num_threads: 0

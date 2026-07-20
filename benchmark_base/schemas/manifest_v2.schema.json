@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Aldoubt/lio_benchmark_tools/manifest_v2.schema.json",
+  "title": "LIO Benchmark Manifest v2",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "name", "output_root", "playback_rate", "dataset", "calibration", "algorithms"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "name": {"type": "string", "minLength": 1},
+    "output_root": {"type": "string", "minLength": 1},
+    "playback_rate": {"const": 1.0},
+    "dataset": {
+      "type": "object",
+      "required": ["bag_dir", "storage_id", "lidar_topic", "lidar_type", "imu_topic", "imu_type", "point_time_field", "point_time_datatype", "point_time_unit", "point_time_semantics"],
+      "properties": {
+        "bag_dir": {"type": "string"},
+        "storage_id": {"type": "string"},
+        "lidar_topic": {"type": "string"},
+        "lidar_type": {"type": "string"},
+        "imu_topic": {"type": "string"},
+        "imu_type": {"type": "string"},
+        "wheel_odom_topic": {"type": ["string", "null"]},
+        "ground_truth": {"type": ["object", "null"]},
+        "point_time_field": {"type": "string"},
+        "point_time_datatype": {"type": "string"},
+        "point_time_unit": {"type": "string"},
+        "point_time_semantics": {"enum": ["absolute", "relative_to_header", "relative_to_scan_start", "UNRESOLVED"]},
+        "start_offset_s": {"type": "number", "minimum": 0},
+        "end_offset_s": {"type": ["number", "null"]}
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "required": ["lidar_to_imu", "imu_to_base", "lidar_to_base", "source", "confidence"],
+      "properties": {
+        "lidar_to_imu": {"$ref": "#/$defs/transform"},
+        "imu_to_base": {"$ref": "#/$defs/transform"},
+        "lidar_to_base": {"$ref": "#/$defs/transform"}
+      }
+    },
+    "algorithms": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/algorithm"}
+    }
+  },
+  "$defs": {
+    "transform": {
+      "type": "object",
+      "required": ["direction", "rotation", "translation", "confidence"],
+      "properties": {
+        "direction": {"type": "string"},
+        "rotation": {"type": "array", "minItems": 9, "maxItems": 9, "items": {"type": "number"}},
+        "translation": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+        "confidence": {"type": "string"}
+      }
+    },
+    "algorithm": {
+      "type": "object",
+      "required": ["enabled", "group", "mode", "sensor_inputs", "workspace", "source", "repository", "branch", "commit", "setup_scripts", "runner", "config", "input_topics", "output_topics", "patches"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "group": {"enum": ["lidar_only_odometry", "lidar_imu_odometry", "full_slam"]},
+        "mode": {"enum": ["odometry", "full_slam"]},
+        "sensor_inputs": {"type": "array", "items": {"enum": ["lidar", "imu", "gps", "wheel_odom"]}},
+        "setup_scripts": {"type": "array", "items": {"type": "string"}},
+        "patches": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+/**:
+  ros__parameters:
+    frames/odom: odom
+    frames/baselink: livox_imu
+    frames/lidar: livox_frame
+    frames/imu: livox_imu
+    odom/gravity: 9.80665
+    odom/compute_spaciousness: true
+    odom/compute_density: true
+    odom/imu/approximateGravity: false
+    odom/imu/calibration/gyro: true
+    odom/imu/calibration/accel: true
+    odom/imu/calibration/time: 3.0
+    odom/imu/bufferSize: 5000
+    odom/preprocessing/voxelFilter/res: 0.25
+    odom/preprocessing/cropBoxFilter/size: 70.0

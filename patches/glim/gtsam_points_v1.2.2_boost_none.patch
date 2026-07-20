@@ -1,0 +1,13 @@
+diff --git a/include/gtsam_points/util/gtsam_migration.hpp b/include/gtsam_points/util/gtsam_migration.hpp
+index c04c54e..1772903 100644
+--- a/include/gtsam_points/util/gtsam_migration.hpp
++++ b/include/gtsam_points/util/gtsam_migration.hpp
+@@ -49,7 +49,7 @@ using optional = boost::optional<T>;
+ 
+ using OptionalMatrixType = boost::optional<gtsam::Matrix&>;
+ using OptionalMatrixVecType = boost::optional<std::vector<gtsam::Matrix>&>;
+-constexpr auto NoneValue = boost::none;
++inline const auto NoneValue = boost::none;
+ 
+ #endif
+ 

@@ -1,0 +1,51 @@
+/**:
+  ros__parameters:
+    pointCloudTopic: /lio_benchmark/lio_sam_points
+    imuTopic: /lio_benchmark/imu_si
+    odomTopic: odometry/imu
+    gpsTopic: /disabled/gps
+    lidarFrame: livox_frame
+    baselinkFrame: livox_imu
+    odometryFrame: odom
+    mapFrame: map
+    useImuHeadingInitialization: false
+    useGpsElevation: false
+    savePCD: false
+    sensor: livox
+    N_SCAN: 4
+    Horizon_SCAN: 6000
+    downsampleRate: 1
+    lidarMinRange: 0.5
+    lidarMaxRange: 70.0
+    imuAccNoise: 0.01
+    imuGyrNoise: 0.01
+    imuAccBiasN: 0.0001
+    imuGyrBiasN: 0.0001
+    imuGravity: 9.80665
+    imuRPYWeight: 0.01
+    extrinsicTrans: [0.011, 0.02329, -0.04412]
+    extrinsicRot: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    extrinsicRPY: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    edgeThreshold: 1.0
+    surfThreshold: 0.1
+    edgeFeatureMinValidNum: 10
+    surfFeatureMinValidNum: 100
+    odometrySurfLeafSize: 0.2
+    mappingCornerLeafSize: 0.1
+    mappingSurfLeafSize: 0.2
+    z_tollerance: 1000.0
+    rotation_tollerance: 1000.0
+    numberOfCores: 4
+    mappingProcessInterval: 0.15
+    loopClosureEnableFlag: true
+    loopClosureFrequency: 1.0
+    surroundingKeyframeAddingDistThreshold: 1.0
+    surroundingKeyframeAddingAngleThreshold: 0.2
+    surroundingKeyframeSearchRadius: 50.0
+    historyKeyframeSearchRadius: 15.0
+    historyKeyframeSearchTimeDiff: 30.0
+    historyKeyframeSearchNum: 25
+    historyKeyframeFitnessScore: 0.3
+    globalMapVisualizationSearchRadius: 1000.0
+    globalMapVisualizationPoseDensity: 10.0
+    globalMapVisualizationLeafSize: 1.0
