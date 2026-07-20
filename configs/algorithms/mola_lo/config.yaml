@@ -16,6 +16,6 @@ voxel_parameters:
 local_map_parameters:
   min_nearby_poses_occupied: 2
   simplemap_min_nearby_poses: 2
-trajectory_output: {topic: /tf, transform: odom->livox_frame}
+trajectory_output: {topic: /tf, transform: map->livox_frame}
 publish_tf: false
 use_sim_time: true
