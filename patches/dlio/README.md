@@ -9,3 +9,5 @@
 - Risk: minimal; this removes undefined behavior only.
 - Validation: rebuild Release, run the 60-second DLIO smoke, require non-empty odometry and no segfault.
 - Rollback: `git apply -R patches/dlio/spaciousness_bounds.patch` in the target worktree.
+
+The benchmark config keeps `odom/preprocessing/cropBoxFilter/size=1.0`. DLIO applies this filter as a negative crop box around the robot; setting it to the desired 70 m maximum range removes the entire useful cloud and leaves deskew with an empty input.

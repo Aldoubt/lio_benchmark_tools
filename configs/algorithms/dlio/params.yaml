@@ -13,4 +13,5 @@
     odom/imu/calibration/time: 3.0
     odom/imu/bufferSize: 5000
     odom/preprocessing/voxelFilter/res: 0.25
-    odom/preprocessing/cropBoxFilter/size: 70.0
+    # Negative crop box removes the robot body inside this half-size; it is not a max-range filter.
+    odom/preprocessing/cropBoxFilter/size: 1.0
