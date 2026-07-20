@@ -145,7 +145,7 @@ case "$algorithm" in
   dlio)
     start_cloud_adapter "$cloud_topic"; start_imu_scaler
     node_cmd=("$algorithm_executable" --ros-args --params-file "$algorithm_config/dlio.yaml" --params-file "$algorithm_config/params.yaml" -p use_sim_time:=true -r pointcloud:="$cloud_topic" -r imu:="$imu_si_topic")
-    output_topics=(/dlio/odom_node/odom /dlio/odom_node/path)
+    output_topics=(/odom /path)
     ;;
   glim_odometry|glim_full_slam)
     start_cloud_adapter "$cloud_topic"; start_imu_scaler
