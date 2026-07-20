@@ -45,6 +45,8 @@ def check_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     for setup in dataset.get("setup_scripts", []):
         path = resolve_path(str(setup))
         add("dataset:setup", path.is_file(), str(path))
+    adapter_executable = resolve_path(str(dataset.get("cloud_adapter", {}).get("required_executable", "")))
+    add("dataset:cloud_adapter", adapter_executable.is_file() and os.access(adapter_executable, os.X_OK), str(adapter_executable))
     for kind in ("lidar", "imu"):
         topic, expected = dataset.get(f"{kind}_topic"), dataset.get(f"{kind}_type")
         add(f"topic:{kind}", topic in topics and topics.get(topic) == expected, f"{topic}: actual={topics.get(topic)} expected={expected}")

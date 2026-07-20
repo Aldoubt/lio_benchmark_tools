@@ -22,7 +22,12 @@
     "duration_s": 2604.25236426,
     "message_count": 1163666,
     "frame_id": "livox_frame",
-    "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/agt_navigation_v2/install/setup.bash"],
+    "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/agt_navigation_v2/install/setup.bash", "/home/yangxuan/lio_benchmark_algorithms/adapter_ws/install/setup.bash"],
+    "cloud_adapter": {
+      "package": "lio_benchmark_adapters",
+      "executable": "custommsg_to_pointcloud2",
+      "required_executable": "/home/yangxuan/lio_benchmark_algorithms/adapter_ws/install/lio_benchmark_adapters/lib/lio_benchmark_adapters/custommsg_to_pointcloud2"
+    },
     "pre_run_input_validation": "benchmark_base/docs/development/PRE_RUN_INPUT_VALIDATION.json",
     "adapter_topics": {
       "pointcloud2": "/lio_benchmark/points",

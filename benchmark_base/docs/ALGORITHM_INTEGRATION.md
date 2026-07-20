@@ -41,7 +41,7 @@ MOLA 不含源码工作树，来自官方 ROS 2 Humble 二进制：`mola=2.9.0`�
 ## 参数原则
 
 - 播放倍率固定 1.0，使用 `/clock`，所有节点 `use_sim_time=true`。
-- 统一转换字段：`x/y/z/intensity FLOAT32`、`ring UINT16`、`time FLOAT32 seconds relative to frame`。
+- 统一转换由独立 C++ ROS 2 adapter workspace 执行，字段为 `x/y/z/intensity FLOAT32`、`ring UINT16`、`time FLOAT32 seconds relative to frame`；Python 实现保留为契约单测和离线参考。
 - 转换时保留真实 `line`，按真实 `offset_time` 排序；不虚构 ring。
 - 共同分析范围记为 0.5–70 m；算法原生过滤能力不同，报告中必须保存实际配置。
 - 结果分三组：LiDAR-only odometry、LiDAR–IMU odometry、full SLAM；禁止跨组总排名。
