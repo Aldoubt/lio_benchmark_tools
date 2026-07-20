@@ -14,4 +14,15 @@ def generate_launch_description():
             "lio_sam_featureExtraction", "lio_sam_mapOptimization",
         )
     ]
-    return LaunchDescription([DeclareLaunchArgument("params_file"), *nodes])
+    sensor_tf = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="lio_sam_sensor_extrinsic",
+        arguments=[
+            "--x", "0.011", "--y", "0.02329", "--z", "-0.04412",
+            "--qx", "0", "--qy", "0", "--qz", "0", "--qw", "1",
+            "--frame-id", "livox_imu", "--child-frame-id", "livox_frame",
+        ],
+        output="screen",
+    )
+    return LaunchDescription([DeclareLaunchArgument("params_file"), sensor_tf, *nodes])

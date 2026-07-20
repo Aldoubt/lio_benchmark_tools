@@ -70,6 +70,9 @@ if [[ -n "$smoke_duration_s" && ! "$smoke_duration_s" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 worker_pids=()
+node_pid=""
+node_control_pid=""
+record_pid=""
 stop_process() {
   local pid=$1 signal=${2:-TERM}
   kill -"$signal" "$pid" 2>/dev/null || return 0
@@ -82,6 +85,11 @@ stop_process() {
   wait "$pid" 2>/dev/null || true
 }
 cleanup() {
+  [[ -n "$record_pid" ]] && stop_process "$record_pid" INT
+  [[ -n "$node_control_pid" ]] && stop_process "$node_control_pid" TERM
+  if [[ -n "$node_pid" ]]; then
+    wait "$node_pid" 2>/dev/null || true
+  fi
   for pid in "${worker_pids[@]:-}"; do stop_process "$pid" TERM; done
 }
 trap cleanup EXIT INT TERM
@@ -138,7 +146,7 @@ case "$algorithm" in
     ;;
   glim_odometry|glim_full_slam)
     start_cloud_adapter "$cloud_topic"; start_imu_scaler
-    python3 "$script_dir/prepare_glim_config.py" "$algorithm_config" "$output_dir/config" >"$output_dir/config_prepare.log"
+    python3 "$script_dir/prepare_glim_config.py" "$algorithm_config/config.yaml" "$output_dir/config" >"$output_dir/config_prepare.log"
     node_cmd=(ros2 run glim_ros glim_rosnode --ros-args -p use_sim_time:=true -p config_path:="$output_dir/config" -p dump_path:="$output_dir/dump")
     output_topics=(/glim_ros/odom /glim_ros/odom_scanend /glim_ros/odom_corrected /glim_ros/odom_scanend_corrected)
     ;;
@@ -166,9 +174,11 @@ sleep 5
 kill -0 "$node_pid" 2>/dev/null || { echo "algorithm exited during startup" >&2; exit 70; }
 node_control_pid=$(pgrep -P "$node_pid" | head -n 1 || true)
 [[ -n "$node_control_pid" ]] || { echo "cannot identify ros2 node supervisor child" >&2; exit 70; }
-for pid in "${worker_pids[@]:-}"; do
-  kill -0 "$pid" 2>/dev/null || { echo "input adapter exited during startup: $pid" >&2; exit 70; }
-done
+if ((${#worker_pids[@]})); then
+  for pid in "${worker_pids[@]}"; do
+    kill -0 "$pid" 2>/dev/null || { echo "input adapter exited during startup: $pid" >&2; exit 70; }
+  done
+fi
 ros2 bag record -o "$output_dir/trajectory" "${output_topics[@]}" >"$output_dir/record.log" 2>&1 &
 record_pid=$!
 sleep 2
@@ -180,10 +190,13 @@ play_exit=$play_exit_raw
 [[ -n "$smoke_duration_s" && "$play_exit_raw" -eq 124 ]] && play_exit=0
 sleep 5
 stop_process "$record_pid" INT
+record_pid=""
 node_was_alive=false
 kill -0 "$node_pid" 2>/dev/null && node_was_alive=true
 stop_process "$node_control_pid" TERM
+node_control_pid=""
 wait "$node_pid" 2>/dev/null || node_exit_raw=$?
+node_pid=""
 node_exit_raw=${node_exit_raw:-0}
 node_exit=$node_exit_raw
 if [[ "$node_was_alive" == true && ("$node_exit_raw" -eq 130 || "$node_exit_raw" -eq 143) ]]; then

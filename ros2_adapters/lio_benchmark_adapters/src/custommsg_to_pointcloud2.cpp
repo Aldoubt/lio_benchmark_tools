@@ -44,7 +44,8 @@ class CustomMsgAdapter final : public rclcpp::Node {
     metrics_path_ = declare_parameter<std::string>("metrics_path", "");
     sort_by_time_ = declare_parameter<bool>("sort_by_time", true);
     auto input_qos = rclcpp::QoS(rclcpp::KeepLast(100)).best_effort().durability_volatile();
-    publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_topic_, rclcpp::SensorDataQoS());
+    auto output_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
+    publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(output_topic_, output_qos);
     subscription_ = create_subscription<livox_ros_driver2::msg::CustomMsg>(
         input_topic_, input_qos,
         std::bind(&CustomMsgAdapter::callback, this, std::placeholders::_1));
