@@ -80,7 +80,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         command = command_for(name, manifest["algorithms"][name], manifest_path, run / "raw" / name, bag)
         print(" ".join(command))
         if not args.dry_run:
-            result = subprocess.run(command, check=False)
+            environment = os.environ.copy()
+            if args.duration is not None:
+                environment["LIO_BENCHMARK_DURATION_S"] = str(args.duration)
+            result = subprocess.run(command, check=False, env=environment)
             if result.returncode:
                 return result.returncode
     return 0
@@ -176,7 +179,7 @@ def parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name); p.add_argument("--config", type=Path, required=True); p.set_defaults(func=function)
     p = sub.add_parser("init"); p.add_argument("--config", type=Path, required=True); p.add_argument("--run-id"); p.set_defaults(func=cmd_init)
     p = sub.add_parser("commands"); choice=p.add_mutually_exclusive_group(required=True); choice.add_argument("--config", type=Path); choice.add_argument("--run", type=Path); p.set_defaults(func=cmd_commands)
-    p = sub.add_parser("run"); p.add_argument("--run", type=Path, required=True); p.add_argument("--algorithm", action="append"); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_run)
+    p = sub.add_parser("run"); p.add_argument("--run", type=Path, required=True); p.add_argument("--algorithm", action="append"); p.add_argument("--duration", type=int); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_run)
     p = sub.add_parser("analyze-bag"); p.add_argument("--run", type=Path, required=True); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_analyze)
     for stage in ("standardize", "evaluate", "visualize", "report"):
         p = sub.add_parser(stage); p.add_argument("--run", type=Path, required=True); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_stage, stage=stage)

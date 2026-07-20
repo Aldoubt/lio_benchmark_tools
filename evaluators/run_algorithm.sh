@@ -58,6 +58,11 @@ imu_si_topic=$(query dataset.adapter_topics.imu_si)
 lio_sam_topic=$(query dataset.adapter_topics.lio_sam_points)
 playback_rate=$(query playback_rate)
 [[ "$playback_rate" == "1.0" || "$playback_rate" == "1" ]] || { echo "fair benchmark requires playback_rate=1.0" >&2; exit 65; }
+smoke_duration_s="${LIO_BENCHMARK_DURATION_S:-}"
+if [[ -n "$smoke_duration_s" && ! "$smoke_duration_s" =~ ^[1-9][0-9]*$ ]]; then
+  echo "LIO_BENCHMARK_DURATION_S must be a positive integer" >&2
+  exit 65
+fi
 
 pids=()
 cleanup() {
@@ -131,7 +136,13 @@ case "$algorithm" in
 esac
 
 printf '%q ' "${node_cmd[@]}" >"$output_dir/actual_node_command.txt"; printf '\n' >>"$output_dir/actual_node_command.txt"
-printf 'ros2 bag play %q --rate 1.0 --clock\n' "$bag_dir" >"$output_dir/actual_play_command.txt"
+play_cmd=(ros2 bag play "$bag_dir" --rate 1.0 --clock --disable-keyboard-controls --topics "$lidar_topic" "$imu_topic")
+if [[ -n "$smoke_duration_s" ]]; then
+  playback_exec=(timeout --signal=INT --kill-after=15 "${smoke_duration_s}s" "${play_cmd[@]}")
+else
+  playback_exec=("${play_cmd[@]}")
+fi
+printf '%q ' "${playback_exec[@]}" >"$output_dir/actual_play_command.txt"; printf '\n' >>"$output_dir/actual_play_command.txt"
 cp "$algorithm_config" "$output_dir/actual_config" 2>/dev/null || cp -R "$algorithm_config" "$output_dir/actual_config"
 
 /usr/bin/time -v -o "$output_dir/resource_time.txt" "${node_cmd[@]}" >"$output_dir/stdout.log" 2>"$output_dir/stderr.log" &
@@ -142,16 +153,19 @@ ros2 bag record -o "$output_dir/trajectory" "${output_topics[@]}" >"$output_dir/
 record_pid=$!; pids+=("$record_pid")
 sleep 2
 set +e
-ros2 bag play "$bag_dir" --rate 1.0 --clock >"$output_dir/play.log" 2>&1
-play_exit=$?
+"${playback_exec[@]}" >"$output_dir/play.log" 2>&1
+play_exit_raw=$?
 set -e
+play_exit=$play_exit_raw
+[[ -n "$smoke_duration_s" && "$play_exit_raw" -eq 124 ]] && play_exit=0
 sleep 5
 kill -INT "$record_pid" 2>/dev/null || true; wait "$record_pid" || true
 kill -INT "$node_pid" 2>/dev/null || true; wait "$node_pid" || node_exit=$?
 node_exit=${node_exit:-0}
-python3 - "$output_dir/run_result.json" "$algorithm" "$play_exit" "$node_exit" <<'PY'
+python3 - "$output_dir/run_result.json" "$algorithm" "$play_exit" "$play_exit_raw" "$node_exit" "${smoke_duration_s:-}" <<'PY'
 import json,sys
-status='SUCCESS' if sys.argv[3]=='0' and sys.argv[4]=='0' else 'RUNTIME_CRASH'
-json.dump({'algorithm':sys.argv[2],'status':status,'bag_play_exit_code':int(sys.argv[3]),'algorithm_exit_code':int(sys.argv[4]),'playback_rate':1.0},open(sys.argv[1],'w'),indent=2)
+status='SUCCESS' if sys.argv[3]=='0' and sys.argv[5]=='0' else 'RUNTIME_CRASH'
+duration=float(sys.argv[6]) if sys.argv[6] else None
+json.dump({'algorithm':sys.argv[2],'status':status,'bag_play_exit_code':int(sys.argv[3]),'bag_play_exit_code_raw':int(sys.argv[4]),'algorithm_exit_code':int(sys.argv[5]),'playback_rate':1.0,'smoke_duration_s':duration},open(sys.argv[1],'w'),indent=2)
 PY
 [[ "$play_exit" -eq 0 && "$node_exit" -eq 0 ]]
