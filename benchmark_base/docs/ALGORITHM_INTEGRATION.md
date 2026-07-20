@@ -9,7 +9,7 @@
 | MOLA-LIO | 同上，state-estimation 2.4.2 | 同上 | SI IMU；IMU deskew=True；IMU→LiDAR 固定 pose | 空载启动通过；与 LO 分开报告 |
 | FAST-LIVO2 | agt_navigation_v2 `1e96f08` | 原生 CustomMsg | 原始 g IMU；LiDAR→IMU `[.011,.02329,-.04412]` | 空载启动通过；图像关闭 |
 | Point-LIO | dfloreaa/point_lio_ros2 `a8e2d0d` | PointCloud2；按 Velodyne 字段契约，4 line | 原始 g IMU，`acc_norm=1` | Release 构建及空载启动通过；其 CustomMsg 分支在该 fork 中不可用 |
-| DLIO | vectr-ucla feature/ros2 `c8acc37` | PointCloud2，逐点相对秒 | SI IMU；使用逆外参 | Release 构建及空载启动通过；未修改上游源码 |
+| DLIO | vectr-ucla feature/ros2 `c8acc37` | PointCloud2，逐点相对秒 | SI IMU；使用逆外参 | 首帧触发上游 spaciousness 越界；已应用并记录单行边界 patch |
 | GLIM odometry | GLIM v1.2.2 `faa264a` | PointCloud2，相对秒 | SI IMU；`T_lidar_imu` 按上游定义为 IMU→LiDAR | CPU Release 构建及空载启动通过 |
 | GLIM full SLAM | 同上 | 同上 | 同上 | CPU odometry + sub-map + pose graph 均加载成功 |
 | LIO-SAM no-loop | ros2 `08af3f3` | 独立 MID360 adapter 输出真实 line 和相对秒 | SI IMU；LiDAR→IMU | Release 构建、四节点空载启动及 50 帧字段验证通过；仍需短包验证非重复扫描模型 |
@@ -29,7 +29,7 @@
 |---|---|---:|---|
 | kiss-icp | `b16835283aee` | no | `kiss_icp_ws/install` |
 | point_lio_ros2 | `a8e2d0d5090a` | no | `point_lio_ws/install` |
-| direct_lidar_inertial_odometry | `c8acc37100e3` | no | `dlio_ws/install` |
+| direct_lidar_inertial_odometry | `c8acc37100e3` | yes | 仅 `patches/dlio/spaciousness_bounds.patch`；`dlio_ws/install` |
 | GLIM | `faa264a1bce1` | no | `glim_ws/install` |
 | glim_ros2 | `4a9e7a4cb084` | no | `glim_ws/install` |
 | gtsam_points | `9d32e7dbecf6` | yes | 仅 Boost 兼容 patch；`glim_ws/deps_install` |

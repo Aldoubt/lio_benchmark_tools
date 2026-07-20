@@ -67,7 +67,7 @@ def main() -> int:
     global_config["global"].update({key: spec[key] for key in ("config_odometry", "config_sub_mapping", "config_global_mapping")})
     (args.output / "config.json").write_text(json.dumps(global_config, indent=2) + "\n", encoding="utf-8")
     ros = read_json(args.output / "config_ros.json")
-    ros["glim_ros"].update({"enable_local_mapping": spec["enable_local_mapping"], "enable_global_mapping": spec["enable_global_mapping"], "imu_topic": spec["imu_topic"], "points_topic": spec["points_topic"], "acc_scale": spec["acc_scale"], "extension_modules": []})
+    ros["glim_ros"].update({"enable_local_mapping": spec["enable_local_mapping"], "enable_global_mapping": spec["enable_global_mapping"], "imu_topic": spec["imu_topic"], "points_topic": spec["points_topic"], "acc_scale": spec["acc_scale"], "extension_modules": ["librviz_viewer.so"]})
     (args.output / "config_ros.json").write_text(json.dumps(ros, indent=2) + "\n", encoding="utf-8")
     sensors = read_json(args.output / "config_sensors.json")
     sensors["sensors"].update({"T_lidar_imu": spec["T_lidar_imu_xyzw"], "ring_field": "ring", "autoconf_perpoint_times": False, "autoconf_prefer_frame_time": True, "perpoint_relative_time": spec["perpoint_relative_time"], "perpoint_time_scale": spec["perpoint_time_scale"]})

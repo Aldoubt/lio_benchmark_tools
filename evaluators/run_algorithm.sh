@@ -70,6 +70,7 @@ if [[ -n "$smoke_duration_s" && ! "$smoke_duration_s" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 worker_pids=()
+node_child_pids=()
 node_pid=""
 node_control_pid=""
 record_pid=""
@@ -87,6 +88,7 @@ stop_process() {
 cleanup() {
   [[ -n "$record_pid" ]] && stop_process "$record_pid" INT
   [[ -n "$node_control_pid" ]] && stop_process "$node_control_pid" TERM
+  for pid in "${node_child_pids[@]:-}"; do stop_process "$pid" TERM; done
   if [[ -n "$node_pid" ]]; then
     wait "$node_pid" 2>/dev/null || true
   fi
@@ -109,10 +111,11 @@ start_imu_scaler() {
 }
 
 output_topics=()
+algorithm_executable=$(query "algorithms.$algorithm.required_executables.0")
 case "$algorithm" in
   kiss_icp)
     start_cloud_adapter "$cloud_topic"
-    node_cmd=(ros2 launch kiss_icp odometry.launch.py topic:="$cloud_topic" config_file:="$algorithm_config" visualize:=false use_sim_time:=true publish_odom_tf:=false)
+    node_cmd=("$algorithm_executable" --ros-args --params-file "$algorithm_config" -p use_sim_time:=true -p publish_odom_tf:=false -r pointcloud_topic:="$cloud_topic")
     output_topics=(/kiss/odometry /kiss/trajectory)
     ;;
   mola_lo|mola_lio)
@@ -131,23 +134,23 @@ case "$algorithm" in
     output_topics=(/tf /lidar_odometry/metadata /diagnostics)
     ;;
   fast_livo2)
-    node_cmd=(ros2 run fast_livo fastlivo_mapping --ros-args --params-file "$algorithm_config" -p use_sim_time:=true)
+    node_cmd=("$algorithm_executable" --ros-args --params-file "$algorithm_config" -p use_sim_time:=true)
     output_topics=(/aft_mapped_to_init /path)
     ;;
   point_lio)
     start_cloud_adapter "$cloud_topic"
-    node_cmd=(ros2 run point_lio pointlio_mapping --ros-args --params-file "$algorithm_config" -p use_sim_time:=true)
+    node_cmd=("$algorithm_executable" --ros-args --params-file "$algorithm_config" -p use_sim_time:=true)
     output_topics=(/aft_mapped_to_init /path)
     ;;
   dlio)
     start_cloud_adapter "$cloud_topic"; start_imu_scaler
-    node_cmd=(ros2 run direct_lidar_inertial_odometry dlio_odom_node --ros-args --params-file "$algorithm_config/dlio.yaml" --params-file "$algorithm_config/params.yaml" -p use_sim_time:=true -r pointcloud:="$cloud_topic" -r imu:="$imu_si_topic")
+    node_cmd=("$algorithm_executable" --ros-args --params-file "$algorithm_config/dlio.yaml" --params-file "$algorithm_config/params.yaml" -p use_sim_time:=true -r pointcloud:="$cloud_topic" -r imu:="$imu_si_topic")
     output_topics=(/dlio/odom_node/odom /dlio/odom_node/path)
     ;;
   glim_odometry|glim_full_slam)
     start_cloud_adapter "$cloud_topic"; start_imu_scaler
     python3 "$script_dir/prepare_glim_config.py" "$algorithm_config/config.yaml" "$output_dir/config" >"$output_dir/config_prepare.log"
-    node_cmd=(ros2 run glim_ros glim_rosnode --ros-args -p use_sim_time:=true -p config_path:="$output_dir/config" -p dump_path:="$output_dir/dump")
+    node_cmd=("$algorithm_executable" --ros-args -p use_sim_time:=true -p config_path:="$output_dir/config" -p dump_path:="$output_dir/dump")
     output_topics=(/glim_ros/odom /glim_ros/odom_scanend /glim_ros/odom_corrected /glim_ros/odom_scanend_corrected)
     ;;
   lio_sam_no_loop|lio_sam_loop)
@@ -174,6 +177,7 @@ sleep 5
 kill -0 "$node_pid" 2>/dev/null || { echo "algorithm exited during startup" >&2; exit 70; }
 node_control_pid=$(pgrep -P "$node_pid" | head -n 1 || true)
 [[ -n "$node_control_pid" ]] || { echo "cannot identify ros2 node supervisor child" >&2; exit 70; }
+mapfile -t node_child_pids < <(pgrep -P "$node_control_pid" || true)
 if ((${#worker_pids[@]})); then
   for pid in "${worker_pids[@]}"; do
     kill -0 "$pid" 2>/dev/null || { echo "input adapter exited during startup: $pid" >&2; exit 70; }
@@ -195,6 +199,8 @@ node_was_alive=false
 kill -0 "$node_pid" 2>/dev/null && node_was_alive=true
 stop_process "$node_control_pid" TERM
 node_control_pid=""
+for pid in "${node_child_pids[@]:-}"; do stop_process "$pid" TERM; done
+node_child_pids=()
 wait "$node_pid" 2>/dev/null || node_exit_raw=$?
 node_pid=""
 node_exit_raw=${node_exit_raw:-0}

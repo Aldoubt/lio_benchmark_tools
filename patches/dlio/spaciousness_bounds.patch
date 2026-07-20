@@ -1,0 +1,13 @@
+diff --git a/src/dlio/odom.cc b/src/dlio/odom.cc
+index 4e9f190..dfefd5c 100755
+--- a/src/dlio/odom.cc
++++ b/src/dlio/odom.cc
+@@ -1422,7 +1422,7 @@ void dlio::OdomNode::computeSpaciousness() {
+   std::vector<float> ds;
+ 
+-  for (int i = 0; i <= this->original_scan->points.size(); i++) {
++  for (size_t i = 0; i < this->original_scan->points.size(); i++) {
+     float d = std::sqrt(pow(this->original_scan->points[i].x, 2) +
+                         pow(this->original_scan->points[i].y, 2));
+     ds.push_back(d);
+   }
