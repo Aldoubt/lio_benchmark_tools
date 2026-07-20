@@ -48,7 +48,9 @@ done
 for setup in "${setup_scripts[@]}"; do
   [[ "$setup" = /* ]] || setup="$(cd -- "$(dirname -- "$script_dir")" && pwd)/$setup"
   # shellcheck disable=SC1090
+  set +u
   source "$setup"
+  set -u
 done
 
 lidar_topic=$(query dataset.lidar_topic)
