@@ -60,8 +60,7 @@ imu_topic=$(query dataset.imu_topic)
 cloud_topic=$(query dataset.adapter_topics.pointcloud2)
 imu_si_topic=$(query dataset.adapter_topics.imu_si)
 lio_sam_topic=$(query dataset.adapter_topics.lio_sam_points)
-cloud_adapter_package=$(query dataset.cloud_adapter.package)
-cloud_adapter_executable=$(query dataset.cloud_adapter.executable)
+cloud_adapter_path=$(query dataset.cloud_adapter.required_executable)
 playback_rate=$(query playback_rate)
 [[ "$playback_rate" == "1.0" || "$playback_rate" == "1" ]] || { echo "fair benchmark requires playback_rate=1.0" >&2; exit 65; }
 smoke_duration_s="${LIO_BENCHMARK_DURATION_S:-}"
@@ -89,7 +88,7 @@ trap cleanup EXIT INT TERM
 
 start_cloud_adapter() {
   local destination=$1
-  ros2 run "$cloud_adapter_package" "$cloud_adapter_executable" --ros-args \
+  "$cloud_adapter_path" --ros-args \
     -p input_topic:="$lidar_topic" -p output_topic:="$destination" -p sort_by_time:=true \
     -p metrics_path:="$output_dir/input_validation.json" >"$output_dir/cloud_adapter.log" 2>&1 &
   worker_pids+=("$!")
