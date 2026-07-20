@@ -179,19 +179,25 @@ play_exit=$play_exit_raw
 [[ -n "$smoke_duration_s" && "$play_exit_raw" -eq 124 ]] && play_exit=0
 sleep 5
 stop_process "$record_pid" INT
+node_was_alive=false
+kill -0 "$node_pid" 2>/dev/null && node_was_alive=true
 stop_process "$node_control_pid" TERM
-wait "$node_pid" 2>/dev/null || node_exit=$?
-node_exit=${node_exit:-0}
+wait "$node_pid" 2>/dev/null || node_exit_raw=$?
+node_exit_raw=${node_exit_raw:-0}
+node_exit=$node_exit_raw
+if [[ "$node_was_alive" == true && ("$node_exit_raw" -eq 130 || "$node_exit_raw" -eq 143) ]]; then
+  node_exit=0
+fi
 trajectory_messages=$(python3 - "$output_dir/trajectory/metadata.yaml" <<'PY'
 import sys,yaml
 print(yaml.safe_load(open(sys.argv[1]))['rosbag2_bagfile_information']['message_count'])
 PY
 )
-python3 - "$output_dir/run_result.json" "$algorithm" "$play_exit" "$play_exit_raw" "$node_exit" "${smoke_duration_s:-}" "$trajectory_messages" <<'PY'
+python3 - "$output_dir/run_result.json" "$algorithm" "$play_exit" "$play_exit_raw" "$node_exit" "$node_exit_raw" "${smoke_duration_s:-}" "$trajectory_messages" <<'PY'
 import json,sys
-messages=int(sys.argv[7])
+messages=int(sys.argv[8])
 status='SUCCESS' if sys.argv[3]=='0' and sys.argv[5]=='0' and messages>0 else ('NO_ODOMETRY' if messages==0 else 'RUNTIME_CRASH')
-duration=float(sys.argv[6]) if sys.argv[6] else None
-json.dump({'algorithm':sys.argv[2],'status':status,'bag_play_exit_code':int(sys.argv[3]),'bag_play_exit_code_raw':int(sys.argv[4]),'algorithm_exit_code':int(sys.argv[5]),'playback_rate':1.0,'smoke_duration_s':duration,'trajectory_messages':messages},open(sys.argv[1],'w'),indent=2)
+duration=float(sys.argv[7]) if sys.argv[7] else None
+json.dump({'algorithm':sys.argv[2],'status':status,'bag_play_exit_code':int(sys.argv[3]),'bag_play_exit_code_raw':int(sys.argv[4]),'algorithm_exit_code':int(sys.argv[5]),'algorithm_exit_code_raw':int(sys.argv[6]),'playback_rate':1.0,'smoke_duration_s':duration,'trajectory_messages':messages},open(sys.argv[1],'w'),indent=2)
 PY
 [[ "$play_exit" -eq 0 && "$node_exit" -eq 0 && "$trajectory_messages" -gt 0 ]]

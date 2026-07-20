@@ -3,14 +3,26 @@
 from __future__ import annotations
 
 import json
-import math
 import struct
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
+
+import numpy as np
 
 POINT_STRUCT = struct.Struct("<ffffHf")
+INPUT_DTYPE = np.dtype([
+    ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+    ("reflectivity", "u1"), ("tag", "u1"), ("line", "u1"),
+    ("offset_time", "<u4"),
+])
+POINT_DTYPE = np.dtype({
+    "names": ["x", "y", "z", "intensity", "ring", "time"],
+    "formats": ["<f4", "<f4", "<f4", "<f4", "<u2", "<f4"],
+    "offsets": [0, 4, 8, 12, 16, 18],
+    "itemsize": POINT_STRUCT.size,
+})
 FIELDS = (
     ("x", 0, 7), ("y", 4, 7), ("z", 8, 7), ("intensity", 12, 7),
     ("ring", 16, 4), ("time", 18, 7),
@@ -50,41 +62,46 @@ class Validation:
 def convert_points(points: Sequence, sort_by_time: bool = True, validation: Validation | None = None) -> bytes:
     stats = validation or Validation()
     stats.frames += 1
-    stats.input_points += len(points)
-    offsets = [int(point.offset_time) for point in points]
-    stats.input_time_backtracks += sum(b < a for a, b in zip(offsets, offsets[1:]))
-    selected = []
-    for point in points:
-        if (int(point.tag) & 0x30) not in (0x00, 0x10):
-            stats.invalid_tag_points += 1
-            continue
-        xyz = (float(point.x), float(point.y), float(point.z))
-        if not all(math.isfinite(value) for value in xyz):
-            stats.non_finite_points += 1
-            continue
-        selected.append(point)
-    if sort_by_time:
-        selected.sort(key=lambda item: int(item.offset_time))
-    buffer = bytearray(len(selected) * POINT_STRUCT.size)
-    output_times: list[float] = []
-    for index, point in enumerate(selected):
-        seconds = int(point.offset_time) * 1e-9
-        POINT_STRUCT.pack_into(buffer, index * POINT_STRUCT.size, float(point.x), float(point.y), float(point.z), float(point.reflectivity), int(point.line), seconds)
-        output_times.append(seconds)
-        stats.ring_counts[int(point.line)] += 1
-    stats.output_points += len(selected)
-    stats.output_time_backtracks += sum(b < a for a, b in zip(output_times, output_times[1:]))
-    if output_times:
-        stats.time_min_s = min(output_times) if stats.time_min_s is None else min(stats.time_min_s, min(output_times))
-        stats.time_max_s = max(output_times) if stats.time_max_s is None else max(stats.time_max_s, max(output_times))
-    return bytes(buffer)
+    count = len(points)
+    stats.input_points += count
+    source = np.fromiter(
+        ((point.x, point.y, point.z, point.reflectivity, point.tag, point.line, point.offset_time) for point in points),
+        dtype=INPUT_DTYPE,
+        count=count,
+    )
+    offsets, tags = source["offset_time"], source["tag"]
+    x, y, z = source["x"], source["y"], source["z"]
+    stats.input_time_backtracks += int(np.count_nonzero(offsets[1:] < offsets[:-1]))
+    tag_valid = np.isin(np.bitwise_and(tags, 0x30), (0x00, 0x10))
+    finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    stats.invalid_tag_points += int(np.count_nonzero(~tag_valid))
+    stats.non_finite_points += int(np.count_nonzero(tag_valid & ~finite))
+    selected = np.flatnonzero(tag_valid & finite)
+    if sort_by_time and selected.size:
+        selected = selected[np.argsort(offsets[selected], kind="stable")]
+    records = np.empty(selected.size, dtype=POINT_DTYPE)
+    records["x"] = x[selected]
+    records["y"] = y[selected]
+    records["z"] = z[selected]
+    records["intensity"] = source["reflectivity"][selected]
+    records["ring"] = source["line"][selected]
+    records["time"] = offsets[selected].astype(np.float32) * np.float32(1e-9)
+    stats.output_points += int(selected.size)
+    stats.output_time_backtracks += int(np.count_nonzero(records["time"][1:] < records["time"][:-1]))
+    if selected.size:
+        minimum, maximum = float(records["time"].min()), float(records["time"].max())
+        stats.time_min_s = minimum if stats.time_min_s is None else min(stats.time_min_s, minimum)
+        stats.time_max_s = maximum if stats.time_max_s is None else max(stats.time_max_s, maximum)
+        rings, ring_counts = np.unique(records["ring"], return_counts=True)
+        stats.ring_counts.update({int(ring): int(value) for ring, value in zip(rings, ring_counts)})
+    return records.tobytes()
 
 
 def main() -> None:
     import rclpy
     from livox_ros_driver2.msg import CustomMsg
     from rclpy.node import Node
-    from rclpy.qos import qos_profile_sensor_data
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
     from sensor_msgs.msg import PointCloud2, PointField
 
     class Converter(Node):
@@ -99,7 +116,8 @@ def main() -> None:
             self.sort_by_time = bool(self.get_parameter("sort_by_time").value)
             self.metrics_path = str(self.get_parameter("metrics_path").value)
             self.pub = self.create_publisher(PointCloud2, self.output_topic, qos_profile_sensor_data)
-            self.sub = self.create_subscription(CustomMsg, str(self.get_parameter("input_topic").value), self.callback, qos_profile_sensor_data)
+            input_qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.BEST_EFFORT, durability=DurabilityPolicy.VOLATILE)
+            self.sub = self.create_subscription(CustomMsg, str(self.get_parameter("input_topic").value), self.callback, input_qos)
 
         def callback(self, source: CustomMsg) -> None:
             output = PointCloud2()

@@ -6,7 +6,7 @@ import copy
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import Imu
 
 
@@ -22,7 +22,8 @@ class ImuScaler(Node):
         self.scale = float(self.get_parameter("acceleration_scale").value)
         self.output_frame_id = str(self.get_parameter("output_frame_id").value)
         self.publisher = self.create_publisher(Imu, output_topic, qos_profile_sensor_data)
-        self.subscription = self.create_subscription(Imu, input_topic, self.callback, qos_profile_sensor_data)
+        input_qos = QoSProfile(depth=1000, reliability=ReliabilityPolicy.BEST_EFFORT, durability=DurabilityPolicy.VOLATILE)
+        self.subscription = self.create_subscription(Imu, input_topic, self.callback, input_qos)
         self.count = 0
 
     def callback(self, source: Imu) -> None:
