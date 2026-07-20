@@ -22,6 +22,7 @@
     "duration_s": 2604.25236426,
     "message_count": 1163666,
     "frame_id": "livox_frame",
+    "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/agt_navigation_v2/install/setup.bash"],
     "pre_run_input_validation": "benchmark_base/docs/development/PRE_RUN_INPUT_VALIDATION.json",
     "adapter_topics": {
       "pointcloud2": "/lio_benchmark/points",

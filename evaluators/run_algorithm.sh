@@ -29,8 +29,10 @@ export ROS_DOMAIN_ID="${LIO_BENCHMARK_ROS_DOMAIN_ID:-77}"
 query() { python3 "$script_dir/manifest_query.py" "$manifest_path" "$1"; }
 mapfile -t setup_scripts < <(python3 - "$manifest_path" "$algorithm" <<'PY'
 import json,sys
-for value in json.load(open(sys.argv[1]))['algorithms'][sys.argv[2]]['setup_scripts']:
- print(value)
+data=json.load(open(sys.argv[1])); seen=set()
+for value in data['dataset'].get('setup_scripts',[])+data['algorithms'][sys.argv[2]]['setup_scripts']:
+ if value not in seen:
+  print(value); seen.add(value)
 PY
 )
 export LIO_BENCHMARK_ALGORITHM_WORKSPACE="$(python3 "$script_dir/manifest_query.py" "$manifest_path" "algorithms.$algorithm.workspace")"
@@ -66,10 +68,20 @@ if [[ -n "$smoke_duration_s" && ! "$smoke_duration_s" =~ ^[1-9][0-9]*$ ]]; then
   exit 65
 fi
 
-pids=()
+worker_pids=()
+stop_process() {
+  local pid=$1 signal=${2:-TERM}
+  kill -"$signal" "$pid" 2>/dev/null || return 0
+  for _ in {1..50}; do
+    kill -0 "$pid" 2>/dev/null || break
+    [[ "$(ps -o stat= -p "$pid" 2>/dev/null)" == Z* ]] && break
+    sleep 0.1
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
 cleanup() {
-  for pid in "${pids[@]:-}"; do kill -INT "$pid" 2>/dev/null || true; done
-  for pid in "${pids[@]:-}"; do wait "$pid" 2>/dev/null || true; done
+  for pid in "${worker_pids[@]:-}"; do stop_process "$pid" TERM; done
 }
 trap cleanup EXIT INT TERM
 
@@ -78,13 +90,13 @@ start_cloud_adapter() {
   python3 "$script_dir/adapters/custommsg_to_pointcloud2.py" --ros-args \
     -p input_topic:="$lidar_topic" -p output_topic:="$destination" -p sort_by_time:=true \
     -p metrics_path:="$output_dir/input_validation.json" >"$output_dir/cloud_adapter.log" 2>&1 &
-  pids+=("$!")
+  worker_pids+=("$!")
 }
 start_imu_scaler() {
   python3 "$script_dir/scale_imu_acceleration.py" --ros-args \
     -p input_topic:="$imu_topic" -p output_topic:="$imu_si_topic" -p acceleration_scale:=9.80665 \
     -p output_frame_id:=livox_imu >"$output_dir/imu_scaler.log" 2>&1 &
-  pids+=("$!")
+  worker_pids+=("$!")
 }
 
 output_topics=()
@@ -148,11 +160,16 @@ printf '%q ' "${playback_exec[@]}" >"$output_dir/actual_play_command.txt"; print
 cp "$algorithm_config" "$output_dir/actual_config" 2>/dev/null || cp -R "$algorithm_config" "$output_dir/actual_config"
 
 /usr/bin/time -v -o "$output_dir/resource_time.txt" "${node_cmd[@]}" >"$output_dir/stdout.log" 2>"$output_dir/stderr.log" &
-node_pid=$!; pids+=("$node_pid")
+node_pid=$!
 sleep 5
 kill -0 "$node_pid" 2>/dev/null || { echo "algorithm exited during startup" >&2; exit 70; }
+node_control_pid=$(pgrep -P "$node_pid" | head -n 1 || true)
+[[ -n "$node_control_pid" ]] || { echo "cannot identify ros2 node supervisor child" >&2; exit 70; }
+for pid in "${worker_pids[@]:-}"; do
+  kill -0 "$pid" 2>/dev/null || { echo "input adapter exited during startup: $pid" >&2; exit 70; }
+done
 ros2 bag record -o "$output_dir/trajectory" "${output_topics[@]}" >"$output_dir/record.log" 2>&1 &
-record_pid=$!; pids+=("$record_pid")
+record_pid=$!
 sleep 2
 set +e
 "${playback_exec[@]}" >"$output_dir/play.log" 2>&1
@@ -161,13 +178,20 @@ set -e
 play_exit=$play_exit_raw
 [[ -n "$smoke_duration_s" && "$play_exit_raw" -eq 124 ]] && play_exit=0
 sleep 5
-kill -INT "$record_pid" 2>/dev/null || true; wait "$record_pid" || true
-kill -INT "$node_pid" 2>/dev/null || true; wait "$node_pid" || node_exit=$?
+stop_process "$record_pid" INT
+stop_process "$node_control_pid" TERM
+wait "$node_pid" 2>/dev/null || node_exit=$?
 node_exit=${node_exit:-0}
-python3 - "$output_dir/run_result.json" "$algorithm" "$play_exit" "$play_exit_raw" "$node_exit" "${smoke_duration_s:-}" <<'PY'
-import json,sys
-status='SUCCESS' if sys.argv[3]=='0' and sys.argv[5]=='0' else 'RUNTIME_CRASH'
-duration=float(sys.argv[6]) if sys.argv[6] else None
-json.dump({'algorithm':sys.argv[2],'status':status,'bag_play_exit_code':int(sys.argv[3]),'bag_play_exit_code_raw':int(sys.argv[4]),'algorithm_exit_code':int(sys.argv[5]),'playback_rate':1.0,'smoke_duration_s':duration},open(sys.argv[1],'w'),indent=2)
+trajectory_messages=$(python3 - "$output_dir/trajectory/metadata.yaml" <<'PY'
+import sys,yaml
+print(yaml.safe_load(open(sys.argv[1]))['rosbag2_bagfile_information']['message_count'])
 PY
-[[ "$play_exit" -eq 0 && "$node_exit" -eq 0 ]]
+)
+python3 - "$output_dir/run_result.json" "$algorithm" "$play_exit" "$play_exit_raw" "$node_exit" "${smoke_duration_s:-}" "$trajectory_messages" <<'PY'
+import json,sys
+messages=int(sys.argv[7])
+status='SUCCESS' if sys.argv[3]=='0' and sys.argv[5]=='0' and messages>0 else ('NO_ODOMETRY' if messages==0 else 'RUNTIME_CRASH')
+duration=float(sys.argv[6]) if sys.argv[6] else None
+json.dump({'algorithm':sys.argv[2],'status':status,'bag_play_exit_code':int(sys.argv[3]),'bag_play_exit_code_raw':int(sys.argv[4]),'algorithm_exit_code':int(sys.argv[5]),'playback_rate':1.0,'smoke_duration_s':duration,'trajectory_messages':messages},open(sys.argv[1],'w'),indent=2)
+PY
+[[ "$play_exit" -eq 0 && "$node_exit" -eq 0 && "$trajectory_messages" -gt 0 ]]

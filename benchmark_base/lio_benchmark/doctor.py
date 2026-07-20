@@ -42,6 +42,9 @@ def check_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             add("bag_metadata", False, repr(exc))
     dataset = manifest.get("dataset", {})
+    for setup in dataset.get("setup_scripts", []):
+        path = resolve_path(str(setup))
+        add("dataset:setup", path.is_file(), str(path))
     for kind in ("lidar", "imu"):
         topic, expected = dataset.get(f"{kind}_topic"), dataset.get(f"{kind}_type")
         add(f"topic:{kind}", topic in topics and topics.get(topic) == expected, f"{topic}: actual={topics.get(topic)} expected={expected}")
