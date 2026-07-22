@@ -778,6 +778,21 @@ class ManualRunController:
             result["baseline_map"] = str(self.run_dir / "figures" / "fast_livo2_baseline_maps")
         else:
             result["baseline_map"] = None
+        comprehensive_script = REPO_ROOT / "evaluators/generate_comprehensive_report.py"
+        comprehensive = self._run(
+            [sys.executable, str(comprehensive_script), "--run", str(self.run_dir)],
+            cwd=str(REPO_ROOT),
+            env=self._environment(self.run_dir),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=3600,
+            start_new_session=True,
+        )
+        if getattr(comprehensive, "returncode", 1) != 0:
+            raise ControllerError("综合实验报告生成失败: " + getattr(comprehensive, "stderr", "").strip()[-1000:])
+        result["comprehensive"] = str(self.run_dir / "reports" / "comprehensive_comparison.md")
         return result
 
 

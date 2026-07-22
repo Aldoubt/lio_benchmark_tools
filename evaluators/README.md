@@ -4,6 +4,17 @@
 
 本目录用于隔离后续 Livox MID360 数据完整性、IMU、时间同步和 LIO 轨迹 Z 轴漂移测试，不修改任何算法核心源码。
 
+完整十算法 run 的综合报告使用：
+
+```bash
+python3 evaluators/generate_comprehensive_report.py \
+  --run /home/yangxuan/lio_benchmark_runs/<run_id>
+```
+
+输出 `reports/comprehensive_comparison.{md,json,csv}` 和 `figures/comprehensive_comparison/comprehensive_summary.png`。其中 TOPS 是根据进程树 CPU 百分比和当前 CPU 的 AVX2/FMA FP32 峰值假设换算的同机代理值；没有 perf/GPU 计数时，不把它当作真实算法 TOPS。
+
+单算法补跑后，使用 `benchmark_base/bin/lio-benchmark combine-run` 创建新组合归档，再执行标准化、`visualize_baseline_maps.py`、`resource-plot` 和 `comprehensive-report`。不要直接替换旧 run 的 `raw/mola_lio`，否则地图和报告来源会失去可审计性。
+
 ## 指定数据集
 
 - rosbag2 目录：`/media/yangxuan/67AE0BEFE2F5AC661/6.7白云基地导航数据集/第一次录制整体框架/mid360_init_state2`

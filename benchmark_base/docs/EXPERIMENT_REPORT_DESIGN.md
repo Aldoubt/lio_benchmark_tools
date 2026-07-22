@@ -24,6 +24,10 @@ manifest.json + run_status.json
         |       +--> preliminary_experiment_report.json
         |       +--> preliminary_experiment_report.md
         |
+        +--> generate_comprehensive_report.py
+                +--> comprehensive_comparison.json / .md / .csv
+                +--> figures/comprehensive_comparison/comprehensive_summary.png
+        |
         +--> standardize_trajectory / summarize_smoke_run
         +--> evaluation metrics
         +--> FAST-LIVO2 baseline map (条件满足时)
@@ -48,11 +52,43 @@ manifest.json + run_status.json
 ## 当前阶段必要软件
 
 - `generate_experiment_report.py`：无 ROS 依赖的生命周期/资源/日志初筛。
+- `generate_comprehensive_report.py`：读取完整 bag 的标准化诊断、FAST-LIVO2 相对轨迹、地图重建元数据和资源采样，生成中文综合报告；TOPS 是同机 CPU-FP32 等效代理，不是实测算力。
 - `summarize_smoke_run.py`：读取轨迹消息并生成标准化 CSV/TUM 与诊断比较。
 - `visualize_baseline_maps.py`：仅在 FAST-LIVO2 成功且标准化轨迹存在时生成相对基准地图。
 - GUI queue worker：串行执行算法，记录 `metadata/run_queue.json`，失败后继续后续项目。
 
 后续可增加：每核 CPU、GPU 利用率/显存、磁盘吞吐和 bag 播放进度的统一 sampler，并把这些数据写入同一份 time-series resource schema。
+
+完整 run 生成综合报告：
+
+```bash
+benchmark_base/bin/lio-benchmark comprehensive-report \
+  --run /path/to/mapping_20260719_172810_full807_round1_001
+```
+
+报告会把 Point-LIO/DLIO 的轨迹发散从“进程成功退出”中单独标出来，并把 MOLA-LIO 的 `imu_gravity_correction=true` 与本轮 Z 诊断分开记录。没有 ground truth 时不生成 ATE/RPE，也不把相对 FAST-LIVO2 的 RMSE 解释成绝对精度。
+
+将单算法新结果覆盖进旧归档并生成新的组合 run：
+
+```bash
+benchmark_base/bin/lio-benchmark combine-run \
+  --base-run /path/to/mapping_20260719_172810_full807_round1_001 \
+  --override-run /path/to/mapping_20260719_172810_mola_gravity_full807_001 \
+  --algorithm mola_lio \
+  --output-run /path/to/mapping_20260719_172810_full807_round1_mola_gravity_combined_001
+python3 evaluators/summarize_smoke_run.py \
+  /path/to/mapping_20260719_172810_full807_round1_mola_gravity_combined_001 \
+  --name full_comparison
+python3 evaluators/visualize_baseline_maps.py \
+  --run /path/to/mapping_20260719_172810_full807_round1_mola_gravity_combined_001 \
+  --scan-step 5 --point-step 20 --voxel 0.12
+benchmark_base/bin/lio-benchmark resource-plot \
+  --run /path/to/mapping_20260719_172810_full807_round1_mola_gravity_combined_001
+benchmark_base/bin/lio-benchmark comprehensive-report \
+  --run /path/to/mapping_20260719_172810_full807_round1_mola_gravity_combined_001
+```
+
+组合工具默认硬链接旧算法的大型 raw 结果，仅复制被覆盖算法；旧 run 不会被修改。
 
 ## 当前 run 的阶段性判读
 

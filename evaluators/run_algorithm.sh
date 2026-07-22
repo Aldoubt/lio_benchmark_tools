@@ -154,6 +154,13 @@ case "$algorithm" in
     if [[ "$algorithm" == mola_lio ]]; then
       export IMU_POSE_X=-0.011 IMU_POSE_Y=-0.02329 IMU_POSE_Z=0.04412
       export IMU_POSE_YAW=0 IMU_POSE_PITCH=0 IMU_POSE_ROLL=0
+      # The MID360 bag has no valid attitude estimate in sensor_msgs/Imu
+      # (orientation is the default quaternion with zero covariance). Use
+      # MOLA's accelerometer-only pitch/roll initializer instead of the
+      # pipeline's default identity FixedPose initialization.
+      export MOLA_LO_INITIAL_LOCALIZATION_METHOD=InitLocalization::PitchAndRollFromIMU
+      export MOLA_LO_INITIAL_IMU_SAMPLES=400
+      export MOLA_LO_INITIAL_IMU_USE_ORIENTATION=false
       mola_args+=(imu_topic_name:="$imu_si_topic" use_imu_for_lio:=True imu_gravity_correction:=true mola_deskew_method:=MotionCompensationMethod::IMU ignore_imu_pose_from_tf:=true)
     else
       mola_args+=(use_imu_for_lio:=False imu_gravity_correction:=false mola_deskew_method:=MotionCompensationMethod::Linear)

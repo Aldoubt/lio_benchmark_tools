@@ -131,6 +131,34 @@ def cmd_resource_plot(args: argparse.Namespace) -> int:
     return subprocess.run(command, check=False).returncode
 
 
+def cmd_comprehensive_report(args: argparse.Namespace) -> int:
+    run, _ = resolve_run(args.run)
+    command = [sys.executable, str(REPO_ROOT / "evaluators/generate_comprehensive_report.py"), "--run", str(run)]
+    if args.output_dir:
+        command.extend(["--output-dir", str(args.output_dir)])
+    if args.no_plot:
+        command.append("--no-plot")
+    print(" ".join(command))
+    if args.dry_run:
+        return 0
+    return subprocess.run(command, check=False).returncode
+
+
+def cmd_combine_run(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(REPO_ROOT / "evaluators/combine_benchmark_runs.py"),
+        "--base-run", str(args.base_run),
+        "--override-run", str(args.override_run),
+        "--algorithm", args.algorithm,
+        "--output-run", str(args.output_run),
+    ]
+    print(" ".join(command))
+    if args.dry_run:
+        return 0
+    return subprocess.run(command, check=False).returncode
+
+
 def cmd_stage(args: argparse.Namespace) -> int:
     run, _ = resolve_run(args.run)
     marker = run / "metadata" / f"{args.stage}.json"
@@ -216,6 +244,8 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("analyze-bag"); p.add_argument("--run", type=Path, required=True); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_analyze)
     p = sub.add_parser("preliminary-report"); p.add_argument("--run", type=Path, required=True); p.add_argument("--output-dir", type=Path); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_preliminary_report)
     p = sub.add_parser("resource-plot"); p.add_argument("--run", type=Path, required=True); p.add_argument("--output-dir", type=Path); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_resource_plot)
+    p = sub.add_parser("comprehensive-report"); p.add_argument("--run", type=Path, required=True); p.add_argument("--output-dir", type=Path); p.add_argument("--no-plot", action="store_true"); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_comprehensive_report)
+    p = sub.add_parser("combine-run"); p.add_argument("--base-run", type=Path, required=True); p.add_argument("--override-run", type=Path, required=True); p.add_argument("--algorithm", default="mola_lio"); p.add_argument("--output-run", type=Path, required=True); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_combine_run)
     for stage in ("standardize", "evaluate", "visualize", "report"):
         p = sub.add_parser(stage); p.add_argument("--run", type=Path, required=True); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_stage, stage=stage)
     p = sub.add_parser("snapshot"); p.add_argument("--run", type=Path, required=True); p.set_defaults(func=cmd_snapshot)
