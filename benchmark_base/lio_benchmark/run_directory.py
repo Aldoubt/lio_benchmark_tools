@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from .manifest import resolve_path
+from .run_status import initialize_run_status
 
 
 BASE_DIRS = ("input", "configs", "standardized/trajectories", "standardized/maps", "metrics", "figures", "reports", "logs", "metadata")
@@ -24,7 +25,7 @@ def create_run(manifest: dict, source_manifest: Path, run_id: str | None = None)
     frozen = dict(manifest)
     frozen.update({"run_id": actual_id, "created_at": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(), "source_manifest": str(source_manifest.resolve())})
     (run / "manifest.json").write_text(json.dumps(frozen, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (run / "RUN_STATUS.md").write_text(f"# Run {actual_id}\n\n- 状态：initialized\n- bag 回放：not_started\n- 创建时间：{frozen['created_at']}\n", encoding="utf-8")
+    initialize_run_status(run, frozen)
     return run
 
 

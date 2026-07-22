@@ -72,12 +72,23 @@ def cmd_commands(args: argparse.Namespace) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     run, manifest = resolve_run(args.run)
-    selected = args.algorithm or [name for name, cfg in manifest["algorithms"].items() if cfg.get("enabled")]
+    status = json.loads((run / "metadata" / "run_status.json").read_text(encoding="utf-8")) if (run / "metadata" / "run_status.json").is_file() else {}
+    selected = args.algorithm or [name for name, cfg in manifest["algorithms"].items() if cfg.get("enabled") and status.get("algorithms", {}).get(name, {}).get("state") not in {"completed"}]
     bag, manifest_path = resolve_path(str(manifest["dataset"]["bag_dir"])), run / "manifest.json"
+    failures = 0
     for name in selected:
         if name not in manifest["algorithms"]:
             raise ValueError(f"算法不在 manifest 中: {name}")
-        command = command_for(name, manifest["algorithms"][name], manifest_path, run / "raw" / name, bag)
+        output = run / "raw" / name
+        if output.is_dir() and any(output.iterdir()):
+            suffix = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            candidate = output / f"attempt_{suffix}_{os.getpid()}"
+            index = 1
+            while candidate.exists():
+                candidate = output / f"attempt_{suffix}_{os.getpid()}_{index}"
+                index += 1
+            output = candidate
+        command = command_for(name, manifest["algorithms"][name], manifest_path, output, bag)
         print(" ".join(command))
         if not args.dry_run:
             environment = os.environ.copy()
@@ -85,8 +96,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 environment["LIO_BENCHMARK_DURATION_S"] = str(args.duration)
             result = subprocess.run(command, check=False, env=environment)
             if result.returncode:
-                return result.returncode
-    return 0
+                failures += 1
+    return 1 if failures else 0
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
@@ -96,6 +107,28 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if not args.dry_run:
         return subprocess.run(command, check=False).returncode
     return 0
+
+
+def cmd_preliminary_report(args: argparse.Namespace) -> int:
+    run, _ = resolve_run(args.run)
+    command = [sys.executable, str(REPO_ROOT / "evaluators/generate_experiment_report.py"), "--run", str(run)]
+    if args.output_dir:
+        command.extend(["--output-dir", str(args.output_dir)])
+    print(" ".join(command))
+    if args.dry_run:
+        return 0
+    return subprocess.run(command, check=False).returncode
+
+
+def cmd_resource_plot(args: argparse.Namespace) -> int:
+    run, _ = resolve_run(args.run)
+    command = [sys.executable, str(REPO_ROOT / "evaluators/plot_resource_curves.py"), "--run", str(run)]
+    if args.output_dir:
+        command.extend(["--output-dir", str(args.output_dir)])
+    print(" ".join(command))
+    if args.dry_run:
+        return 0
+    return subprocess.run(command, check=False).returncode
 
 
 def cmd_stage(args: argparse.Namespace) -> int:
@@ -181,6 +214,8 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser("commands"); choice=p.add_mutually_exclusive_group(required=True); choice.add_argument("--config", type=Path); choice.add_argument("--run", type=Path); p.set_defaults(func=cmd_commands)
     p = sub.add_parser("run"); p.add_argument("--run", type=Path, required=True); p.add_argument("--algorithm", action="append"); p.add_argument("--duration", type=int); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_run)
     p = sub.add_parser("analyze-bag"); p.add_argument("--run", type=Path, required=True); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_analyze)
+    p = sub.add_parser("preliminary-report"); p.add_argument("--run", type=Path, required=True); p.add_argument("--output-dir", type=Path); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_preliminary_report)
+    p = sub.add_parser("resource-plot"); p.add_argument("--run", type=Path, required=True); p.add_argument("--output-dir", type=Path); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_resource_plot)
     for stage in ("standardize", "evaluate", "visualize", "report"):
         p = sub.add_parser(stage); p.add_argument("--run", type=Path, required=True); p.add_argument("--dry-run", action="store_true"); p.set_defaults(func=cmd_stage, stage=stage)
     p = sub.add_parser("snapshot"); p.add_argument("--run", type=Path, required=True); p.set_defaults(func=cmd_snapshot)

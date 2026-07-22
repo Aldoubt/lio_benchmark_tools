@@ -1,0 +1,35 @@
+{
+  "dataset": "mapping_20260719_172810",
+  "sampled_lidar_frames": 50,
+  "total_lidar_frames": 8059,
+  "input_points": 1000320,
+  "output_points": 1000320,
+  "invalid_tag_points": 0,
+  "non_finite_points": 0,
+  "invalid_time_points": 0,
+  "input_time_backtracks": 6824,
+  "output_time_backtracks_after_sort": 0,
+  "time_min_s": 0.0,
+  "time_max_s": 0.101306004,
+  "ring_min": 0,
+  "ring_max": 3,
+  "ring_counts": {
+    "0": 250080,
+    "1": 250080,
+    "2": 250080,
+    "3": 250080
+  },
+  "dropped_points": 0,
+  "dropped_ratio": 0.0,
+  "imu_sample_count": 2000,
+  "imu_acceleration_unit": "g",
+  "imu_acc_norm_median": 0.9906150451943485,
+  "pointcloud_contract": {
+    "point_time_field": "offset_time",
+    "point_time_datatype": "uint32",
+    "point_time_unit": "ns",
+    "point_time_semantics": "relative_to_header",
+    "ring_semantics": "real CustomPoint.line values 0..3; no synthetic rings"
+  },
+  "conclusion": "50-frame read-only sample has finite points, valid tags, real lines 0..3, and zero output time backtracks after sorting."
+}

@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "lock_name": "mapping_20260719_172810_ros2_humble",
+  "recorded_at": "2026-07-22",
+  "experiment": "mapping_20260719_172810_full807_round1_001",
+  "ros": {
+    "distribution": "humble",
+    "ros_version": 2,
+    "setup_script": "/opt/ros/humble/setup.bash",
+    "platform": "Ubuntu 22.04 Jammy"
+  },
+  "dataset": {
+    "name": "mapping_20260719_172810",
+    "duration_s": 807.449888791,
+    "message_count": 344567,
+    "storage_id": "sqlite3",
+    "lidar_type": "livox_ros_driver2/msg/CustomMsg",
+    "imu_type": "sensor_msgs/msg/Imu",
+    "point_time_field": "offset_time",
+    "point_time_unit": "ns",
+    "imu_acceleration_unit": "g"
+  },
+  "algorithms": {
+    "kiss_icp": {
+      "ros2_distribution": "humble",
+      "package": "kiss_icp",
+      "package_version": "1.3.0",
+      "repository": "https://github.com/PRBonn/kiss-icp.git",
+      "ref": "v1.3.0",
+      "commit": "b16835283aee62f7d5e2bdf6c1c3bb2930de74ff",
+      "patches": []
+    },
+    "mola_lo": {
+      "ros2_distribution": "humble",
+      "packages": {
+        "mola_launcher": "2.9.0",
+        "mola_lidar_odometry": "2.2.1"
+      },
+      "source": "ROS 2 Humble binary packages",
+      "ref": "binary",
+      "patches": []
+    },
+    "mola_lio": {
+      "ros2_distribution": "humble",
+      "packages": {
+        "mola_launcher": "2.9.0",
+        "mola_state_estimation": "2.4.2",
+        "mola_lidar_odometry": "2.2.1"
+      },
+      "source": "ROS 2 Humble binary packages",
+      "ref": "binary",
+      "patches": []
+    },
+    "fast_livo2": {
+      "ros2_distribution": "humble",
+      "package": "fast_livo",
+      "package_version": "0.0.0",
+      "repository": "https://github.com/Aldoubt/agt_navigation_v2.git",
+      "source_subdirectory": "third_party/fast_livo2_ros2",
+      "ref": "main",
+      "commit": "1e96f08f992aab57a7b738ad7964edff835caee2",
+      "patches": []
+    },
+    "point_lio": {
+      "ros2_distribution": "humble",
+      "package": "point_lio",
+      "package_version": "0.0.0",
+      "repository": "https://github.com/dfloreaa/point_lio_ros2.git",
+      "ref": "main",
+      "commit": "a8e2d0d5090af97ead8dd4fac3d37cf3dbb33ff7",
+      "patches": []
+    },
+    "dlio": {
+      "ros2_distribution": "humble",
+      "package": "direct_lidar_inertial_odometry",
+      "package_version": "1.1.1",
+      "repository": "https://github.com/vectr-ucla/direct_lidar_inertial_odometry.git",
+      "ref": "feature/ros2",
+      "commit": "c8acc37100e349d70a9d8432d656cbce7e5072cd",
+      "patches": [
+        "patches/dlio/spaciousness_bounds.patch"
+      ]
+    },
+    "glim_odometry": {
+      "ros2_distribution": "humble",
+      "package": "glim_ros",
+      "repository": "https://github.com/koide3/glim.git",
+      "ref": "v1.2.2",
+      "commit": "faa264a1bce1bda406f73457e35511f56cdc2eaa",
+      "patches": [
+        "patches/glim/gtsam_points_v1.2.2_boost_none.patch"
+      ]
+    },
+    "glim_full_slam": {
+      "ros2_distribution": "humble",
+      "package": "glim_ros",
+      "repository": "https://github.com/koide3/glim.git",
+      "ref": "v1.2.2",
+      "commit": "faa264a1bce1bda406f73457e35511f56cdc2eaa",
+      "patches": [
+        "patches/glim/gtsam_points_v1.2.2_boost_none.patch"
+      ]
+    },
+    "lio_sam_no_loop": {
+      "ros2_distribution": "humble",
+      "package": "lio_sam",
+      "package_version": "1.0.0",
+      "repository": "https://github.com/TixiaoShan/LIO-SAM.git",
+      "ref": "ros2",
+      "commit": "08af3f32f01725372d4269838dc44c19c6d9e76b",
+      "patches": []
+    },
+    "lio_sam_loop": {
+      "ros2_distribution": "humble",
+      "package": "lio_sam",
+      "package_version": "1.0.0",
+      "repository": "https://github.com/TixiaoShan/LIO-SAM.git",
+      "ref": "ros2",
+      "commit": "08af3f32f01725372d4269838dc44c19c6d9e76b",
+      "patches": []
+    }
+  },
+  "reproduction": {
+    "playback_rate": 1.0,
+    "resource_monitor_interval_s": 0.5,
+    "required_ros2_distribution": "humble",
+    "note": "The lock records the versions used by the completed run. Absolute workspace paths belong to the original machine and must be relocated in the experiment manifest on another computer."
+  }
+}

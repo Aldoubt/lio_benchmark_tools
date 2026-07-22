@@ -1,0 +1,114 @@
+{
+  "schema_version": 2,
+  "name": "mapping_20260719_172810_mid360",
+  "output_root": "/home/yangxuan/lio_benchmark_runs",
+  "playback_rate": 1.0,
+  "resource_monitor_interval_s": 0.5,
+  "dataset": {
+    "bag_dir": "/home/yangxuan/lio_benchmark_tools/date/mapping_20260719_172810",
+    "storage_id": "sqlite3",
+    "lidar_topic": "/agt/sensors/lidar/custom",
+    "lidar_type": "livox_ros_driver2/msg/CustomMsg",
+    "imu_topic": "/agt/sensors/imu/data",
+    "imu_type": "sensor_msgs/msg/Imu",
+    "wheel_odom_topic": "/agt/chassis/odometry",
+    "ground_truth": null,
+    "imu_acceleration_unit": "g",
+    "point_time_field": "offset_time",
+    "point_time_datatype": "uint32",
+    "point_time_unit": "ns",
+    "point_time_semantics": "relative_to_header",
+    "start_offset_s": 0.0,
+    "end_offset_s": null,
+    "duration_s": 807.449888791,
+    "message_count": 344567,
+    "frame_id": "livox_frame",
+    "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/agt_navigation_v2/install/setup.bash", "/home/yangxuan/lio_benchmark_algorithms/adapter_ws/install/setup.bash"],
+    "cloud_adapter": {
+      "package": "lio_benchmark_adapters",
+      "executable": "custommsg_to_pointcloud2",
+      "required_executable": "/home/yangxuan/lio_benchmark_algorithms/adapter_ws/install/lio_benchmark_adapters/lib/lio_benchmark_adapters/custommsg_to_pointcloud2"
+    },
+    "pre_run_input_validation": "benchmark_base/docs/development/PRE_RUN_INPUT_VALIDATION_MAPPING_20260719_172810.json",
+    "adapter_topics": {
+      "pointcloud2": "/lio_benchmark/points",
+      "imu_si": "/lio_benchmark/imu_si",
+      "lio_sam_points": "/lio_benchmark/lio_sam_points"
+    }
+  },
+  "calibration": {
+    "lidar_to_imu": {
+      "direction": "lidar_to_imu",
+      "rotation": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+      "translation": [0.011, 0.02329, -0.04412],
+      "confidence": "project_baseline"
+    },
+    "imu_to_base": {
+      "direction": "imu_to_base",
+      "rotation": [0.8660254037844387, 0.0, 0.5, 0.0, 1.0, 0.0, -0.5, 0.0, 0.8660254037844387],
+      "translation": [0.27403372055837116, -0.02329, 0.34370904081496945],
+      "confidence": "derived_from_provisional_vehicle_measurement"
+    },
+    "lidar_to_base": {
+      "direction": "lidar_to_base",
+      "rotation": [0.8660254037844387, 0.0, 0.5, 0.0, 1.0, 0.0, -0.5, 0.0, 0.8660254037844387],
+      "translation": [0.2615, 0.0, 0.3],
+      "confidence": "provisional_vehicle_measurement"
+    },
+    "source": "agt_navigation_v2/src/agt_mapping/config/mid360_lio_only.yaml and agt_description/config/bunker_mid360.yaml",
+    "confidence": "mixed; internal sensor baseline plus provisional vehicle measurement"
+  },
+  "evaluation": {
+    "ground_truth_available": false,
+    "common_time_window": true,
+    "max_pose_interpolation_gap_s": 0.25,
+    "map_scan_step": 5,
+    "map_point_step": 8,
+    "map_voxel_m": 0.12,
+    "minimum_range_m": 0.5,
+    "maximum_range_m": 70.0,
+    "diagnostic_only_metrics": ["z_range_m", "z_end_delta_m", "loop_endpoint_delta_m", "estimated_path_length_m", "roll_range_deg", "pitch_range_deg", "map_consistency_proxy"]
+  },
+  "algorithms": {
+    "kiss_icp": {
+      "enabled": true, "group": "lidar_only_odometry", "mode": "odometry", "sensor_inputs": ["lidar"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/kiss_icp_ws", "source": "/home/yangxuan/lio_benchmark_algorithms/kiss_icp_ws/src/kiss-icp", "repository": "https://github.com/PRBonn/kiss-icp.git", "branch": "v1.3.0", "commit": "b16835283aee62f7d5e2bdf6c1c3bb2930de74ff", "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/lio_benchmark_algorithms/kiss_icp_ws/install/setup.bash"], "runner": "evaluators/run_kiss_icp_test.sh", "config": "configs/algorithms/kiss_icp/config.yaml", "input_topics": {"lidar": "/lio_benchmark/points"}, "output_topics": {"odometry": "/kiss/odometry"}, "patches": [], "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/kiss_icp_ws/install/kiss_icp/lib/kiss_icp/kiss_icp_node"]
+    },
+    "mola_lo": {
+      "enabled": true, "group": "lidar_only_odometry", "mode": "odometry", "sensor_inputs": ["lidar"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/mola_ws", "source": "/home/yangxuan/lio_benchmark_algorithms/mola_ws/apt_root/opt/ros/humble", "repository": "ROS 2 Humble binary packages", "branch": "binary", "commit": "mola=2.9.0,mola_lidar_odometry=2.2.1", "setup_scripts": ["/opt/ros/humble/setup.bash", "configs/algorithms/mola/setup_user_overlay.bash"], "runner": "evaluators/run_mola_lo_test.sh", "config": "configs/algorithms/mola_lo/config.yaml", "input_topics": {"lidar": "/lio_benchmark/points"}, "output_topics": {"trajectory_tf": "/tf", "transform": "map->livox_frame"}, "patches": [], "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/mola_ws/apt_root/opt/ros/humble/lib/mola_launcher/mola-cli"]
+    },
+    "mola_lio": {
+      "enabled": true, "group": "lidar_imu_odometry", "mode": "odometry", "sensor_inputs": ["lidar", "imu"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/mola_ws", "source": "/home/yangxuan/lio_benchmark_algorithms/mola_ws/apt_root/opt/ros/humble", "repository": "ROS 2 Humble binary packages", "branch": "binary", "commit": "mola=2.9.0,mola_state_estimation=2.4.2,mola_lidar_odometry=2.2.1", "setup_scripts": ["/opt/ros/humble/setup.bash", "configs/algorithms/mola/setup_user_overlay.bash"], "runner": "evaluators/run_mola_lio_test.sh", "config": "configs/algorithms/mola_lio/config.yaml", "input_topics": {"lidar": "/lio_benchmark/points", "imu": "/lio_benchmark/imu_si"}, "output_topics": {"trajectory_tf": "/tf", "transform": "map->livox_frame"}, "patches": [], "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/mola_ws/apt_root/opt/ros/humble/lib/mola_launcher/mola-cli"]
+    },
+    "fast_livo2": {
+      "enabled": true, "group": "lidar_imu_odometry", "mode": "odometry", "sensor_inputs": ["lidar", "imu"],
+      "workspace": "/home/yangxuan/agt_navigation_v2", "source": "/home/yangxuan/agt_navigation_v2/third_party/fast_livo2_ros2", "repository": "vendored in Aldoubt/agt_navigation_v2", "branch": "main", "commit": "1e96f08f992aab57a7b738ad7964edff835caee2", "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/agt_navigation_v2/install/setup.bash"], "runner": "evaluators/run_fast_livo_test.sh", "config": "configs/algorithms/fast_livo2/mapping_20260719_172810.yaml", "input_topics": {"lidar": "/agt/sensors/lidar/custom", "imu": "/agt/sensors/imu/data"}, "output_topics": {"odometry": "/aft_mapped_to_init", "path": "/path"}, "patches": [], "required_executables": ["/home/yangxuan/agt_navigation_v2/install/fast_livo/lib/fast_livo/fastlivo_mapping"]
+    },
+    "point_lio": {
+      "enabled": true, "group": "lidar_imu_odometry", "mode": "odometry", "sensor_inputs": ["lidar", "imu"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/point_lio_ws", "source": "/home/yangxuan/lio_benchmark_algorithms/point_lio_ws/src/point_lio_ros2", "repository": "https://github.com/dfloreaa/point_lio_ros2.git", "branch": "main", "commit": "a8e2d0d5090af97ead8dd4fac3d37cf3dbb33ff7", "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/agt_navigation_v2/install/setup.bash", "/home/yangxuan/lio_benchmark_algorithms/point_lio_ws/install/setup.bash"], "runner": "evaluators/run_point_lio_test.sh", "config": "configs/algorithms/point_lio/mid360.yaml", "input_topics": {"lidar": "/lio_benchmark/points", "imu": "/agt/sensors/imu/data"}, "output_topics": {"odometry": "/aft_mapped_to_init", "path": "/path"}, "patches": [], "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/point_lio_ws/install/point_lio/lib/point_lio/pointlio_mapping"]
+    },
+    "dlio": {
+      "enabled": true, "group": "lidar_imu_odometry", "mode": "odometry", "sensor_inputs": ["lidar", "imu"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/dlio_ws", "source": "/home/yangxuan/lio_benchmark_algorithms/dlio_ws/src/direct_lidar_inertial_odometry", "repository": "https://github.com/vectr-ucla/direct_lidar_inertial_odometry.git", "branch": "feature/ros2", "commit": "c8acc37100e349d70a9d8432d656cbce7e5072cd", "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/lio_benchmark_algorithms/dlio_ws/install/setup.bash"], "runner": "evaluators/run_dlio_test.sh", "config": "configs/algorithms/dlio", "input_topics": {"lidar": "/lio_benchmark/points", "imu": "/lio_benchmark/imu_si"}, "output_topics": {"odometry": "/odom"}, "patches": ["patches/dlio/spaciousness_bounds.patch"], "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/dlio_ws/install/direct_lidar_inertial_odometry/lib/direct_lidar_inertial_odometry/dlio_odom_node"]
+    },
+    "glim_odometry": {
+      "enabled": true, "group": "lidar_imu_odometry", "mode": "odometry", "sensor_inputs": ["lidar", "imu"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/glim_ws", "source": "/home/yangxuan/lio_benchmark_algorithms/glim_ws/src/glim", "repository": "https://github.com/koide3/glim.git", "branch": "v1.2.2", "commit": "faa264a1bce1bda406f73457e35511f56cdc2eaa", "environment": {"LIO_BENCHMARK_GTSAM_PREFIX": "/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws/deps/opt/ros/humble"}, "setup_scripts": ["/opt/ros/humble/setup.bash", "configs/algorithms/glim/setup_dependencies.bash", "/home/yangxuan/lio_benchmark_algorithms/glim_ws/install/setup.bash"], "runner": "evaluators/run_glim_odometry_test.sh", "config": "configs/algorithms/glim_odometry", "input_topics": {"lidar": "/lio_benchmark/points", "imu": "/lio_benchmark/imu_si"}, "output_topics": {"odometry": "/glim_ros/odom"}, "patches": ["patches/glim/gtsam_points_v1.2.2_boost_none.patch"], "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/glim_ws/install/glim_ros/lib/glim_ros/glim_rosnode"]
+    },
+    "glim_full_slam": {
+      "enabled": true, "group": "full_slam", "mode": "full_slam", "sensor_inputs": ["lidar", "imu"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/glim_ws", "source": "/home/yangxuan/lio_benchmark_algorithms/glim_ws/src/glim", "repository": "https://github.com/koide3/glim.git", "branch": "v1.2.2", "commit": "faa264a1bce1bda406f73457e35511f56cdc2eaa", "environment": {"LIO_BENCHMARK_GTSAM_PREFIX": "/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws/deps/opt/ros/humble"}, "setup_scripts": ["/opt/ros/humble/setup.bash", "configs/algorithms/glim/setup_dependencies.bash", "/home/yangxuan/lio_benchmark_algorithms/glim_ws/install/setup.bash"], "runner": "evaluators/run_glim_full_slam_test.sh", "config": "configs/algorithms/glim_full_slam", "input_topics": {"lidar": "/lio_benchmark/points", "imu": "/lio_benchmark/imu_si"}, "output_topics": {"odometry": "/glim_ros/odom_corrected"}, "patches": ["patches/glim/gtsam_points_v1.2.2_boost_none.patch"], "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/glim_ws/install/glim_ros/lib/glim_ros/glim_rosnode"]
+    },
+    "lio_sam_no_loop": {
+      "enabled": true, "group": "full_slam", "mode": "full_slam", "sensor_inputs": ["lidar", "imu"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws", "source": "/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws/src/LIO-SAM", "repository": "https://github.com/TixiaoShan/LIO-SAM.git", "branch": "ros2", "commit": "08af3f32f01725372d4269838dc44c19c6d9e76b", "setup_scripts": ["/opt/ros/humble/setup.bash", "configs/algorithms/lio_sam/setup_dependencies.bash", "/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws/install/setup.bash"], "runner": "evaluators/run_lio_sam_test.sh", "config": "configs/algorithms/lio_sam_no_loop/params.yaml", "input_topics": {"lidar": "/lio_benchmark/lio_sam_points", "imu": "/lio_benchmark/imu_si"}, "output_topics": {"odometry": "/lio_sam/mapping/odometry"}, "patches": [], "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws/install/lio_sam/lib/lio_sam/lio_sam_mapOptimization"]
+    },
+    "lio_sam_loop": {
+      "enabled": true, "group": "full_slam", "mode": "full_slam", "sensor_inputs": ["lidar", "imu"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws", "source": "/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws/src/LIO-SAM", "repository": "https://github.com/TixiaoShan/LIO-SAM.git", "branch": "ros2", "commit": "08af3f32f01725372d4269838dc44c19c6d9e76b", "setup_scripts": ["/opt/ros/humble/setup.bash", "configs/algorithms/lio_sam/setup_dependencies.bash", "/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws/install/setup.bash"], "runner": "evaluators/run_lio_sam_test.sh", "config": "configs/algorithms/lio_sam_loop/params.yaml", "input_topics": {"lidar": "/lio_benchmark/lio_sam_points", "imu": "/lio_benchmark/imu_si"}, "output_topics": {"odometry": "/lio_sam/mapping/odometry"}, "patches": [], "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws/install/lio_sam/lib/lio_sam/lio_sam_mapOptimization"]
+    }
+  }
+}

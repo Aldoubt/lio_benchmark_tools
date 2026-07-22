@@ -41,5 +41,7 @@
       extrinsic_T: [0.011, 0.02329, -0.04412]
       extrinsic_R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
     odometry: {publish_odometry_without_downsample: false}
-    publish: {path_en: true, scan_publish_en: false, scan_bodyframe_pub_en: false}
+    # The growing nav_msgs/Path is not needed for canonical evaluation; keeping
+    # only odometry prevents long full-bag runs from accumulating large messages.
+    publish: {path_en: false, scan_publish_en: false, scan_bodyframe_pub_en: false}
     pcd_save: {pcd_save_en: false, interval: -1}
