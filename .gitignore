@@ -8,6 +8,7 @@ install/
 log/
 runs/
 output/
+/artifacts/
 *.db3
 *.mcap
 *.bag
