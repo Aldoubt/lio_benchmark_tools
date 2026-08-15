@@ -24,7 +24,13 @@ MODULE_ROOT = Path(__file__).resolve().parents[1]
 if str(MODULE_ROOT) not in sys.path:
     sys.path.insert(0, str(MODULE_ROOT))
 
-from benchmark_base.lib.artifacts import build_map_metadata, merge_standardization_report, write_json  # noqa: E402
+from benchmark_base.lib.artifacts import (  # noqa: E402
+    build_map_metadata,
+    ensure_relative_symlink,
+    map_artifact_paths,
+    merge_standardization_report,
+    write_unified_map_metadata,
+)
 from benchmark_base.lib.cloud_contract import cloud_rows, scan_timestamp  # noqa: E402
 from benchmark_base.lib.manifest import load_json  # noqa: E402
 from benchmark_base.lib.map_sampling import read_scan_manifest  # noqa: E402
@@ -180,10 +186,10 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
         raise ValueError("no matched LiDAR scans produced map points")
 
     cloud = voxel_downsample(np.concatenate(chunks, axis=0), voxel_m)
-    output_dir = run / "standardized" / "maps" / algorithm_id
-    output_dir.mkdir(parents=True, exist_ok=True)
-    map_path = output_dir / "unified_map.ply"
-    write_binary_ply(map_path, cloud)
+    paths = map_artifact_paths(run, algorithm_id)
+    paths.unified_dir.mkdir(parents=True, exist_ok=True)
+    write_binary_ply(paths.unified_map, cloud)
+    ensure_relative_symlink(paths.unified_map, paths.compat_unified_map)
 
     selected = len(selected_rows)
     timing = {
@@ -205,17 +211,18 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
         algorithm_id=algorithm_id,
         dataset_id=dataset.get("dataset_id", "legacy_v1_dataset"),
         trajectory_source=str(trajectory_path),
+        trajectory_role="ODOMETRY",
         voxel_m=voxel_m,
         point_count=len(cloud),
         generation_command=" ".join(sys.argv),
         generated_at=dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
         timestamp_matching=timing,
     )
-    write_json(output_dir / "map_metadata.json", metadata)
+    write_unified_map_metadata(paths, metadata)
     merge_standardization_report(
         run / "standardized" / "standardization_report.json", algorithm_id, metadata
     )
-    return {"map": str(map_path), "metadata": metadata}
+    return {"map": str(paths.unified_map), "compat_map": str(paths.compat_unified_map), "metadata": metadata}
 
 
 def main() -> int:
