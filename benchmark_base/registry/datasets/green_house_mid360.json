@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "dataset_id": "green_house_mid360",
+  "bag_dir": "/home/yangxuan/agt_navigation_v2/runtime/rosbag/green-house",
+  "sha256": null,
+  "environment": "greenhouse",
+  "acquisition": {
+    "platform": "handheld",
+    "route_type": "green_house",
+    "camera_present": false
+  },
+  "topics": {
+    "lidar": "/agt/sensors/lidar/custom",
+    "imu": "/agt/sensors/imu/data",
+    "camera": null
+  },
+  "types": {
+    "lidar": "livox_ros_driver2/msg/CustomMsg",
+    "imu": "sensor_msgs/msg/Imu",
+    "camera": null
+  },
+  "timestamp": {
+    "point_time_field": "offset_time",
+    "point_time_unit": "ns_relative_to_timebase",
+    "scan_time_field": "header.stamp",
+    "timebase_field": "timebase",
+    "verified_from_bag": true
+  },
+  "imu": {
+    "angular_velocity_unit": "rad_s",
+    "linear_acceleration_unit": "g_like_raw; existing DLIO adapter scales by 9.80665",
+    "frame_id": "livox_frame"
+  },
+  "calibration": {
+    "rotation_lidar_to_imu_row_major": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+    "translation_lidar_to_imu_m": [0.011, 0.02329, -0.04412],
+    "source": "/home/yangxuan/agt_navigation_v2/src/agt_mapping/config/mid360_lio_only.yaml (legacy baseline; numeric calibration not verified for this bag)",
+    "status": "BLOCKED_CALIBRATION",
+    "verification_artifact": "/home/yangxuan/agt_navigation_v2/runtime/calibrations/handheld_mid360_sensor_v01.yaml"
+  }
+}

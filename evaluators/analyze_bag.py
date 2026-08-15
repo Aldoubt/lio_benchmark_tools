@@ -62,11 +62,17 @@ def main() -> int:
     frame_ids: dict[str, set[str]] = {topic: set() for topic in type_map}
     acceleration: list[tuple[float, float, float]] = []
     angular_velocity: list[tuple[float, float, float]] = []
+    custom_samples: dict[str, int] = {}
 
     while reader.has_next():
         topic, raw, recorded_ns = reader.read_next()
-        message = deserialize_message(raw, message_types[topic])
         recorded_times[topic].append(recorded_ns * 1e-9)
+        is_custom = "CustomMsg" in type_map[topic]
+        if is_custom and custom_samples.get(topic, 0) >= 3:
+            continue
+        message = deserialize_message(raw, message_types[topic])
+        if is_custom:
+            custom_samples[topic] = custom_samples.get(topic, 0) + 1
         if hasattr(message, "header"):
             header_times[topic].append(stamp_seconds(message))
             frame_ids[topic].add(message.header.frame_id)
@@ -75,7 +81,21 @@ def main() -> int:
                 {"name": field.name, "offset": field.offset, "datatype": field.datatype, "count": field.count}
                 for field in message.fields
             ]
-        if topic == "/livox/imu":
+        elif hasattr(message, "points") and topic not in point_fields:
+            point_fields[topic] = [
+                {"name": name, "datatype": datatype}
+                for name, datatype in (
+                    ("timebase", "uint64 absolute ns"),
+                    ("offset_time", "uint32 relative ns"),
+                    ("x", "float32 m"),
+                    ("y", "float32 m"),
+                    ("z", "float32 m"),
+                    ("reflectivity", "uint8"),
+                    ("tag", "uint8"),
+                    ("line", "uint8"),
+                )
+            ]
+        if type_map[topic] == "sensor_msgs/msg/Imu":
             acceleration.append((message.linear_acceleration.x, message.linear_acceleration.y, message.linear_acceleration.z))
             angular_velocity.append((message.angular_velocity.x, message.angular_velocity.y, message.angular_velocity.z))
 
@@ -103,8 +123,10 @@ def main() -> int:
 
     accel_norm = [math.sqrt(x * x + y * y + z * z) for x, y, z in acceleration]
     gyro_norm = [math.sqrt(x * x + y * y + z * z) for x, y, z in angular_velocity]
-    lidar_hdr = header_times.get("/livox/lidar", [])
-    imu_hdr = header_times.get("/livox/imu", [])
+    lidar_topics = [topic for topic, type_name in type_map.items() if "PointCloud2" in type_name or "CustomMsg" in type_name]
+    imu_topics = [topic for topic, type_name in type_map.items() if type_name == "sensor_msgs/msg/Imu"]
+    lidar_hdr = header_times.get(lidar_topics[0], []) if lidar_topics else []
+    imu_hdr = header_times.get(imu_topics[0], []) if imu_topics else []
     nearest: list[float] = []
     index = 0
     for lidar_time in lidar_hdr:
@@ -127,6 +149,7 @@ def main() -> int:
         "limitations": [
             "bag 中没有 nav_msgs/msg/Odometry、nav_msgs/msg/Path 或 TF，不能直接计算机器人 Z 轨迹漂移。",
             "IMU 全程统计不能代替已识别静止区间的零偏和噪声估计。",
+            "CustomMsg 的 header/点字段仅抽样 3 帧反序列化；完整消息计数和 rosbag 记录时间仍覆盖全 bag。",
         ],
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
