@@ -12,6 +12,7 @@
   "adapter_status": "PASS",
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": ["camera"],
+  "extrinsic_convention": "LIDAR_TO_IMU",
   "source": {"repository": "hku-mars/FAST-LIVO2", "local_path_hint": "src/FAST-LIVO2-ROS2"},
   "runner": {"adapter": "evaluators/run_fast_livo_test.sh"},
   "topics": {
@@ -24,5 +25,5 @@
     "processes": [{"name": "estimator", "command": "ros2 launch fast_livo mapping_mid360_lio.launch.py use_rviz:=false", "background": false}],
     "diagnostic_topics": ["/aft_mapped_to_init", "/cloud_registered"]
   },
-  "benchmark_notes": "Primary reference. Record the effective modality set per run; LiDAR-IMU-only runs are not labeled visual. Adapter PASS reflects the recorded green-house full-bag verification, not universal dataset compatibility."
+  "benchmark_notes": "Primary reference. FAST-LIVO2 names its configured transform Lid_*_to_IMU, so the benchmark adapter declares LIDAR_TO_IMU. Record the effective modality set per run; LiDAR-IMU-only runs are not labeled visual. Adapter PASS reflects the recorded green-house full-bag verification, not universal dataset compatibility."
 }
