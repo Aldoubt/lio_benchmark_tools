@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "faster_lio",
+  "display_name": "Faster-LIO",
+  "mode": "odometry",
+  "tier": "RESEARCH",
+  "family_id": "faster_lio",
+  "family": ["ieskf", "sparse_voxel", "lidar_inertial", "efficiency"],
+  "evaluation_roles": ["ODOMETRY"],
+  "sensor_profile": {"lidar": true, "imu": true, "camera": false, "kinematics": false, "gnss": false, "wheel_odometry": false},
+  "algorithm_generation": "faster_lio_research_baseline",
+  "adapter_status": "NOT_TESTED",
+  "required_modalities": ["lidar", "imu"],
+  "optional_modalities": [],
+  "source": {"repository": "gaoxiang12/faster-lio", "local_path_hint": "algorithms/faster-lio"},
+  "runner": {"adapter": "evaluators/run_faster_lio_test.sh"},
+  "topics": {
+    "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu"},
+    "outputs": {"trajectory": null, "registered_cloud": null}
+  },
+  "benchmark_notes": "Research-tier efficiency/map-structure baseline; absence does not invalidate a Core baseline run."
+}
