@@ -40,6 +40,21 @@ class AdapterLifecycleTest(unittest.TestCase):
             result = preflight_algorithm(manifest, "lio", benchmark_root=root)
             self.assertEqual("BLOCKED_INPUT", result.status)
 
+    def test_missing_required_dataset_capability_is_blocked_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self._create_source_and_runner(root)
+            manifest = self._manifest(root)
+            manifest["algorithms"]["lio"]["input_requirements"] = {
+                "dataset_capabilities": {"imu_orientation_valid": True}
+            }
+            result = preflight_algorithm(manifest, "lio", benchmark_root=root)
+            self.assertEqual("BLOCKED_INPUT", result.status)
+            self.assertIn("imu_orientation_valid", " ".join(result.reasons))
+            manifest["dataset"]["capabilities"] = {"imu_orientation_valid": True}
+            result = preflight_algorithm(manifest, "lio", benchmark_root=root)
+            self.assertEqual("PASS", result.status)
+
     def test_unconfirmed_calibration_is_blocked_for_lidar_imu(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -115,6 +130,7 @@ class AdapterLifecycleTest(unittest.TestCase):
             "dataset": {
                 "dataset_id": "d",
                 "topics": {"lidar": "/lidar", "imu": "/imu", "camera": None},
+                "capabilities": {},
                 "calibration": {
                     "rotation_lidar_to_imu_row_major": [1, 0, 0, 0, 1, 0, 0, 0, 1],
                     "translation_lidar_to_imu_m": [1, 2, 3],
