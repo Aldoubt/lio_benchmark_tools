@@ -88,14 +88,15 @@ class DisplayAlignmentContractTest(unittest.TestCase):
     def test_run_manifest_corrects_incompatible_hardcoded_odometry_role(self) -> None:
         qx, qy, qz, qw = quaternion_from_rpy(0.0, 0.0, 0.2)
         header = "timestamp_s,x_m,y_m,z_m,qx,qy,qz,qw,roll_rad,pitch_rad,yaw_rad,source_topic\n"
+        rows = [
+            f"0,1,2,3,{qx},{qy},{qz},{qw},0,0,0.2,/glim_ros/odom_corrected\n",
+            f"1,2,3,3,{qx},{qy},{qz},{qw},0,0,0.2,/glim_ros/odom_corrected\n",
+        ]
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             trajectory = root / "standardized/trajectories/glim_full_slam.csv"
             trajectory.parent.mkdir(parents=True)
-            trajectory.write_text(
-                header + f"0,1,2,3,{qx},{qy},{qz},{qw},0,0,0.2,/glim_ros/odom_corrected\n",
-                encoding="utf-8",
-            )
+            trajectory.write_text(header + "".join(rows), encoding="utf-8")
             (root / "manifest.json").write_text(
                 json.dumps({
                     "algorithms": {
