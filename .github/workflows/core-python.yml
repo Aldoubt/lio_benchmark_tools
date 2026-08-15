@@ -1,4 +1,4 @@
-name: Core Python Contracts
+name: Core Contracts
 
 on:
   push:
@@ -17,6 +17,8 @@ jobs:
         run: python3 -m unittest discover -s benchmark_base/tests -v
       - name: Compile Python sources
         run: python3 -m compileall -q benchmark_base evaluators visualization reporting
+      - name: Shell adapter syntax
+        run: find evaluators -maxdepth 1 -name '*.sh' -print0 | xargs -0 -n1 bash -n
       - name: Registry smoke
         run: |
           python3 benchmark_base/bin/lio-benchmark list algorithms
