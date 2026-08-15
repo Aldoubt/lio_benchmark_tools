@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "fast_lio2",
+  "display_name": "FAST-LIO2",
+  "mode": "odometry",
+  "tier": "CORE",
+  "family_id": "fast_lio2",
+  "family": ["ieskf", "direct_scan_to_map", "lidar_inertial"],
+  "evaluation_roles": ["ODOMETRY"],
+  "sensor_profile": {"lidar": true, "imu": true, "camera": false, "kinematics": false, "gnss": false, "wheel_odometry": false},
+  "algorithm_generation": "fast_lio2_classical_filter",
+  "adapter_status": "NOT_TESTED",
+  "required_modalities": ["lidar", "imu"],
+  "optional_modalities": [],
+  "source": {"repository": "hku-mars/FAST_LIO", "local_path_hint": "algorithms/FAST_LIO"},
+  "runner": {"adapter": "evaluators/run_fast_lio2_test.sh"},
+  "topics": {
+    "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu"},
+    "outputs": {"trajectory": null, "registered_cloud": null}
+  },
+  "benchmark_notes": "Classical direct IESKF scan-to-map baseline. Exact ROS package/topic contract is finalized by the adapter preflight task before real execution."
+}
