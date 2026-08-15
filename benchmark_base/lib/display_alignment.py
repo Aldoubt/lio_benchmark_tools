@@ -15,6 +15,7 @@ from typing import Iterable
 
 import numpy as np
 
+from benchmark_base.lib.algorithm_roles import EVALUATION_ROLES, primary_evaluation_role
 from benchmark_base.lib.trajectory import PoseSample, Trajectory, normalize_quaternion
 
 
@@ -95,6 +96,38 @@ def apply_display_transform_pose(
     return (float(transformed[0]), float(transformed[1]), float(transformed[2])), q_out
 
 
+def resolve_display_trajectory_role(
+    run: str | Path,
+    algorithm_id: str,
+    requested_role: str,
+) -> str:
+    """Resolve a display role without mislabeling runnable System Mapping IDs.
+
+    Existing callers historically request ODOMETRY. If that role is not one of
+    the algorithm's declared roles in the frozen run manifest, use the
+    algorithm's declared primary role instead. Explicit valid roles remain
+    untouched, which permits future role-qualified frontend/backend views.
+    """
+    requested = str(requested_role).upper()
+    if requested not in EVALUATION_ROLES:
+        raise ValueError(f"unsupported display trajectory role: {requested_role}")
+    manifest_path = Path(run) / "manifest.json"
+    if not manifest_path.is_file():
+        return requested
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid frozen run manifest: {manifest_path}: {exc}") from exc
+    algorithms = manifest.get("algorithms", {})
+    algorithm = algorithms.get(algorithm_id, {}) if isinstance(algorithms, dict) else {}
+    if not isinstance(algorithm, dict) or not algorithm:
+        return requested
+    declared = [str(role).upper() for role in algorithm.get("evaluation_roles", [])]
+    if requested in declared:
+        return requested
+    return primary_evaluation_role(algorithm)
+
+
 def display_alignment_metadata(
     *,
     algorithm_id: str,
@@ -139,13 +172,14 @@ def write_display_alignment_metadata(
     trajectory_path: str | Path,
     mode: str,
 ) -> Path:
+    resolved_role = resolve_display_trajectory_role(run, algorithm_id, trajectory_role)
     payload = display_alignment_metadata(
         algorithm_id=algorithm_id,
-        trajectory_role=trajectory_role,
+        trajectory_role=resolved_role,
         trajectory_path=trajectory_path,
         mode=mode,
     )
-    path = Path(run) / "figures" / "display_alignment" / f"{algorithm_id}__{trajectory_role.lower()}.json"
+    path = Path(run) / "figures" / "display_alignment" / f"{algorithm_id}__{resolved_role.lower()}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
