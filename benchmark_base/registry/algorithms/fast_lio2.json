@@ -12,11 +12,33 @@
   "adapter_status": "NOT_TESTED",
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": [],
-  "source": {"repository": "hku-mars/FAST_LIO", "local_path_hint": "algorithms/FAST_LIO"},
+  "extrinsic_convention": "LIDAR_TO_IMU",
+  "source": {
+    "repository": "hku-mars/FAST_LIO",
+    "branch": "main",
+    "local_path_hint": "algorithms/Fast_LIO2_ROS2"
+  },
+  "execution_implementation": {
+    "repository": "Franklif1/Fast_LIO2_ROS2",
+    "branch": "ros2",
+    "package": "fast_lio",
+    "executable": "fastlio_mapping",
+    "provenance_note": "HKU-MARS official FAST_LIO remains ROS1/catkin; Humble execution uses this explicit ROS2 port and must freeze its commit in each run."
+  },
   "runner": {"adapter": "evaluators/run_fast_lio2_test.sh"},
   "topics": {
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu"},
-    "outputs": {"trajectory": null, "registered_cloud": null}
+    "outputs": {
+      "trajectory": "/Odometry",
+      "path": "/path",
+      "registered_cloud": "/cloud_registered",
+      "native_map_topic": "/Laser_map"
+    }
   },
-  "benchmark_notes": "Classical direct IESKF scan-to-map baseline. Exact ROS package/topic contract is finalized by the adapter preflight task before real execution."
+  "native_map": {
+    "default_status": "NOT_PROVIDED",
+    "optional_collection_env": "BENCHMARK_COLLECT_NATIVE_MAP",
+    "note": "The selected ROS2 port accumulates/publishes its native map when publish.map_en is enabled; this adds runtime overhead and is therefore opt-in and must be recorded."
+  },
+  "benchmark_notes": "Classical direct IESKF scan-to-map baseline. The ROS2 port names its extrinsic state Lidar_*_wrt_IMU, matching benchmark LIDAR_TO_IMU."
 }
