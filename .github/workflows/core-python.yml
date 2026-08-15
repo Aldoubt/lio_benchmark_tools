@@ -1,0 +1,23 @@
+name: Core Python Contracts
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+jobs:
+  core:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Unit contracts
+        run: python3 -m unittest discover -s benchmark_base/tests -v
+      - name: Compile Python sources
+        run: python3 -m compileall -q benchmark_base evaluators visualization reporting
+      - name: Registry smoke
+        run: |
+          python3 benchmark_base/bin/lio-benchmark list algorithms
+          python3 benchmark_base/bin/lio-benchmark show algorithm leg_kilo2_lidar_imu >/dev/null

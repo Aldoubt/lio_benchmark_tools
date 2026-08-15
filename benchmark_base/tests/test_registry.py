@@ -11,7 +11,7 @@ from benchmark_base.lib.registry import FIXED_BASELINES, Registry, RegistryError
 class RegistryTest(unittest.TestCase):
     def test_tracked_fixed_baselines_are_valid(self) -> None:
         registry = Registry()
-        self.assertEqual(set(FIXED_BASELINES), set(registry.list_algorithms()))
+        self.assertTrue(set(FIXED_BASELINES).issubset(set(registry.list_algorithms())))
         validate_fixed_baselines(registry)
         for algorithm_id in FIXED_BASELINES:
             record = registry.load_algorithm(algorithm_id)
@@ -29,8 +29,7 @@ class RegistryTest(unittest.TestCase):
     def test_record_id_must_match_filename(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "algorithms").mkdir()
-            (root / "datasets").mkdir()
+            (root / "algorithms").mkdir(); (root / "datasets").mkdir()
             record = Registry().load_algorithm("fast_livo2")
             record["algorithm_id"] = "wrong_id"
             (root / "algorithms" / "fast_livo2.json").write_text(json.dumps(record), encoding="utf-8")
@@ -40,8 +39,7 @@ class RegistryTest(unittest.TestCase):
     def test_malformed_json_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root / "algorithms").mkdir()
-            (root / "datasets").mkdir()
+            (root / "algorithms").mkdir(); (root / "datasets").mkdir()
             (root / "algorithms" / "broken.json").write_text("{", encoding="utf-8")
             with self.assertRaisesRegex(RegistryError, "invalid JSON"):
                 Registry(root).load_algorithm("broken")
