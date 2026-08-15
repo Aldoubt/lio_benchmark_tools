@@ -12,12 +12,25 @@
   "adapter_status": "NOT_TESTED",
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": ["kinematics"],
+  "extrinsic_convention": "LIDAR_TO_IMU",
   "source": {"repository": "ouguangjun/Leg-KILO", "branch": "master", "local_path_hint": "algorithms/Leg-KILO"},
+  "execution_implementation": {"repository": "ouguangjun/Leg-KILO", "branch": "master", "package": "legkilo", "executable": "legkilo_node"},
   "runner": {"adapter": "evaluators/run_leg_kilo_master_test.sh"},
   "topics": {
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu", "kinematics": null},
-    "outputs": {"trajectory": null, "backend_trajectory": null, "registered_cloud": null}
+    "outputs": {
+      "trajectory": "/Odometry",
+      "path": "/path",
+      "registered_cloud": "/cloud_registered",
+      "registered_cloud_body": "/cloud_registered_body",
+      "runtime_records": "leg_kilo_runtime"
+    }
+  },
+  "native_map": {
+    "default_status": "NOT_PROVIDED",
+    "runtime_records": ["frontend_frames.csv", "submaps.csv", "loop_edges.csv"],
+    "note": "Current master records frontend/submap/backend-loop evidence automatically. Global-map export is a separate upstream saver step and is not synthesized by the benchmark."
   },
   "benchmark_mode": {"sensor_fusion": "LIO", "kinematics": false},
-  "benchmark_notes": "Targets the current master implementation after kilo-map integration. Ordinary handheld comparisons use LIO mode; historical legkilo-v2 remains a separate registry identity."
+  "benchmark_notes": "Targets current master after kilo-map integration. Source code applies extrinsic_R * point_lidar + extrinsic_T to obtain the IMU/body-frame point, so the benchmark convention is LIDAR_TO_IMU. Ordinary handheld comparisons use LIO mode; historical legkilo-v2 remains distinct."
 }
