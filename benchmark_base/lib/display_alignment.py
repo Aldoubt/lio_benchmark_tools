@@ -7,21 +7,31 @@ metrics.
 """
 from __future__ import annotations
 
+import datetime as dt
+import json
 import math
+from pathlib import Path
 from typing import Iterable
 
 import numpy as np
 
-from benchmark_base.lib.trajectory import PoseSample, normalize_quaternion
+from benchmark_base.lib.trajectory import PoseSample, Trajectory, normalize_quaternion
 
 
 DISPLAY_ALIGNMENT_MODES = frozenset({"NONE", "START_XY_YAW"})
+DISPLAY_ALIGNMENT_ALIASES = {"raw": "NONE", "start_yaw": "START_XY_YAW"}
+
+
+def normalize_display_alignment_mode(mode: str) -> str:
+    value = mode.strip()
+    canonical = DISPLAY_ALIGNMENT_ALIASES.get(value.lower(), value.upper())
+    if canonical not in DISPLAY_ALIGNMENT_MODES:
+        raise ValueError(f"unsupported display alignment mode: {mode}")
+    return canonical
 
 
 def compute_display_alignment(initial_pose: PoseSample, mode: str) -> np.ndarray:
-    mode = mode.strip().upper()
-    if mode not in DISPLAY_ALIGNMENT_MODES:
-        raise ValueError(f"unsupported display alignment mode: {mode}")
+    mode = normalize_display_alignment_mode(mode)
     if mode == "NONE":
         return np.eye(4, dtype=np.float64)
 
@@ -33,10 +43,8 @@ def compute_display_alignment(initial_pose: PoseSample, mode: str) -> np.ndarray
     matrix[0, 1] = -s
     matrix[1, 0] = s
     matrix[1, 1] = c
-    # Translate in the rotated display frame so start X/Y becomes zero.
     matrix[0, 3] = -(c * initial_pose.x_m - s * initial_pose.y_m)
     matrix[1, 3] = -(s * initial_pose.x_m + c * initial_pose.y_m)
-    # Z, roll and pitch are intentionally not normalized away.
     return matrix
 
 
@@ -52,7 +60,6 @@ def apply_display_transform_xyz(points: np.ndarray, matrix: np.ndarray) -> np.nd
     xyz = np.asarray(points, dtype=np.float64)
     if xyz.ndim != 2 or xyz.shape[1] != 3:
         raise ValueError("points must have shape Nx3")
-    # Use a new array so visualization cannot mutate scientific artifacts in memory.
     homogeneous = np.column_stack((xyz.copy(), np.ones(len(xyz), dtype=np.float64)))
     return (transform @ homogeneous.T).T[:, :3]
 
@@ -86,3 +93,59 @@ def apply_display_transform_pose(
     q_align = (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5))
     q_out = _quaternion_multiply(q_align, quaternion)
     return (float(transformed[0]), float(transformed[1]), float(transformed[2])), q_out
+
+
+def display_alignment_metadata(
+    *,
+    algorithm_id: str,
+    trajectory_role: str,
+    trajectory_path: str | Path,
+    mode: str,
+) -> dict:
+    canonical = normalize_display_alignment_mode(mode)
+    trajectory = Trajectory.from_csv(trajectory_path)
+    first = trajectory.samples[0]
+    matrix = compute_display_alignment(first, canonical)
+    return {
+        "schema_version": 1,
+        "mode": canonical,
+        "algorithm_id": algorithm_id,
+        "trajectory_role": trajectory_role,
+        "source_trajectory": str(Path(trajectory_path)),
+        "source_initial_pose": {
+            "timestamp_s": first.timestamp_s,
+            "x_m": first.x_m,
+            "y_m": first.y_m,
+            "z_m": first.z_m,
+            "roll_rad": first.roll_rad,
+            "pitch_rad": first.pitch_rad,
+            "yaw_rad": first.yaw_rad,
+            "qx": first.qx,
+            "qy": first.qy,
+            "qz": first.qz,
+            "qw": first.qw,
+        },
+        "transform_matrix_4x4": matrix.tolist(),
+        "generated_at": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
+        "scientific_artifacts_modified": false if False else False,
+    }
+
+
+def write_display_alignment_metadata(
+    *,
+    run: str | Path,
+    algorithm_id: str,
+    trajectory_role: str,
+    trajectory_path: str | Path,
+    mode: str,
+) -> Path:
+    payload = display_alignment_metadata(
+        algorithm_id=algorithm_id,
+        trajectory_role=trajectory_role,
+        trajectory_path=trajectory_path,
+        mode=mode,
+    )
+    path = Path(run) / "figures" / "display_alignment" / f"{algorithm_id}__{trajectory_role.lower()}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
