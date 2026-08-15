@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "leg_kilo",
+  "display_name": "Leg-KILO (current master)",
+  "mode": "full_slam",
+  "tier": "CORE",
+  "family_id": "leg_kilo",
+  "family": ["two_stage_eskf", "hybrid_gaussian_voxel", "factor_graph", "lidar_inertial"],
+  "evaluation_roles": ["ODOMETRY", "SYSTEM_MAPPING"],
+  "sensor_profile": {"lidar": true, "imu": true, "camera": false, "kinematics": false, "gnss": false, "wheel_odometry": false},
+  "algorithm_generation": "current_master_kilo_map_merged",
+  "adapter_status": "NOT_TESTED",
+  "required_modalities": ["lidar", "imu"],
+  "optional_modalities": ["kinematics"],
+  "source": {"repository": "ouguangjun/Leg-KILO", "branch": "master", "local_path_hint": "algorithms/Leg-KILO"},
+  "runner": {"adapter": "evaluators/run_leg_kilo_master_test.sh"},
+  "topics": {
+    "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu", "kinematics": null},
+    "outputs": {"trajectory": null, "backend_trajectory": null, "registered_cloud": null}
+  },
+  "benchmark_mode": {"sensor_fusion": "LIO", "kinematics": false},
+  "benchmark_notes": "Targets the current master implementation after kilo-map integration. Ordinary handheld comparisons use LIO mode; historical legkilo-v2 remains a separate registry identity."
+}
