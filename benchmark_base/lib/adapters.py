@@ -138,6 +138,22 @@ def preflight_algorithm(
         reasons.append("dataset is missing required input topics: " + ", ".join(missing_modalities))
         return AdapterStatus(algorithm_id, "BLOCKED_INPUT", False, False, tuple(reasons), checks)
 
+    requirements = algorithm.get("input_requirements", {})
+    capability_requirements = (
+        requirements.get("dataset_capabilities", {}) if isinstance(requirements, dict) else {}
+    )
+    capabilities = dataset.get("capabilities", {}) if isinstance(dataset.get("capabilities", {}), dict) else {}
+    missing_capabilities = [
+        key for key, expected in capability_requirements.items() if capabilities.get(key) != expected
+    ]
+    checks["required_dataset_capabilities"] = capability_requirements
+    checks["missing_dataset_capabilities"] = missing_capabilities
+    if missing_capabilities:
+        reasons.append(
+            "dataset does not satisfy required capabilities: " + ", ".join(missing_capabilities)
+        )
+        return AdapterStatus(algorithm_id, "BLOCKED_INPUT", False, False, tuple(reasons), checks)
+
     uses_imu = "imu" in required_modalities or bool(algorithm.get("sensor_profile", {}).get("imu"))
     convention = str(algorithm.get("extrinsic_convention", "NONE" if not uses_imu else "")).upper()
     checks["extrinsic_convention"] = convention or None
