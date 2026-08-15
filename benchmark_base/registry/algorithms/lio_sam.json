@@ -12,11 +12,37 @@
   "adapter_status": "NOT_TESTED",
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": ["gnss"],
-  "source": {"repository": "TixiaoShan/LIO-SAM", "local_path_hint": "algorithms/LIO-SAM"},
+  "extrinsic_convention": "LIDAR_TO_IMU",
+  "input_requirements": {
+    "dataset_capabilities": {"imu_orientation_valid": true}
+  },
+  "source": {
+    "repository": "TixiaoShan/LIO-SAM",
+    "branch": "master",
+    "local_path_hint": "algorithms/LIO-SAM_MID360_ROS2_PKG/ros2/src/LIO-SAM_MID360_ROS2"
+  },
+  "execution_implementation": {
+    "repository": "UV-Lab/LIO-SAM_MID360_ROS2_PKG",
+    "branch": "main",
+    "implementation_submodule": "UV-Lab/LIO-SAM_MID360_ROS2",
+    "package": "lio_sam",
+    "note": "Algorithm identity remains TixiaoShan/LIO-SAM; Humble/MID360 execution uses this explicit ROS2 integration and freezes its commits."
+  },
   "runner": {"adapter": "evaluators/run_lio_sam_test.sh"},
   "topics": {
-    "inputs": {"lidar": "/points_raw", "imu": "/imu/data", "gnss": null},
-    "outputs": {"trajectory": null, "frontend_trajectory": null, "registered_cloud": null}
+    "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu", "gnss": null},
+    "outputs": {
+      "trajectory": "/lio_sam/mapping/odometry",
+      "frontend_trajectory": "/odometry/imu",
+      "incremental_trajectory": "/lio_sam/mapping/odometry_incremental",
+      "path": "/lio_sam/mapping/path",
+      "native_map_topic": "/lio_sam/mapping/map_global"
+    }
   },
-  "benchmark_notes": "Feature/factor-graph reference. GNSS must remain disabled unless the dataset and scoreboard explicitly include it."
+  "calibration_semantics": {
+    "extrinsicTrans": "canonical LIDAR_TO_IMU translation",
+    "extrinsicRot": "inverse canonical rotation, IMU_TO_LIDAR, for acceleration/gyro",
+    "extrinsicRPY": "canonical LIDAR_TO_IMU rotation; source code internally inverts it for attitude conversion"
+  },
+  "benchmark_notes": "Core factor-graph baseline. Official LIO-SAM requires valid IMU orientation for initialization; datasets without imu_orientation_valid are BLOCKED_INPUT. GNSS remains disabled unless explicitly benchmarked as a different sensor profile."
 }
