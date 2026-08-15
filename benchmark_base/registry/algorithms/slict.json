@@ -8,15 +8,26 @@
   "family": ["surfel", "continuous_time", "optimization", "lidar_inertial"],
   "evaluation_roles": ["ODOMETRY"],
   "sensor_profile": {"lidar": true, "imu": true, "camera": false, "kinematics": false, "gnss": false, "wheel_odometry": false},
-  "algorithm_generation": "slict_research_baseline",
+  "algorithm_generation": "slict_current_master_ros2_jazzy",
   "adapter_status": "NOT_TESTED",
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": [],
-  "source": {"repository": "brytsknguyen/slict", "local_path_hint": "algorithms/slict"},
+  "extrinsic_convention": "LIDAR_TO_IMU",
+  "source": {"repository": "brytsknguyen/slict", "branch": "master", "local_path_hint": "algorithms/slict"},
+  "environment_requirements": {
+    "ros_distros": ["jazzy"],
+    "ubuntu_versions": ["24.04"],
+    "runtime": "ROS2/ament",
+    "notes": "Current upstream master explicitly targets Ubuntu 24.04 and ROS 2 Jazzy. ROS 2 Humble remains an environment blocker unless a separately validated port is registered as another implementation."
+  },
+  "input_requirements": {
+    "livox_path": "Current master provides slict_livox_to_ouster for Livox ROS driver 2 data; arbitrary PointCloud2 layouts are not assumed compatible.",
+    "config": "A dataset-specific SLICT YAML must explicitly encode topics, LiDAR-to-body extrinsic and timestamp handling."
+  },
   "runner": {"adapter": "evaluators/run_slict_test.sh"},
   "topics": {
     "inputs": {"lidar": "/points", "imu": "/imu"},
-    "outputs": {"trajectory": null, "registered_cloud": null}
+    "outputs": {"trajectory": null, "registered_cloud": null, "runtime_records": "slict_log"}
   },
-  "benchmark_notes": "Research-tier continuous-time surfel optimization baseline. ROS/platform support is enforced by adapter preflight; unsupported environments remain BLOCKED_ENVIRONMENT rather than receiving hidden ports."
+  "benchmark_notes": "Research-tier continuous-time surfel optimization baseline. Upstream YAML defines lidar_extr as a transform from LiDAR coordinates into the body frame, so the adapter uses the benchmark LIDAR_TO_IMU body convention. Unsupported environments remain BLOCKED_ENVIRONMENT rather than receiving hidden ports."
 }
