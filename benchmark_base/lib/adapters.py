@@ -7,8 +7,10 @@ independent; shell/ROS execution remains in algorithm-specific adapters.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +106,7 @@ def preflight_algorithm(
     *,
     benchmark_root: str | Path,
     allow_diagnostic_calibration: bool = False,
+    runtime_env: Mapping[str, str] | None = None,
 ) -> AdapterStatus:
     algorithm = _algorithm(manifest, algorithm_id)
     dataset = manifest.get("dataset", {})
@@ -125,6 +128,31 @@ def preflight_algorithm(
     if runner is None or not runner.is_file():
         reasons.append(f"runner adapter is missing: {runner or '<not declared>'}")
         return AdapterStatus(algorithm_id, "FAIL_IMPLEMENTATION", False, False, tuple(reasons), checks)
+
+    environment_requirements = algorithm.get("environment_requirements", {})
+    environment_requirements = (
+        environment_requirements if isinstance(environment_requirements, dict) else {}
+    )
+    supported_ros_distros = [
+        str(value) for value in environment_requirements.get("ros_distros", [])
+    ]
+    env = os.environ if runtime_env is None else runtime_env
+    active_ros_distro = str(env.get("ROS_DISTRO", ""))
+    checks["ros_distro"] = active_ros_distro or None
+    checks["supported_ros_distros"] = supported_ros_distros
+    if supported_ros_distros and active_ros_distro not in supported_ros_distros:
+        reasons.append(
+            f"ROS_DISTRO {active_ros_distro or '<unset>'} is unsupported; expected one of: "
+            + ", ".join(supported_ros_distros)
+        )
+        return AdapterStatus(
+            algorithm_id,
+            "BLOCKED_ENVIRONMENT",
+            False,
+            False,
+            tuple(reasons),
+            checks,
+        )
 
     required_modalities = list(algorithm.get("required_modalities", []))
     topics = dataset.get("topics", {}) if isinstance(dataset.get("topics", {}), dict) else {}
