@@ -13,7 +13,7 @@ Extend LIO Benchmark Tools V2 from a six-entry experimental baseline set into a 
 
 The repository must support repeated use across greenhouse, orchard, open-field, campus, industrial, and similar scenes without rewriting benchmark logic for each dataset.
 
-The design keeps four V2 workflows unchanged:
+The four V2 workflows remain unchanged:
 
 ```text
 Benchmark
@@ -25,18 +25,18 @@ Live Debug
 This extension adds five project-wide contracts:
 
 1. `Core Baselines + Research Baselines` instead of targeting an arbitrary algorithm count;
-2. explicit algorithm-family and evaluation-role metadata;
+2. explicit algorithm-family, sensor-profile, and evaluation-role metadata;
 3. two-map output semantics: `Native Map` and `Unified Map`;
-4. `Display Alignment` as a non-scientific visualization transform;
+4. `Display Alignment` as a display-only transform;
 5. a richer per-algorithm artifact/provenance contract and adapter interface.
 
 ## 2. Baseline tiers
 
-### 2.1 Core Baselines
+### 2.1 Core algorithm families
 
 The long-term core suite contains eight representative algorithm families.
 
-| Canonical ID | Algorithm | Family | Main benchmark role |
+| Family ID | Algorithm | Family | Main role |
 |---|---|---|---|
 | `fast_livo2` | FAST-LIVO2 | direct ESKF LIO / multimodal-capable | primary reference |
 | `fast_lio2` | FAST-LIO2 | frame-level direct IESKF scan-to-map | classical filter baseline |
@@ -47,24 +47,29 @@ The long-term core suite contains eight representative algorithm families.
 | `leg_kilo` | current `ouguangjun/Leg-KILO` master | two-stage ESKF + hybrid Gaussian voxel + backend | modern hybrid baseline |
 | `kiss_icp` | KISS-ICP | LiDAR-only ICP odometry | LiDAR-only control |
 
-The core suite is stable across datasets. A dataset may mark a core algorithm as `BLOCKED_INPUT`, `BLOCKED_DEPENDENCY`, or `UNSUPPORTED_PLATFORM`; the benchmark must not silently remove it from reports.
+GLIM remains two runnable V2 records because its odometry and global-SLAM modes answer different questions:
+
+```text
+glim_odometry      family_id=glim, evaluation_role=ODOMETRY
+glim_full_slam     family_id=glim, evaluation_role=SYSTEM_MAPPING
+```
+
+The core suite is stable across datasets. A core algorithm may be reported as `BLOCKED_INPUT`, `BLOCKED_DEPENDENCY`, `BLOCKED_ENVIRONMENT`, or `BLOCKED_CALIBRATION`; it must not silently disappear from reports.
 
 ### 2.2 Research Baselines
 
 The default research tier contains:
 
-| Canonical ID | Algorithm | Family | Purpose |
+| Runnable ID | Algorithm | Family | Purpose |
 |---|---|---|---|
 | `faster_lio` | Faster-LIO | FAST-LIO2-style filter + sparse voxel map | efficiency / map-structure research |
 | `slict` | SLICT | surfel-based continuous-time optimization | continuous-time optimization research |
 
-Research baselines are optional per machine and dataset. Their absence does not make a core-suite run invalid.
+Research baselines are optional per machine and dataset. Their absence does not invalidate a core-suite run.
 
 ### 2.3 Existing ID compatibility
 
-Existing V2 IDs must remain readable so historical manifests do not break.
-
-Specifically:
+Existing V2 IDs remain readable so historical manifests do not break:
 
 ```text
 fast_livo2
@@ -75,39 +80,45 @@ glim_full_slam
 leg_kilo2_lidar_imu
 ```
 
-remain valid registry records or aliases.
+`leg_kilo2_lidar_imu` remains a historical implementation identity and must never be silently reinterpreted as the current `ouguangjun/Leg-KILO` `master` implementation.
 
-New canonical organization is:
+The new current-master entry is:
 
 ```text
-glim
-  outputs:
-    odometry
-    full_slam
-
 leg_kilo
-  source branch: master
-  outputs:
-    frontend
-    backend
 ```
 
-`leg_kilo2_lidar_imu` remains a historical implementation identity and must never be silently reinterpreted as the current `master` implementation.
+with:
 
-## 3. Algorithm families and evaluation roles
+```text
+family_id=leg_kilo
+algorithm_generation=current_master_kilo_map_merged
+source_branch=master
+```
 
-Registry records gain explicit metadata:
+## 3. Algorithm family, output role, and sensor profile
+
+Registry records gain:
 
 ```text
 tier = CORE | RESEARCH | LEGACY
+family_id
 family
-sensor_profile
+effective_sensor_profile
 algorithm_generation
-evaluation_roles
 outputs
 ```
 
-A single upstream algorithm may expose multiple evaluation outputs.
+Every declared output has an evaluation role:
+
+```text
+ODOMETRY
+SYSTEM_MAPPING
+CONTROL
+DIAGNOSTIC
+```
+
+A single upstream algorithm may expose multiple outputs.
 
 Examples:
 
@@ -121,17 +132,13 @@ Leg-KILO master
   backend trajectory -> SYSTEM_MAPPING
 
 LIO-SAM
-  IMU/preintegration or front-end output -> ODOMETRY when available
-  mapOptimization output -> SYSTEM_MAPPING
+  front-end/preintegration trajectory -> ODOMETRY when exposed and semantically valid
+  mapOptimization trajectory -> SYSTEM_MAPPING
 ```
 
-Reports must compare outputs by role instead of treating every topic as an independent algorithm.
+Reports compare outputs by role rather than pretending every output topic is an independent algorithm.
 
-## 4. Sensor profiles
-
-Every algorithm run records the modalities actually used.
-
-Allowed modality keys:
+Allowed sensor-profile keys are:
 
 ```text
 lidar
@@ -142,7 +149,7 @@ gnss
 wheel_odometry
 ```
 
-A run is identified by both algorithm and effective sensor profile.
+Results with different effective sensor profiles must not be merged into one common score.
 
 Examples:
 
@@ -154,11 +161,9 @@ Leg-KILO + LiDAR + IMU + Kinematics
 KISS-ICP + LiDAR
 ```
 
-Results with different effective sensor profiles must not be merged into one common score.
+## 4. Canonical calibration contract
 
-## 5. Canonical calibration contract
-
-Dataset Registry owns one canonical LiDAR/IMU extrinsic definition:
+Dataset Registry owns one canonical LiDAR/IMU extrinsic:
 
 ```text
 LIDAR_TO_IMU
@@ -174,9 +179,13 @@ source
 status = CONFIRMED | UNCONFIRMED
 ```
 
-A formal benchmark requiring LiDAR + IMU may run with `UNCONFIRMED` calibration only as `DIAGNOSTIC_ONLY`.
+A LiDAR+IMU benchmark with `UNCONFIRMED` calibration may run only as:
 
-Each algorithm registry declares its required convention:
+```text
+DIAGNOSTIC_ONLY
+```
+
+Each algorithm registry declares the upstream convention it needs:
 
 ```text
 LIDAR_TO_IMU
@@ -184,24 +193,22 @@ IMU_TO_LIDAR
 NONE
 ```
 
-The benchmark core converts canonical calibration mathematically. For inverse conversion:
+For inversion:
 
 ```text
 R_il = R_li^T
 t_il = -R_li^T * t_li
 ```
 
-Adapters must not copy arrays unchanged when upstream convention differs.
+The benchmark core performs this conversion. Generated algorithm-specific calibration is written under the frozen run; adapters do not copy the same array when the upstream convention differs and do not modify upstream repositories.
 
-Generated algorithm-specific calibration belongs in the frozen run directory; upstream repositories remain unmodified.
+## 5. Adapter contract
 
-## 6. Adapter contract
+Each adapter converts a frozen Dataset + Algorithm registry record into an inspectable execution path without modifying the dataset or upstream source tree.
 
-Each benchmark adapter has one purpose: convert a frozen Dataset + Algorithm registry record into an inspectable execution command without modifying the dataset or upstream source tree.
+### 5.1 Lifecycle
 
-### 6.1 Required adapter lifecycle
-
-Every adapter supports these logical stages:
+Every adapter supports the logical stages:
 
 ```text
 preflight
@@ -214,7 +221,7 @@ collect
 
 ```text
 source repository path
-expected commit/branch information
+source branch/commit visibility
 build/install availability
 ROS distribution compatibility
 required executable/package
@@ -226,21 +233,21 @@ required optional conversion tools
 
 `prepare` creates only run-local generated configuration/remapping files.
 
-`run` launches the upstream algorithm and bag replay using the formal benchmark rate.
+`run` launches the upstream algorithm and bag replay using the formal benchmark replay rate.
 
 `collect` records raw output locations and maps upstream outputs to declared benchmark roles.
 
-### 6.2 Adapter execution interface
+### 5.2 Execution interface
 
 Existing shell adapters remain supported during migration.
 
-Formal runner arguments stay:
+Formal runner arguments remain:
 
 ```text
 <BAG_DIR> <OUTPUT_DIR>
 ```
 
-Formal environment variables include:
+Formal environment variables are:
 
 ```text
 WORKSPACE
@@ -250,7 +257,7 @@ BENCHMARK_DATASET_ID
 BENCHMARK_ALGORITHM_ID
 ```
 
-Default formal benchmark replay rate is:
+Formal benchmark default:
 
 ```text
 BAG_PLAY_RATE=1.0
@@ -267,9 +274,9 @@ silently change IMU units
 delete failed outputs
 ```
 
-### 6.3 Adapter status
+### 5.3 Status
 
-Every algorithm produces an adapter status record with one of:
+Every adapter/run produces one status:
 
 ```text
 PASS
@@ -282,27 +289,15 @@ BLOCKED_CALIBRATION
 NOT_TESTED
 ```
 
-## 7. Two-map artifact contract
+## 6. Two-map artifact contract
 
 Every algorithm has two logically distinct map outputs.
 
-### 7.1 Native Map
+### 6.1 Native Map
 
-`Native Map` is produced by the upstream algorithm's own mapping system.
+`Native Map` is produced by the upstream algorithm's own mapping system and may include its own voxel management, keyframes, submaps, loop closure, filtering, backend optimization, and pruning.
 
-It may include upstream-specific behavior such as:
-
-```text
-voxel map management
-keyframes
-submaps
-loop closure
-outlier filtering
-backend optimization
-map pruning
-```
-
-Native map metadata uses:
+Native-map metadata contains:
 
 ```text
 map_source = NATIVE
@@ -313,7 +308,7 @@ point_count when measurable
 coordinate_frame
 ```
 
-If an algorithm does not expose a true native global map, use:
+If an algorithm does not expose a true native global map:
 
 ```text
 status = NOT_PROVIDED
@@ -321,7 +316,7 @@ status = NOT_PROVIDED
 
 The benchmark must never relabel its own accumulated cloud as a native map.
 
-### 7.2 Unified Map
+### 6.2 Unified Map
 
 `Unified Map` is generated by the benchmark from:
 
@@ -340,7 +335,7 @@ It answers:
 
 > How geometrically consistent is the trajectory estimate under a common map reconstruction pipeline?
 
-Unified map metadata uses:
+Unified-map metadata contains:
 
 ```text
 map_source = UNIFIED_RECONSTRUCTION
@@ -359,11 +354,9 @@ point_count
 timestamp_sources
 ```
 
-## 8. Common scan manifest
+## 7. Common selected-scan manifest
 
-V2 currently selects scans using a deterministic scan step while reconstructing each algorithm map.
-
-The baseline-suite extension freezes the actual selected scans once per run:
+The run freezes the actual map-reconstruction scan set once:
 
 ```text
 standardized/map_sampling/selected_scans.csv
@@ -382,15 +375,13 @@ selected
 
 All Unified Maps consume this same manifest.
 
-This prevents a future algorithm-specific code path from accidentally reconstructing a different subset of the bag.
+If one algorithm cannot match a selected scan, that scan remains selected globally and is counted as unmatched only for that algorithm.
 
-If one algorithm cannot match a selected scan, the scan remains in the manifest and is counted as unmatched for that algorithm.
-
-## 9. Standard trajectory contract
+## 8. Standard trajectory contract and compatibility
 
 The existing timestamp-based trajectory standardization remains mandatory.
 
-Required common trajectory columns remain:
+Required common columns remain:
 
 ```text
 timestamp_s
@@ -407,56 +398,27 @@ yaw_rad
 source_topic
 ```
 
-Algorithms may also preserve richer native trajectories.
-
-Examples:
+Multi-output algorithms use role-qualified files:
 
 ```text
-Point-LIO high-rate state trajectory
-GLIM odometry trajectory
-GLIM globally optimized trajectory
-Leg-KILO frontend trajectory
-Leg-KILO backend trajectory
-LIO-SAM mapOptimization trajectory
+<algorithm>__<role>.csv
 ```
 
-The common trajectory used for a scoreboard must identify its `evaluation_role`.
-
-## 10. Display Alignment
-
-Display Alignment is added as a first-class visualization contract.
-
-It is explicitly not a scientific artifact transformation.
-
-### 10.1 Default mode
-
-Default cross-algorithm visual alignment is:
+For backward compatibility, when an algorithm has one canonical V2 trajectory, the existing path remains readable:
 
 ```text
-START_XY_YAW
+standardized/trajectories/<algorithm>.csv
 ```
 
-For each trajectory/map, compute a display-only transform using that algorithm's initial pose:
+That file is the compatibility alias/copy for the registry-declared default trajectory role. It must not silently switch roles between runs.
 
-```text
-x/y translation -> initial x/y becomes 0
-rotation about Z -> initial yaw becomes 0
-```
+Algorithms may preserve richer native trajectories under raw output without forcing them into the common CSV schema.
 
-Do not remove:
+## 9. Display Alignment
 
-```text
-initial z
-roll
-pitch
-subsequent drift
-scale error
-non-rigid distortion
-```
+Display Alignment is a first-class visualization contract and is explicitly not a scientific artifact transformation.
 
-This preserves visible vertical drift and attitude errors while removing arbitrary horizontal start-frame choice.
-
-### 10.2 Supported modes
+### 9.1 Modes
 
 Initial supported modes are only:
 
@@ -465,16 +427,39 @@ NONE
 START_XY_YAW
 ```
 
-No ICP, Umeyama, trajectory registration, or full SE(3) best-fit alignment is allowed in the default benchmark display path because such methods can hide estimator errors.
-
-Future research alignment tools may be added only under a clearly separate diagnostic label.
-
-### 10.3 Storage
-
-Display alignment is stored separately:
+Default cross-algorithm display mode is:
 
 ```text
-figures/display_alignment/<algorithm>.json
+START_XY_YAW
+```
+
+For each algorithm/output role, the display transform removes only:
+
+```text
+initial x translation
+initial y translation
+initial yaw
+```
+
+The transform leaves unchanged:
+
+```text
+z coordinates
+roll/pitch geometry
+subsequent translational drift
+subsequent yaw drift
+scale error
+non-rigid map distortion
+```
+
+No ICP, Umeyama, trajectory registration, or full-SE(3) best-fit alignment is allowed in the default benchmark display path because those operations can hide estimator errors.
+
+### 9.2 Storage
+
+Display transforms are stored separately:
+
+```text
+figures/display_alignment/<algorithm>__<role>.json
 ```
 
 Required fields:
@@ -489,7 +474,7 @@ transform_matrix_4x4
 generated_at
 ```
 
-The following files must never be modified by display alignment:
+Display Alignment must never modify:
 
 ```text
 raw output
@@ -500,24 +485,20 @@ map metadata
 scientific metrics
 ```
 
-### 10.4 Inspector / report / demo labeling
+### 9.3 Labeling
 
-Inspector, report, screenshots, and README GIF must expose alignment status.
-
-Examples:
+Inspector, report, screenshots, and README GIF expose the active mode:
 
 ```text
 Display alignment: NONE
 Display alignment: START_XY_YAW
 ```
 
-Publication figures generated with alignment must record the alignment mode in figure metadata/caption support.
+Publication figures generated with alignment record the mode in figure metadata/caption support.
 
-## 11. Artifact layout
+## 10. Backward-compatible artifact layout
 
-The existing V2 top-level run layout remains compatible.
-
-It is extended rather than replaced:
+The existing V2 run layout is extended, not replaced.
 
 ```text
 runs/<run_id>/
@@ -528,17 +509,17 @@ runs/<run_id>/
 ├─ raw/<algorithm>/
 ├─ standardized/
 │  ├─ trajectories/
-│  │  ├─ <algorithm>__<role>.csv
-│  │  └─ native/<algorithm>/
+│  │  ├─ <algorithm>.csv                    # existing default-role compatibility path
+│  │  ├─ <algorithm>__<role>.csv            # explicit role-qualified trajectory
+│  │  └─ native/<algorithm>/                # optional upstream trajectory exports
 │  ├─ map_sampling/
 │  │  └─ selected_scans.csv
 │  ├─ maps/<algorithm>/
-│  │  ├─ native/
-│  │  │  ├─ map.*
-│  │  │  └─ metadata.json
-│  │  └─ unified/
-│  │     ├─ map.ply
-│  │     └─ metadata.json
+│  │  ├─ unified_map.ply                    # existing V2 path retained
+│  │  ├─ map_metadata.json                  # existing V2 unified metadata path retained
+│  │  ├─ unified_map_metadata.json          # explicit equivalent metadata
+│  │  ├─ native_map.*                       # optional, true upstream map only
+│  │  └─ native_map_metadata.json
 │  └─ standardization_report.json
 ├─ metrics/
 │  ├─ algorithms/<algorithm>/trajectory.json
@@ -557,16 +538,19 @@ runs/<run_id>/
    └─ algorithms/<algorithm>/provenance.json
 ```
 
-Large maps remain outside Git according to existing repository policy.
+`map_metadata.json` remains the compatibility metadata for `unified_map.ply`; `unified_map_metadata.json` contains the same canonical unified-map record for explicit two-map consumers.
 
-## 12. Per-algorithm provenance
+Large bags/maps remain excluded from Git under repository policy.
 
-Each algorithm run must freeze:
+## 11. Per-algorithm provenance
+
+Each algorithm run freezes:
 
 ```text
 algorithm_id
 display_name
 tier
+family_id
 family
 source repository
 source branch
@@ -593,11 +577,11 @@ launch/run command
 
 Unknown values are represented as `UNKNOWN`, not guessed.
 
-## 13. Algorithm-specific retained outputs
+## 12. Algorithm-specific retained outputs
 
 Common standardization must not discard useful upstream diagnostics.
 
-### 13.1 FAST-LIVO2
+### 12.1 FAST-LIVO2
 
 Retain when available:
 
@@ -609,7 +593,7 @@ effective-point diagnostics
 visual tracking diagnostics when camera mode is active
 ```
 
-### 13.2 FAST-LIO2
+### 12.2 FAST-LIO2
 
 Retain when available:
 
@@ -620,7 +604,7 @@ effective points
 native PCD export
 ```
 
-### 13.3 Point-LIO
+### 12.3 Point-LIO
 
 Retain:
 
@@ -630,7 +614,7 @@ scan-rate standardized trajectory
 registered cloud/native map when available
 ```
 
-### 13.4 DLIO
+### 12.4 DLIO
 
 Retain:
 
@@ -640,12 +624,12 @@ native map
 deskew/motion-compensation diagnostics when exposed
 ```
 
-### 13.5 LIO-SAM
+### 12.5 LIO-SAM
 
 Retain when available:
 
 ```text
-front-end / preintegration trajectory
+front-end/preintegration trajectory
 mapOptimization trajectory
 keyframe poses
 loop events
@@ -653,7 +637,7 @@ native map
 GPS factor diagnostics when enabled
 ```
 
-### 13.6 GLIM
+### 12.6 GLIM
 
 Retain separately:
 
@@ -665,9 +649,9 @@ native exported map
 backend/loop information when available
 ```
 
-### 13.7 Leg-KILO current master
+### 12.7 Leg-KILO current master
 
-The canonical core adapter targets current `ouguangjun/Leg-KILO` `master`, not the historical `legkilo-v2` branch.
+The canonical core adapter targets current `ouguangjun/Leg-KILO` `master`, not `legkilo-v2`.
 
 Retain when available:
 
@@ -680,11 +664,11 @@ loop candidates / verified loops when exposed
 viewer/export logs
 ```
 
-Custom datasets use the upstream LIO sensor mode when no kinematics are present.
+For ordinary LiDAR+IMU datasets, the adapter uses the upstream LIO sensor mode without pretending kinematic observations were present.
 
-The adapter records the upstream-required extrinsic convention and converts from benchmark canonical calibration.
+The upstream implementation's required extrinsic convention is declared in Registry and generated from benchmark canonical calibration.
 
-### 13.8 KISS-ICP
+### 12.8 KISS-ICP
 
 Retain:
 
@@ -693,21 +677,19 @@ native LiDAR odometry trajectory
 upstream diagnostics when available
 ```
 
-Native global map may legitimately be `NOT_PROVIDED`.
+Its native global map may legitimately be `NOT_PROVIDED`; Unified Map remains available from its standardized trajectory.
 
-Unified Map remains available from the standardized trajectory.
+### 12.9 Faster-LIO / SLICT
 
-### 13.9 Faster-LIO / SLICT
+Retain common artifacts plus upstream diagnostics that can be collected without source modification.
 
-Retain the same common artifacts plus upstream diagnostics that can be collected without source modification.
-
-## 14. Scoreboards
+## 13. Scoreboards
 
 Reports produce separate benchmark views rather than one global rank.
 
-### 14.1 Common LiDAR + IMU Odometry
+### 13.1 Common LiDAR + IMU Odometry
 
-Includes compatible `ODOMETRY` outputs using the common LiDAR + IMU sensor profile.
+Includes compatible `ODOMETRY` outputs with effective sensor profile exactly containing LiDAR + IMU and no additional active localization modality.
 
 Typical entries:
 
@@ -721,11 +703,11 @@ Leg-KILO frontend
 Faster-LIO when enabled
 ```
 
-LIO-SAM may be included only when the selected output is explicitly classified as an odometry-role output.
+LIO-SAM enters this scoreboard only if the selected output is explicitly classified as an odometry-role output.
 
-### 14.2 System Mapping
+### 13.2 System Mapping
 
-Compares full mapping systems and Native Maps.
+Compares full mapping-system outputs and Native Maps.
 
 Typical entries:
 
@@ -733,22 +715,22 @@ Typical entries:
 LIO-SAM mapOptimization
 GLIM full SLAM
 Leg-KILO backend
-other algorithms with an explicit global mapping/backend output
+other algorithms with explicit global mapping/backend output
 ```
 
-### 14.3 Control / Extension
+### 13.3 Control / Extension
 
-Contains intentionally non-equivalent sensor or system configurations:
+Contains intentionally non-equivalent input/system configurations:
 
 ```text
 KISS-ICP LiDAR-only
 FAST-LIVO2 LiDAR+IMU+Vision
-future LiDAR+IMU+kinematics Leg-KILO
+future Leg-KILO LiDAR+IMU+kinematics
 ```
 
-These results remain useful but must not be ranked as if they were identical-input Common LIO runs.
+These results remain visible but are not ranked as identical-input Common LIO runs.
 
-## 15. Inspector changes
+## 14. Inspector changes
 
 `lio-benchmark inspect` gains explicit controls for:
 
@@ -764,11 +746,11 @@ shared height color range
 
 Same-camera behavior remains mandatory.
 
-Changing Display Alignment updates only visualization geometry in memory.
+Changing Display Alignment transforms only in-memory display geometry.
 
-## 16. Report and README demo changes
+## 15. Report and README demo changes
 
-Report and demo generators must consume the same:
+Report and demo generators consume the same:
 
 ```text
 ROI preset
@@ -793,7 +775,7 @@ shared height range
 
 The rendered overlay includes dataset identity, algorithm identity, sensor profile, map kind, and alignment mode.
 
-## 17. Preflight and portability
+## 16. Preflight and portability
 
 Before a full benchmark, the suite supports an environment audit for all selected algorithms.
 
@@ -814,7 +796,7 @@ reason
 
 This allows one machine to run a subset without pretending the remaining core baselines passed.
 
-## 18. Testing strategy
+## 17. Testing strategy
 
 Core tests remain runnable without ROS algorithm repositories.
 
@@ -829,9 +811,10 @@ Native Map AVAILABLE/NOT_PROVIDED/FAILED semantics
 common selected-scan manifest determinism
 Unified Map consumes common scan manifest
 multiple trajectory-role naming
+default-role trajectory compatibility path
 Display Alignment NONE identity
 Display Alignment START_XY_YAW removes only x/y/yaw
-Display Alignment preserves z/roll/pitch information
+Display Alignment preserves z and does not rotate away roll/pitch geometry
 Display Alignment never overwrites scientific artifacts
 scoreboard role/sensor-profile filtering
 report preserves missing/blocked states
@@ -848,31 +831,31 @@ registry smoke
 
 ROS/Open3D/upstream-algorithm execution remains real-machine integration testing.
 
-## 19. Adapter implementation order
+## 18. Adapter implementation order
 
-Implementation order is intentionally incremental:
+Implementation order is incremental:
 
 ```text
 1. core registry/schema + provenance extensions
 2. calibration conversion module
-3. common scan manifest
-4. two-map artifact metadata
+3. common selected-scan manifest
+4. two-map artifact metadata while preserving V2 paths
 5. Display Alignment module
 6. Inspector / Report / Demo integration
 7. adapter preflight framework
 8. FAST-LIO2 adapter
 9. KISS-ICP adapter
-10. current master Leg-KILO adapter
+10. current-master Leg-KILO adapter
 11. LIO-SAM adapter
-12. GLIM canonical family/role migration
+12. GLIM family/role metadata migration without breaking existing IDs
 13. Faster-LIO research adapter
 14. SLICT research adapter
-15. documentation / scoreboard / end-to-end smoke
+15. documentation / scoreboards / end-to-end smoke
 ```
 
 Existing working FAST-LIVO2, Point-LIO, DLIO, and GLIM adapters are migrated to the richer contract without unnecessary rewrites.
 
-## 20. Non-goals
+## 19. Non-goals
 
 This extension does not:
 
@@ -880,34 +863,35 @@ This extension does not:
 vendor upstream repositories
 install every upstream algorithm automatically
 modify upstream algorithms to expose unavailable internal metrics
-provide a single misleading global score
-perform automatic ICP/SE3 alignment before scientific metrics
+provide one misleading global score
+perform automatic ICP/SE3 best-fit alignment before scientific metrics
 store large bags/maps in Git
 train learned navigation models
 change navigation/runtime code in agt_navigation_v2
 ```
 
-## 21. Acceptance criteria
+## 20. Acceptance criteria
 
-The baseline-suite extension is complete when:
+The extension is complete when:
 
 1. Core/Research/Legacy tiers and algorithm families validate through Registry;
-2. all eight Core Baselines have registry records and inspectable adapters or explicit environment blockers;
+2. all eight Core algorithm families have registry records and inspectable adapters or explicit environment blockers;
 3. both Research Baselines have registry records and adapters with platform requirements recorded;
 4. current `ouguangjun/Leg-KILO` master is represented separately from historical Leg-KILO 2.0;
 5. a dataset has one canonical calibration with adapter-side convention conversion;
 6. Unified Maps consume one frozen selected-scan manifest per run;
 7. Native and Unified maps have separate metadata and cannot be silently substituted;
-8. Display Alignment supports `NONE` and `START_XY_YAW` and never modifies scientific artifacts;
-9. Inspector, Report, and Demo use the same alignment/camera/ROI/map-kind semantics;
-10. reports generate separate Common LIO, System Mapping, and Control/Extension views;
-11. preflight can audit selected algorithms before a full bag run;
-12. CI passes unit contracts, Python compilation, shell syntax, and registry smoke;
-13. at least one real MID360 bag completes the extended path for two or more algorithms before merging to `main`.
+8. existing V2 `unified_map.ply`, `map_metadata.json`, and default trajectory paths remain readable;
+9. Display Alignment supports `NONE` and `START_XY_YAW` and never modifies scientific artifacts;
+10. Inspector, Report, and Demo use the same alignment/camera/ROI/map-kind semantics;
+11. reports generate separate Common LIO, System Mapping, and Control/Extension views;
+12. preflight can audit selected algorithms before a full bag run;
+13. CI passes unit contracts, Python compilation, shell syntax, and registry smoke;
+14. at least one real MID360 bag completes the extended path for two or more algorithms before merging to `main`.
 
-## 22. Integration note for the current local verification branch
+## 21. Integration note for the current local verification work
 
-At design time, GitHub `feat/lio-benchmark-v2` points to remote commit:
+At design time, GitHub `feat/lio-benchmark-v2` points to:
 
 ```text
 582e8fc21a6d4c8ead5f5c01830d77cf6b9efe67
@@ -922,4 +906,4 @@ The user's local machine also contains later verification commits reported as:
 
 Those commits are not present on GitHub at the time this design is written.
 
-Implementation of this design must start from a branch that contains those local verification fixes (or equivalent rebased/cherry-picked changes). Do not implement the baseline-suite code on top of the older remote commit and then overwrite the verified local work.
+Implementation must start from a branch that contains those local verification fixes, or equivalent rebased/cherry-picked changes. Do not implement baseline-suite code on top of the older remote commit and then overwrite the verified local work.
