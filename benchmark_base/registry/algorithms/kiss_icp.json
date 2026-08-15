@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "kiss_icp",
+  "display_name": "KISS-ICP",
+  "mode": "odometry",
+  "tier": "CORE",
+  "family_id": "kiss_icp",
+  "family": ["lidar_only", "icp", "odometry"],
+  "evaluation_roles": ["CONTROL"],
+  "sensor_profile": {"lidar": true, "imu": false, "camera": false, "kinematics": false, "gnss": false, "wheel_odometry": false},
+  "algorithm_generation": "kiss_icp_lidar_only_control",
+  "adapter_status": "NOT_TESTED",
+  "required_modalities": ["lidar"],
+  "optional_modalities": [],
+  "source": {"repository": "PRBonn/kiss-icp", "local_path_hint": "algorithms/kiss-icp"},
+  "runner": {"adapter": "evaluators/run_kiss_icp_test.sh"},
+  "topics": {
+    "inputs": {"lidar": "/points"},
+    "outputs": {"trajectory": null, "registered_cloud": null}
+  },
+  "benchmark_notes": "LiDAR-only control baseline. It does not require LiDAR-IMU extrinsic calibration and must not enter the Common LiDAR+IMU scoreboard."
+}
