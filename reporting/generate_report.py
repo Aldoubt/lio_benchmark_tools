@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate paper-oriented comparison figures and a benchmark summary report."""
+"""Generate paper-oriented comparison figures and a role-aware benchmark report."""
 from __future__ import annotations
 
 import argparse
@@ -21,6 +21,11 @@ from benchmark_base.lib.display_alignment import (  # noqa: E402
     write_display_alignment_metadata,
 )
 from benchmark_base.lib.manifest import load_json  # noqa: E402
+from benchmark_base.lib.scoreboards import (  # noqa: E402
+    SCOREBOARDS,
+    group_manifest_algorithms,
+    scoreboard_title,
+)
 from benchmark_base.lib.trajectory import Trajectory  # noqa: E402
 from reporting.contracts import AlgorithmSummary, collect_summary, write_summary_csv  # noqa: E402
 from visualization.alignment import StartYawAlignment, load_start_yaw_alignment  # noqa: E402
@@ -185,7 +190,7 @@ def plot_runtime(manifest: dict[str, Any], summaries: list[AlgorithmSummary], ou
 
 def markdown_table(rows: list[AlgorithmSummary], manifest: dict[str, Any]) -> str:
     lines = [
-        "| Algorithm | Run | Trajectory | Map | Path (m) | Map points | Matched / Unmatched scans | Runtime (s) |",
+        "| Algorithm | Run | Trajectory | Unified Map | Path (m) | Map points | Matched / Unmatched scans | Runtime (s) |",
         "|---|---|---|---|---:|---:|---:|---:|",
     ]
     for row in rows:
@@ -209,10 +214,32 @@ def markdown_table(rows: list[AlgorithmSummary], manifest: dict[str, Any]) -> st
     return "\n".join(lines)
 
 
+def scoreboard_markdown(manifest: dict[str, Any], summaries: list[AlgorithmSummary]) -> str:
+    summary_by_id = {row.algorithm_id: row for row in summaries}
+    grouped = group_manifest_algorithms(manifest)
+    sections: list[str] = []
+    for board in SCOREBOARDS:
+        algorithm_ids = grouped[board]
+        sections.append(f"### {scoreboard_title(board)}")
+        if not algorithm_ids:
+            sections.append("No algorithms in this run are eligible for this view.")
+            continue
+        rows = [summary_by_id[algorithm_id] for algorithm_id in algorithm_ids if algorithm_id in summary_by_id]
+        sections.append(markdown_table(rows, manifest))
+        if board == "COMMON_LIO":
+            sections.append("Only LiDAR+IMU odometry runs with no camera, kinematics, GNSS, or wheel-odometry inputs are included here.")
+        elif board == "SYSTEM_MAPPING":
+            sections.append("This view contains globally optimized/system-mapping outputs and is not ranked as if it were pure odometry.")
+        else:
+            sections.append("This view contains controls or runs with an input profile that differs from the common LiDAR+IMU comparison.")
+    return "\n\n".join(sections)
+
+
 def write_report(run: Path, manifest: dict[str, Any], summaries: list[AlgorithmSummary], figures: list[Path], display_alignment: str) -> None:
     dataset = manifest.get("dataset", {})
     canonical = normalize_display_alignment_mode(display_alignment)
     table = markdown_table(summaries, manifest)
+    scoreboards = scoreboard_markdown(manifest, summaries)
     figure_lines = "\n".join(f"![{path.stem}](../figures/{path.name})" for path in figures if path.is_file())
     alignment_note = (
         "`START_XY_YAW` removes only each estimator's arbitrary initial X/Y origin and initial yaw for display. "
@@ -226,15 +253,20 @@ def write_report(run: Path, manifest: dict[str, Any], summaries: list[AlgorithmS
 - Dataset: `{dataset.get('dataset_id', 'legacy_v1_dataset')}`
 - Bag: `{dataset.get('bag_dir', '')}`
 - Display alignment: `{canonical}`
+- Map comparison shown in figures: `UNIFIED_RECONSTRUCTION`
 - Ground truth: this report does **not** assume trajectory ground truth unless a separate evaluator explicitly provides it
 
 {alignment_note}
 
-## Artifact status
+## Artifact audit
 
 {table}
 
-Missing and invalid artifacts are reported explicitly rather than converted to zero scores.
+Missing, blocked, failed, and invalid artifacts remain visible and are never converted to zero scores.
+
+## Scoreboards
+
+{scoreboards}
 
 ## Figures
 
