@@ -6,19 +6,33 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from benchmark_base.lib.algorithm_roles import (
+    ADAPTER_STATUSES,
+    ALGORITHM_TIERS,
+    EVALUATION_ROLES,
+    SENSOR_PROFILE_KEYS,
+)
+
 
 class RegistryError(ValueError):
     """Raised when a registry record is missing or violates the V2 contract."""
 
 
-FIXED_BASELINES = (
+CORE_BASELINES = (
     "fast_livo2",
+    "fast_lio2",
     "point_lio",
-    "leg_kilo2_lidar_imu",
+    "dlio",
+    "lio_sam",
     "glim_odometry",
     "glim_full_slam",
-    "dlio",
+    "leg_kilo",
+    "kiss_icp",
 )
+RESEARCH_BASELINES = ("faster_lio", "slict")
+LEGACY_BASELINES = ("leg_kilo2_lidar_imu",)
+# Backward-compatible name used by existing V2 tests and callers.
+FIXED_BASELINES = CORE_BASELINES
 
 
 class Registry:
@@ -87,7 +101,13 @@ class Registry:
                 "algorithm_id",
                 "display_name",
                 "mode",
+                "tier",
+                "family_id",
                 "family",
+                "evaluation_roles",
+                "sensor_profile",
+                "algorithm_generation",
+                "adapter_status",
                 "required_modalities",
                 "source",
                 "runner",
@@ -103,8 +123,28 @@ class Registry:
             )
         if record["mode"] not in ("odometry", "full_slam"):
             raise RegistryError(f"unsupported algorithm mode: {record['mode']}")
+        if record["tier"] not in ALGORITHM_TIERS:
+            raise RegistryError(f"unsupported algorithm tier: {record['tier']}")
         if not isinstance(record["family"], list) or not record["family"]:
             raise RegistryError("algorithm family must be a non-empty list")
+        if not isinstance(record["evaluation_roles"], list) or not record["evaluation_roles"]:
+            raise RegistryError("algorithm evaluation_roles must be a non-empty list")
+        unknown_roles = set(record["evaluation_roles"]) - EVALUATION_ROLES
+        if unknown_roles:
+            raise RegistryError(f"unsupported evaluation roles: {sorted(unknown_roles)}")
+        sensor_profile = record["sensor_profile"]
+        if not isinstance(sensor_profile, dict):
+            raise RegistryError("algorithm sensor_profile must be an object")
+        if set(sensor_profile) != set(SENSOR_PROFILE_KEYS):
+            raise RegistryError(
+                "algorithm sensor_profile must contain exactly: " + ", ".join(SENSOR_PROFILE_KEYS)
+            )
+        if not all(isinstance(value, bool) for value in sensor_profile.values()):
+            raise RegistryError("algorithm sensor_profile values must be booleans")
+        if not sensor_profile["lidar"]:
+            raise RegistryError("algorithm sensor_profile.lidar must be true")
+        if record["adapter_status"] not in ADAPTER_STATUSES:
+            raise RegistryError(f"unsupported adapter status: {record['adapter_status']}")
         if not isinstance(record["required_modalities"], list) or not record["required_modalities"]:
             raise RegistryError("required_modalities must be a non-empty list")
         if not isinstance(record.get("optional_modalities", []), list):
