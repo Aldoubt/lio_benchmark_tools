@@ -127,7 +127,7 @@ def display_alignment_metadata(
         },
         "transform_matrix_4x4": matrix.tolist(),
         "generated_at": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
-        "scientific_artifacts_modified": false if False else False,
+        "scientific_artifacts_modified": False,
     }
 
 
