@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import csv
+import json
 import math
+import tempfile
 import unittest
+from pathlib import Path
 
 from benchmark_base.lib.trajectory import PoseSample, Trajectory, quaternion_from_rpy
-from reporting.diagnostics import pairwise_disagreement, trajectory_diagnostics
+from reporting.diagnostics import (
+    collect_run_diagnostics,
+    pairwise_disagreement,
+    trajectory_diagnostics,
+    write_run_diagnostics,
+)
 
 
 class EstimatorDivergenceDiagnosticsTest(unittest.TestCase):
@@ -104,6 +113,55 @@ class EstimatorDivergenceDiagnosticsTest(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             pairwise_disagreement(trajectory, trajectory, alignment_mode="ICP")
+
+    def test_run_collection_preserves_missing_algorithms_and_writes_pairwise_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            run = Path(temp)
+            (run / "standardized/trajectories").mkdir(parents=True)
+            a = self._trajectory([
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                (1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+                (2.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            ])
+            b = self._trajectory([
+                (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+                (1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+                (2.0, 2.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+            ])
+            a.write_csv(run / "standardized/trajectories/a.csv")
+            b.write_csv(run / "standardized/trajectories/b.csv")
+            (run / "manifest.json").write_text(json.dumps({
+                "dataset": {"calibration": {"status": "BLOCKED_CALIBRATION"}},
+                "algorithms": {"a": {}, "b": {}, "missing": {}},
+            }), encoding="utf-8")
+
+            algorithms, pairs, details = collect_run_diagnostics(
+                run,
+                ["a", "b", "missing"],
+                warmup_s=0.0,
+                alignment_mode="START_XY_YAW",
+                sample_period_s=0.5,
+            )
+            self.assertEqual(3, len(algorithms))
+            missing = next(row for row in algorithms if row.algorithm_id == "missing")
+            self.assertEqual("MISSING", missing.trajectory_status)
+            self.assertIsNone(missing.duration_s)
+            self.assertEqual("BLOCKED_CALIBRATION", missing.calibration_status)
+            self.assertEqual(1, len(pairs))
+            self.assertEqual(("a", "b"), (pairs[0].left_algorithm_id, pairs[0].right_algorithm_id))
+            self.assertAlmostEqual(1.0, pairs[0].z_rmse_m)
+            self.assertIn(("a", "b"), details)
+
+            write_run_diagnostics(run, algorithms, pairs)
+            smoke_path = run / "metrics/smoke_diagnostics.csv"
+            pair_path = run / "metrics/pairwise_disagreement.csv"
+            self.assertTrue(smoke_path.is_file())
+            self.assertTrue(pair_path.is_file())
+            with smoke_path.open(newline="", encoding="utf-8") as stream:
+                rows = list(csv.DictReader(stream))
+            missing_csv = next(row for row in rows if row["algorithm_id"] == "missing")
+            self.assertEqual("", missing_csv["duration_s"])
+            self.assertEqual("MISSING", missing_csv["trajectory_status"])
 
     @staticmethod
     def _trajectory(rows: list[tuple[float, float, float, float, float, float, float]]) -> Trajectory:
