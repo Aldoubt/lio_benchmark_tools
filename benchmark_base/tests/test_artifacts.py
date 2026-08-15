@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from benchmark_base.lib.artifacts import build_map_metadata, merge_standardization_report
+from benchmark_base.lib.artifacts import (
+    build_map_metadata,
+    build_native_map_metadata,
+    map_artifact_paths,
+    merge_standardization_report,
+)
 
 
 class ArtifactMetadataTest(unittest.TestCase):
@@ -36,6 +41,39 @@ class ArtifactMetadataTest(unittest.TestCase):
                 generation_command="unit",
                 generated_at="now",
             )
+
+    def test_native_map_can_be_explicitly_not_provided(self) -> None:
+        payload = build_native_map_metadata(
+            algorithm_id="kiss_icp",
+            dataset_id="gaas_a",
+            status="NOT_PROVIDED",
+            source_output=None,
+            source_role="ODOMETRY",
+            generated_at="now",
+        )
+        self.assertEqual("NATIVE", payload["map_source"])
+        self.assertEqual("NOT_PROVIDED", payload["status"])
+        self.assertIsNone(payload["source_output"])
+        self.assertIsNone(payload["point_count"])
+
+    def test_native_map_status_fails_closed(self) -> None:
+        with self.assertRaises(ValueError):
+            build_native_map_metadata(
+                algorithm_id="x",
+                dataset_id="d",
+                status="MAYBE",
+                source_output=None,
+                source_role="ODOMETRY",
+                generated_at="now",
+            )
+
+    def test_artifact_paths_keep_v2_compatibility_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            paths = map_artifact_paths(Path(temp), "fast_livo2")
+            self.assertTrue(str(paths.native_map).endswith("standardized/maps/fast_livo2/native/map.ply"))
+            self.assertTrue(str(paths.unified_map).endswith("standardized/maps/fast_livo2/unified/map.ply"))
+            self.assertTrue(str(paths.compat_unified_map).endswith("standardized/maps/fast_livo2/unified_map.ply"))
+            self.assertTrue(str(paths.compat_unified_metadata).endswith("standardized/maps/fast_livo2/map_metadata.json"))
 
     def test_standardization_report_merges_algorithms(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
