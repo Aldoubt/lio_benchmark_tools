@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-WORKSPACE=${WORKSPACE:-/home/yangxuan/ros2_ws}
+BENCHMARK_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+WORKSPACE=${WORKSPACE:-$PWD}
 BAG_DIR=${1:-"$WORKSPACE/date/mid360_init_state2"}
 OUTPUT_DIR=${2:-"$WORKSPACE/date/output/dlio"}
 BAG_PLAY_RATE=${BAG_PLAY_RATE:-1.0}
@@ -14,7 +15,7 @@ set -u
 cleanup() { jobs -pr | xargs -r kill 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-python3 "$WORKSPACE/tools/lio_z_drift_evaluator/scale_imu_acceleration.py" >"$OUTPUT_DIR/imu_scaler.log" 2>&1 &
+python3 "$BENCHMARK_ROOT/evaluators/scale_imu_acceleration.py" >"$OUTPUT_DIR/imu_scaler.log" 2>&1 &
 scaler_pid=$!
 ros2 run direct_lidar_inertial_odometry dlio_odom_node --ros-args \
   --params-file "$WORKSPACE/date/dlio_test/dlio.yaml" --params-file "$WORKSPACE/date/dlio_test/params.yaml" \

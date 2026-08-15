@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-WORKSPACE=${WORKSPACE:-/home/yangxuan/ros2_ws}
+BENCHMARK_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+WORKSPACE=${WORKSPACE:-$PWD}
 BAG_DIR=${1:-"$WORKSPACE/date/mid360_init_state2"}
 OUTPUT_DIR=${2:-"$WORKSPACE/date/output/point_lio"}
 BAG_PLAY_RATE=${BAG_PLAY_RATE:-1.0}
@@ -14,7 +15,7 @@ export ROS_LOG_DIR="$OUTPUT_DIR/ros_logs"
 cleanup() { jobs -pr | xargs -r kill 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-python3 "$WORKSPACE/tools/lio_z_drift_evaluator/pointcloud2_to_livox_custom.py" >"$OUTPUT_DIR/converter.log" 2>&1 &
+python3 "$BENCHMARK_ROOT/evaluators/pointcloud2_to_livox_custom.py" >"$OUTPUT_DIR/converter.log" 2>&1 &
 converter_pid=$!
 ros2 run point_lio pointlio_mapping --ros-args \
   --params-file "$WORKSPACE/date/algorithms/point_lio_ros2/config/mid360.yaml" \

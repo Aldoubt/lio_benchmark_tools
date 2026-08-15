@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
-WORKSPACE=${WORKSPACE:-/home/yangxuan/ros2_ws}
+WORKSPACE=${WORKSPACE:-$PWD}
 BAG_DIR=${1:-"$WORKSPACE/date/mid360_init_state2"}
 OUTPUT_DIR=${2:-"$WORKSPACE/date/output/glim_odometry"}
 CONFIG_DIR=${3:-"$WORKSPACE/date/glim_test/config"}
