@@ -55,6 +55,17 @@ class RegistryTest(unittest.TestCase):
         for algorithm_id in LEGACY_BASELINES:
             self.assertEqual("LEGACY", registry.load_algorithm(algorithm_id)["tier"])
 
+    def test_research_baselines_declare_environment_and_runner_contracts(self) -> None:
+        registry = Registry()
+        repo_root = Path(__file__).resolve().parents[2]
+        for algorithm_id in RESEARCH_BASELINES:
+            record = registry.load_algorithm(algorithm_id)
+            requirements = record.get("environment_requirements", {})
+            self.assertTrue(requirements.get("ros_distros"), algorithm_id)
+            runner = record.get("runner", {}).get("adapter")
+            self.assertTrue(runner, algorithm_id)
+            self.assertTrue((repo_root / runner).is_file(), f"{algorithm_id}: {runner}")
+
     def test_current_leg_kilo_is_distinct_from_historical_v2(self) -> None:
         registry = Registry()
         current = registry.load_algorithm("leg_kilo")
