@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""LIO benchmark run-directory orchestrator (standard library only)."""
+"""LIO benchmark run-directory orchestrator."""
 from __future__ import annotations
 
 import argparse
 import datetime as dt
-import hashlib
 import json
 import os
 import platform
@@ -14,148 +13,127 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
-REQUIRED_DATASET_KEYS = (
-    "bag_dir", "db3", "lidar_topic", "lidar_type", "imu_topic", "imu_type",
-    "imu_acceleration_unit", "point_time_field", "point_time_unit",
-)
-RUN_DIRS = (
-    "input", "configs", "raw/fast_livo2", "raw/point_lio", "raw/glim_odometry",
-    "raw/glim_full_slam", "raw/dlio", "standardized/trajectories", "standardized/maps",
-    "metrics", "figures", "reports", "logs", "metadata",
-)
 MODULE_ROOT = Path(__file__).resolve().parents[2]
+if str(MODULE_ROOT) not in sys.path:
+    sys.path.insert(0, str(MODULE_ROOT))
+
+from benchmark_base.lib.manifest import load_json, resolve_manifest, validate_manifest  # noqa: E402
+from benchmark_base.lib.registry import Registry, RegistryError  # noqa: E402
 
 
-def load_json(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise SystemExit(f"配置不存在: {path}") from exc
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"JSON 格式错误: {path}:{exc.lineno}:{exc.colno}: {exc.msg}") from exc
-    if not isinstance(value, dict):
-        raise SystemExit("实验清单顶层必须是对象")
-    return value
+BASE_RUN_DIRS = (
+    "input",
+    "configs",
+    "standardized/trajectories",
+    "standardized/maps",
+    "metrics",
+    "figures",
+    "reports",
+    "logs",
+    "metadata",
+)
+REGISTRY = Registry()
 
 
-def validate_manifest(manifest: dict[str, Any], verify_hash: bool = False) -> list[str]:
-    errors: list[str] = []
-    if manifest.get("schema_version") != 1:
-        errors.append("schema_version 必须为 1")
-    for key in ("name", "workspace", "output_root", "dataset", "calibration", "evaluation", "algorithms"):
-        if key not in manifest:
-            errors.append(f"缺少顶层字段: {key}")
-    dataset = manifest.get("dataset", {})
-    if not isinstance(dataset, dict):
-        errors.append("dataset 必须是对象")
-        return errors
-    for key in REQUIRED_DATASET_KEYS:
-        if key not in dataset or dataset[key] in (None, ""):
-            errors.append(f"dataset 缺少字段: {key}")
-    bag_dir = Path(str(dataset.get("bag_dir", "")))
-    db3 = Path(str(dataset.get("db3", "")))
-    if not bag_dir.is_dir():
-        errors.append(f"bag_dir 不存在: {bag_dir}")
-    elif not (bag_dir / "metadata.yaml").is_file():
-        errors.append(f"bag_dir 缺少 metadata.yaml: {bag_dir}")
-    if not db3.is_file():
-        errors.append(f"db3 不存在: {db3}")
-    workspace = Path(str(manifest.get("workspace", "")))
-    if not workspace.is_dir():
-        errors.append(f"workspace 不存在: {workspace}")
-    algorithms = manifest.get("algorithms", {})
-    if not isinstance(algorithms, dict):
-        errors.append("algorithms 必须是对象")
+def resolved_runner(config: dict[str, Any]) -> Path:
+    if isinstance(config.get("runner"), dict):
+        value = config["runner"]["adapter"]
     else:
-        for name, config in algorithms.items():
-            if not isinstance(config, dict):
-                errors.append(f"algorithm {name} 必须是对象")
-                continue
-            runner = Path(str(config.get("runner", "")))
-            if not runner.is_absolute():
-                runner = MODULE_ROOT / runner
-            if not runner.is_file():
-                errors.append(f"algorithm {name} runner 不存在: {runner}")
-            if config.get("mode") not in ("odometry", "full_slam"):
-                errors.append(f"algorithm {name} mode 必须是 odometry 或 full_slam")
-    rotation = manifest.get("calibration", {}).get("rotation_lidar_to_imu_row_major", [])
-    translation = manifest.get("calibration", {}).get("translation_lidar_to_imu_m", [])
-    if len(rotation) != 9 or len(translation) != 3:
-        errors.append("外参旋转必须 9 项、平移必须 3 项")
-    if verify_hash and db3.is_file() and dataset.get("sha256"):
-        digest = sha256_file(db3)
-        if digest.lower() != str(dataset["sha256"]).lower():
-            errors.append(f"db3 SHA-256 不匹配: actual={digest}")
-    return errors
+        value = config.get("runner", "")
+    path = Path(str(value))
+    return path if path.is_absolute() else MODULE_ROOT / path
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def resolved_source_hint(config: dict[str, Any]) -> str:
+    source = config.get("source", "")
+    if isinstance(source, dict):
+        return str(source.get("local_path_hint", ""))
+    return str(source)
+
+
+def resolve_config(path: Path, verify_hash: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+    manifest = load_json(path)
+    errors = validate_manifest(
+        manifest,
+        registry=REGISTRY,
+        verify_hash=verify_hash,
+        module_root=MODULE_ROOT,
+    )
+    if errors:
+        raise SystemExit("manifest validation failed:\n- " + "\n- ".join(errors))
+    try:
+        resolved = resolve_manifest(manifest, REGISTRY)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    return manifest, resolved
 
 
 def resolve_run(path: Path) -> tuple[Path, dict[str, Any]]:
     run = path.resolve()
     manifest_path = run / "manifest.json"
     if not manifest_path.is_file():
-        raise SystemExit(f"不是标准 run 目录，缺少 {manifest_path}")
-    return run, load_json(manifest_path)
+        raise SystemExit(f"not a standard run directory; missing {manifest_path}")
+    try:
+        return run, load_json(manifest_path)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def run_command(command: list[str], cwd: Path, output: Path | None = None) -> None:
-    output.parent.mkdir(parents=True, exist_ok=True) if output else None
     if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8") as stream:
             result = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, text=True, check=False)
     else:
         result = subprocess.run(command, cwd=cwd, check=False)
     if result.returncode:
-        raise SystemExit(f"命令失败 ({result.returncode}): {' '.join(command)}")
+        raise SystemExit(f"command failed ({result.returncode}): {' '.join(command)}")
 
 
 def cmd_validate(args: argparse.Namespace) -> None:
-    manifest = load_json(args.config.resolve())
-    errors = validate_manifest(manifest, args.verify_hash)
-    if errors:
-        print("验证失败:", file=sys.stderr)
-        for error in errors:
-            print(f"- {error}", file=sys.stderr)
-        raise SystemExit(2)
-    print("验证通过")
-    print(f"experiment={manifest['name']}")
-    print(f"bag={manifest['dataset']['bag_dir']}")
-    print(f"algorithms={','.join(manifest['algorithms'])}")
+    source, resolved = resolve_config(args.config.resolve(), args.verify_hash)
+    print("validation passed")
+    print(f"schema_version={source['schema_version']}")
+    print(f"experiment={source['name']}")
+    dataset = resolved["dataset"]
+    print(f"dataset={dataset.get('dataset_id', dataset.get('bag_dir'))}")
+    print(f"bag={dataset['bag_dir']}")
+    print(f"algorithms={','.join(resolved['algorithms'])}")
 
 
 def cmd_init(args: argparse.Namespace) -> None:
     config = args.config.resolve()
-    manifest = load_json(config)
-    errors = validate_manifest(manifest)
-    if errors:
-        raise SystemExit("清单验证失败，先运行 validate:\n- " + "\n- ".join(errors))
-    run_id = args.run_id or f"{manifest['name']}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    source, resolved = resolve_config(config)
+    run_id = args.run_id or f"{source['name']}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     if not run_id.replace("-", "").replace("_", "").isalnum():
-        raise SystemExit("run-id 只能包含字母、数字、下划线和短横线")
-    run = Path(manifest["output_root"]) / run_id
+        raise SystemExit("run-id may contain only letters, numbers, underscore and hyphen")
+    run = Path(source["output_root"]).expanduser() / run_id
     if run.exists():
-        raise SystemExit(f"拒绝覆盖已有 run: {run}")
-    for relative in RUN_DIRS:
+        raise SystemExit(f"refusing to overwrite existing run: {run}")
+    directories = list(BASE_RUN_DIRS) + [f"raw/{name}" for name in resolved["algorithms"]]
+    for relative in directories:
         (run / relative).mkdir(parents=True, exist_ok=False)
-    frozen = dict(manifest)
+    frozen = dict(resolved)
     frozen["run_id"] = run_id
     frozen["created_at"] = dt.datetime.now(dt.timezone.utc).astimezone().isoformat()
     frozen["source_manifest"] = str(config)
+    frozen["source_manifest_schema_version"] = source["schema_version"]
     (run / "manifest.json").write_text(json.dumps(frozen, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    dataset = frozen["dataset"]
     (run / "input" / "DATASET.txt").write_text(
-        f"bag_dir={manifest['dataset']['bag_dir']}\ndb3={manifest['dataset']['db3']}\n"
-        f"sha256={manifest['dataset'].get('sha256', '')}\n", encoding="utf-8")
+        f"dataset_id={dataset.get('dataset_id', '')}\n"
+        f"bag_dir={dataset['bag_dir']}\n"
+        f"sha256={dataset.get('sha256', '')}\n",
+        encoding="utf-8",
+    )
     (run / "RUN_STATUS.md").write_text(
-        f"# Run {run_id}\n\n- 状态：initialized\n- 创建时间：{frozen['created_at']}\n"
-        "- 数据检查：pending\n- 前端运行：pending\n- 标准化：pending\n- 报告：pending\n",
+        f"# Run {run_id}\n\n"
+        f"- status: initialized\n"
+        f"- created: {frozen['created_at']}\n"
+        "- bag analysis: pending\n"
+        "- frontend runs: pending\n"
+        "- standardization: pending\n"
+        "- report: pending\n",
         encoding="utf-8",
     )
     print(run)
@@ -163,36 +141,55 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 def cmd_analyze_bag(args: argparse.Namespace) -> None:
     run, manifest = resolve_run(args.run)
-    workspace = Path(manifest["workspace"])
+    workspace = Path(manifest["workspace"]).expanduser()
     analyzer = MODULE_ROOT / "evaluators/analyze_bag.py"
     output = run / "metrics/bag_analysis.json"
-    run_command([sys.executable, str(analyzer), manifest["dataset"]["bag_dir"], "--output", str(output)], workspace,
-                run / "logs/analyze_bag.log")
+    run_command(
+        [sys.executable, str(analyzer), manifest["dataset"]["bag_dir"], "--output", str(output)],
+        workspace,
+        run / "logs/analyze_bag.log",
+    )
     print(output)
 
 
 def git_state(path: Path) -> dict[str, Any]:
     if not (path / ".git").exists():
         return {"path": str(path), "git": False}
+
     def capture(*parts: str) -> str:
-        return subprocess.run(["git", "-C", str(path), *parts], text=True, capture_output=True, check=False).stdout.strip()
-    return {"path": str(path), "git": True, "commit": capture("rev-parse", "HEAD"),
-            "branch": capture("rev-parse", "--abbrev-ref", "HEAD"), "dirty": bool(capture("status", "--porcelain"))}
+        return subprocess.run(
+            ["git", "-C", str(path), *parts], text=True, capture_output=True, check=False
+        ).stdout.strip()
+
+    return {
+        "path": str(path),
+        "git": True,
+        "commit": capture("rev-parse", "HEAD"),
+        "branch": capture("rev-parse", "--abbrev-ref", "HEAD"),
+        "dirty": bool(capture("status", "--porcelain")),
+    }
 
 
 def cmd_snapshot(args: argparse.Namespace) -> None:
     run, manifest = resolve_run(args.run)
-    workspace = Path(manifest["workspace"])
+    workspace = Path(manifest["workspace"]).expanduser()
     sources = [workspace]
     for config in manifest["algorithms"].values():
-        source = workspace / str(config.get("source", ""))
+        hint = resolved_source_hint(config)
+        if not hint:
+            continue
+        source = Path(hint).expanduser()
+        if not source.is_absolute():
+            source = workspace / source
         if source.is_dir() and source not in sources:
             sources.append(source)
     metadata = {
         "captured_at": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
-        "platform": platform.platform(), "python": platform.python_version(),
-        "ros_distro": os.environ.get("ROS_DISTRO", ""), "git_sources": [git_state(path) for path in sources],
-        "executables": {name: shutil.which(name) for name in ("ros2", "colcon", "cmake", "git")},
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+        "ros_distro": os.environ.get("ROS_DISTRO", ""),
+        "git_sources": [git_state(path) for path in sources],
+        "executables": {name: shutil.which(name) for name in ("ros2", "colcon", "cmake", "git", "ffmpeg")},
     }
     path = run / "metadata/environment_snapshot.json"
     path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -201,27 +198,62 @@ def cmd_snapshot(args: argparse.Namespace) -> None:
 
 def cmd_commands(args: argparse.Namespace) -> None:
     run, manifest = resolve_run(args.run)
-    workspace = Path(manifest["workspace"])
     bag = manifest["dataset"]["bag_dir"]
     for name, config in manifest["algorithms"].items():
-        runner = Path(config["runner"])
-        if not runner.is_absolute():
-            runner = MODULE_ROOT / runner
+        runner = resolved_runner(config)
         output = run / "raw" / name
         print(f"# {name} ({config['mode']})")
         print(f"bash {runner} {json.dumps(bag)} {json.dumps(str(output))}")
 
 
+def cmd_list_registry(args: argparse.Namespace) -> None:
+    values = REGISTRY.list_algorithms() if args.kind == "algorithms" else REGISTRY.list_datasets()
+    for item in values:
+        print(item)
+
+
+def cmd_show_registry(args: argparse.Namespace) -> None:
+    try:
+        record = REGISTRY.load_algorithm(args.id) if args.kind == "algorithm" else REGISTRY.load_dataset(args.id)
+    except RegistryError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(json.dumps(record, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lio-benchmark")
     sub = parser.add_subparsers(dest="command", required=True)
-    validate = sub.add_parser("validate"); validate.add_argument("--config", type=Path, required=True)
-    validate.add_argument("--verify-hash", action="store_true"); validate.set_defaults(func=cmd_validate)
-    init = sub.add_parser("init"); init.add_argument("--config", type=Path, required=True)
-    init.add_argument("--run-id"); init.set_defaults(func=cmd_init)
-    analyze = sub.add_parser("analyze-bag"); analyze.add_argument("--run", type=Path, required=True); analyze.set_defaults(func=cmd_analyze_bag)
-    snapshot = sub.add_parser("snapshot"); snapshot.add_argument("--run", type=Path, required=True); snapshot.set_defaults(func=cmd_snapshot)
-    commands = sub.add_parser("commands"); commands.add_argument("--run", type=Path, required=True); commands.set_defaults(func=cmd_commands)
+
+    validate = sub.add_parser("validate")
+    validate.add_argument("--config", type=Path, required=True)
+    validate.add_argument("--verify-hash", action="store_true")
+    validate.set_defaults(func=cmd_validate)
+
+    init = sub.add_parser("init")
+    init.add_argument("--config", type=Path, required=True)
+    init.add_argument("--run-id")
+    init.set_defaults(func=cmd_init)
+
+    analyze = sub.add_parser("analyze-bag")
+    analyze.add_argument("--run", type=Path, required=True)
+    analyze.set_defaults(func=cmd_analyze_bag)
+
+    snapshot = sub.add_parser("snapshot")
+    snapshot.add_argument("--run", type=Path, required=True)
+    snapshot.set_defaults(func=cmd_snapshot)
+
+    commands = sub.add_parser("commands")
+    commands.add_argument("--run", type=Path, required=True)
+    commands.set_defaults(func=cmd_commands)
+
+    listing = sub.add_parser("list")
+    listing.add_argument("kind", choices=("algorithms", "datasets"))
+    listing.set_defaults(func=cmd_list_registry)
+
+    show = sub.add_parser("show")
+    show.add_argument("kind", choices=("algorithm", "dataset"))
+    show.add_argument("id")
+    show.set_defaults(func=cmd_show_registry)
     return parser
 
 
