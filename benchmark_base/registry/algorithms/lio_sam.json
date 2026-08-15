@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "lio_sam",
+  "display_name": "LIO-SAM",
+  "mode": "full_slam",
+  "tier": "CORE",
+  "family_id": "lio_sam",
+  "family": ["feature_based", "factor_graph", "lidar_inertial", "global_mapping"],
+  "evaluation_roles": ["ODOMETRY", "SYSTEM_MAPPING"],
+  "sensor_profile": {"lidar": true, "imu": true, "camera": false, "kinematics": false, "gnss": false, "wheel_odometry": false},
+  "algorithm_generation": "lio_sam_factor_graph_baseline",
+  "adapter_status": "NOT_TESTED",
+  "required_modalities": ["lidar", "imu"],
+  "optional_modalities": ["gnss"],
+  "source": {"repository": "TixiaoShan/LIO-SAM", "local_path_hint": "algorithms/LIO-SAM"},
+  "runner": {"adapter": "evaluators/run_lio_sam_test.sh"},
+  "topics": {
+    "inputs": {"lidar": "/points_raw", "imu": "/imu/data", "gnss": null},
+    "outputs": {"trajectory": null, "frontend_trajectory": null, "registered_cloud": null}
+  },
+  "benchmark_notes": "Feature/factor-graph reference. GNSS must remain disabled unless the dataset and scoreboard explicitly include it."
+}
