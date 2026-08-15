@@ -1,11 +1,7 @@
-import sys
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-from evaluators.standardize_map import cloud_rows, scan_timestamp  # noqa: E402
+from benchmark_base.lib.cloud_contract import cloud_rows, scan_timestamp
 
 
 class CustomMsgContractTest(unittest.TestCase):
