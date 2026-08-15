@@ -17,6 +17,7 @@ MODULE_ROOT = Path(__file__).resolve().parents[2]
 if str(MODULE_ROOT) not in sys.path:
     sys.path.insert(0, str(MODULE_ROOT))
 
+from benchmark_base.lib.adapters import collect_algorithm, preflight_algorithm, prepare_algorithm  # noqa: E402
 from benchmark_base.lib.live_debug import append_marker, prepare_session  # noqa: E402
 from benchmark_base.lib.manifest import load_json, resolve_manifest, validate_manifest  # noqa: E402
 from benchmark_base.lib.registry import Registry, RegistryError  # noqa: E402
@@ -206,35 +207,123 @@ def algorithm_command(run: Path, manifest: dict[str, Any], algorithm_id: str) ->
     return ["bash", str(runner), str(manifest["dataset"]["bag_dir"]), str(run / "raw" / algorithm_id)]
 
 
-def execute_algorithm(run: Path, manifest: dict[str, Any], algorithm_id: str) -> int:
-    command = algorithm_command(run, manifest, algorithm_id)
-    log_path = run / "logs" / f"run_{algorithm_id}.log"
+def _write_preflight(run: Path, algorithm_id: str, payload: dict[str, Any]) -> Path:
+    path = run / "metadata" / "algorithms" / algorithm_id / "preflight.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def cmd_preflight(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    selected = [args.algorithm] if args.algorithm else list(manifest["algorithms"])
+    blocked = False
+    for algorithm_id in selected:
+        result = preflight_algorithm(
+            manifest,
+            algorithm_id,
+            benchmark_root=MODULE_ROOT,
+            allow_diagnostic_calibration=args.allow_diagnostic_calibration,
+        )
+        _write_preflight(run, algorithm_id, result.to_dict())
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        blocked = blocked or not result.runnable
+    if blocked:
+        raise SystemExit(2)
+
+
+def execute_algorithm(
+    run: Path,
+    manifest: dict[str, Any],
+    algorithm_id: str,
+    *,
+    allow_diagnostic_calibration: bool = False,
+) -> int:
+    preflight = preflight_algorithm(
+        manifest,
+        algorithm_id,
+        benchmark_root=MODULE_ROOT,
+        allow_diagnostic_calibration=allow_diagnostic_calibration,
+    )
+    _write_preflight(run, algorithm_id, preflight.to_dict())
     status_path = run / "metadata" / f"run_{algorithm_id}.json"
+    log_path = run / "logs" / f"run_{algorithm_id}.log"
+    if not preflight.runnable:
+        payload = {
+            "algorithm_id": algorithm_id,
+            "started_at": None,
+            "finished_at": now_iso(),
+            "command": None,
+            "returncode": None,
+            "status": preflight.status,
+            "diagnostic_only": preflight.diagnostic_only,
+            "reasons": list(preflight.reasons),
+            "log": None,
+            "raw_output": str(run / "raw" / algorithm_id),
+        }
+        status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"{algorithm_id}: {preflight.status}: {'; '.join(preflight.reasons)}", file=sys.stderr)
+        return 2
+
+    prepared = prepare_algorithm(
+        run,
+        manifest,
+        algorithm_id,
+        benchmark_root=MODULE_ROOT,
+        allow_diagnostic_calibration=allow_diagnostic_calibration,
+    )
+    command = algorithm_command(run, manifest, algorithm_id)
     started = now_iso()
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.update(
+        {
+            "WORKSPACE": str(Path(manifest["workspace"]).expanduser()),
+            "BAG_PLAY_RATE": env.get("BAG_PLAY_RATE", "1.0"),
+            "BENCHMARK_ROOT": str(MODULE_ROOT),
+            "BENCHMARK_RUN_DIR": str(run),
+            "BENCHMARK_DATASET_ID": str(manifest["dataset"].get("dataset_id", "legacy_v1_dataset")),
+            "BENCHMARK_ALGORITHM_ID": algorithm_id,
+            "BENCHMARK_GENERATED_CONFIG_DIR": str(prepared.generated_config_dir),
+        }
+    )
     with log_path.open("w", encoding="utf-8") as stream:
         result = subprocess.run(
-            command, cwd=Path(manifest["workspace"]).expanduser(),
-            stdout=stream, stderr=subprocess.STDOUT, text=True, check=False,
+            command,
+            cwd=Path(manifest["workspace"]).expanduser(),
+            env=env,
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
         )
+    collection = collect_algorithm(run, manifest, algorithm_id)
     payload = {
         "algorithm_id": algorithm_id,
         "started_at": started,
         "finished_at": now_iso(),
         "command": command,
         "returncode": result.returncode,
-        "status": "PASS" if result.returncode == 0 else "FAIL",
+        "status": "PASS" if result.returncode == 0 else "FAIL_ALGORITHM",
+        "diagnostic_only": preflight.diagnostic_only,
+        "preflight_status": preflight.status,
         "log": str(log_path),
         "raw_output": str(run / "raw" / algorithm_id),
+        "collection": collection.to_dict(),
     }
     status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"{algorithm_id}: {payload['status']} returncode={result.returncode}")
+    print(f"{algorithm_id}: {payload['status']} returncode={result.returncode} diagnostic_only={preflight.diagnostic_only}")
     return result.returncode
 
 
 def cmd_run(args: argparse.Namespace) -> None:
     run, manifest = resolve_run(args.run)
-    code = execute_algorithm(run, manifest, args.algorithm)
+    code = execute_algorithm(
+        run,
+        manifest,
+        args.algorithm,
+        allow_diagnostic_calibration=args.allow_diagnostic_calibration,
+    )
     if code:
         raise SystemExit(code)
 
@@ -243,14 +332,19 @@ def cmd_run_all(args: argparse.Namespace) -> None:
     run, manifest = resolve_run(args.run)
     failures: list[tuple[str, int]] = []
     for algorithm_id in manifest["algorithms"]:
-        code = execute_algorithm(run, manifest, algorithm_id)
+        code = execute_algorithm(
+            run,
+            manifest,
+            algorithm_id,
+            allow_diagnostic_calibration=args.allow_diagnostic_calibration,
+        )
         if code:
             failures.append((algorithm_id, code))
             if args.stop_on_failure:
                 break
     if failures:
         for algorithm_id, code in failures:
-            print(f"FAIL {algorithm_id}: {code}", file=sys.stderr)
+            print(f"BLOCKED/FAIL {algorithm_id}: {code}", file=sys.stderr)
         raise SystemExit(1)
 
 
@@ -326,10 +420,15 @@ def cmd_standardize_map(args: argparse.Namespace) -> None:
 
 
 def cmd_inspect(args: argparse.Namespace) -> None:
-    command = ["--run", str(args.run)]
+    command = [
+        "--run", str(args.run),
+        "--map-kind", args.map_kind,
+        "--color-mode", args.color_mode,
+        "--point-size", str(args.point_size),
+        "--display-alignment", args.display_alignment,
+    ]
     if args.algorithms:
         command.extend(["--algorithms", *args.algorithms])
-    command.extend(("--map-kind", args.map_kind, "--color-mode", args.color_mode, "--point-size", str(args.point_size)))
     if args.roi:
         command.extend(("--roi", str(args.roi)))
     if args.camera:
@@ -338,7 +437,7 @@ def cmd_inspect(args: argparse.Namespace) -> None:
 
 
 def cmd_report(args: argparse.Namespace) -> None:
-    command = ["--run", str(args.run)]
+    command = ["--run", str(args.run), "--display-alignment", args.display_alignment]
     if args.roi:
         command.extend(("--roi", str(args.roi)))
     run_python("reporting/generate_report.py", command)
@@ -346,8 +445,10 @@ def cmd_report(args: argparse.Namespace) -> None:
 
 def cmd_demo(args: argparse.Namespace) -> None:
     command = [
-        "--run", str(args.run), "--frames-per-algorithm", str(args.frames_per_algorithm),
+        "--run", str(args.run),
+        "--frames-per-algorithm", str(args.frames_per_algorithm),
         "--fps", str(args.fps),
+        "--display-alignment", args.display_alignment,
     ]
     if args.algorithms:
         command.extend(["--algorithms", *args.algorithms])
@@ -360,6 +461,15 @@ def cmd_demo(args: argparse.Namespace) -> None:
     run_python("reporting/generate_demo.py", command)
 
 
+def _add_alignment_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--display-alignment",
+        choices=("START_XY_YAW", "NONE", "start_yaw", "raw"),
+        default="START_XY_YAW",
+        help="display-only alignment; start_yaw/raw are deprecated aliases",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lio-benchmark")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -368,8 +478,9 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init"); init.add_argument("--config", type=Path, required=True); init.add_argument("--run-id"); init.set_defaults(func=cmd_init)
     analyze = sub.add_parser("analyze-bag"); analyze.add_argument("--run", type=Path, required=True); analyze.set_defaults(func=cmd_analyze_bag)
     snapshot = sub.add_parser("snapshot"); snapshot.add_argument("--run", type=Path, required=True); snapshot.set_defaults(func=cmd_snapshot)
-    run = sub.add_parser("run"); run.add_argument("--run", type=Path, required=True); run.add_argument("--algorithm", required=True); run.set_defaults(func=cmd_run)
-    run_all = sub.add_parser("run-all"); run_all.add_argument("--run", type=Path, required=True); run_all.add_argument("--stop-on-failure", action="store_true"); run_all.set_defaults(func=cmd_run_all)
+    preflight = sub.add_parser("preflight"); preflight.add_argument("--run", type=Path, required=True); preflight.add_argument("--algorithm"); preflight.add_argument("--allow-diagnostic-calibration", action="store_true"); preflight.set_defaults(func=cmd_preflight)
+    run = sub.add_parser("run"); run.add_argument("--run", type=Path, required=True); run.add_argument("--algorithm", required=True); run.add_argument("--allow-diagnostic-calibration", action="store_true"); run.set_defaults(func=cmd_run)
+    run_all = sub.add_parser("run-all"); run_all.add_argument("--run", type=Path, required=True); run_all.add_argument("--stop-on-failure", action="store_true"); run_all.add_argument("--allow-diagnostic-calibration", action="store_true"); run_all.set_defaults(func=cmd_run_all)
     commands = sub.add_parser("commands"); commands.add_argument("--run", type=Path, required=True); commands.set_defaults(func=cmd_commands)
     listing = sub.add_parser("list"); listing.add_argument("kind", choices=("algorithms", "datasets")); listing.set_defaults(func=cmd_list_registry)
     show = sub.add_parser("show"); show.add_argument("kind", choices=("algorithm", "dataset")); show.add_argument("id"); show.set_defaults(func=cmd_show_registry)
@@ -379,9 +490,9 @@ def build_parser() -> argparse.ArgumentParser:
     st = standardize_sub.add_parser("trajectory"); st.add_argument("--run", type=Path, required=True); st.add_argument("--algorithm", required=True); st.add_argument("--input", type=Path, required=True); st.add_argument("--source-topic", default=""); st.add_argument("--column-map"); st.set_defaults(func=cmd_standardize_trajectory)
     sm = standardize_sub.add_parser("map"); sm.add_argument("--run", type=Path, required=True); sm.add_argument("--algorithm", required=True); sm.set_defaults(func=cmd_standardize_map)
 
-    inspect = sub.add_parser("inspect"); inspect.add_argument("--run", type=Path, required=True); inspect.add_argument("--algorithms", nargs="+"); inspect.add_argument("--map-kind", choices=("unified", "native"), default="unified"); inspect.add_argument("--color-mode", choices=("height", "intensity", "algorithm"), default="height"); inspect.add_argument("--roi", type=Path); inspect.add_argument("--camera", type=Path); inspect.add_argument("--point-size", type=int, default=2); inspect.set_defaults(func=cmd_inspect)
-    report = sub.add_parser("report"); report.add_argument("--run", type=Path, required=True); report.add_argument("--roi", type=Path); report.set_defaults(func=cmd_report)
-    demo = sub.add_parser("demo"); demo.add_argument("--run", type=Path, required=True); demo.add_argument("--algorithms", nargs="+"); demo.add_argument("--roi", type=Path); demo.add_argument("--camera", type=Path); demo.add_argument("--output", type=Path); demo.add_argument("--frames-per-algorithm", type=int, default=24); demo.add_argument("--fps", type=int, default=12); demo.set_defaults(func=cmd_demo)
+    inspect = sub.add_parser("inspect"); inspect.add_argument("--run", type=Path, required=True); inspect.add_argument("--algorithms", nargs="+"); inspect.add_argument("--map-kind", choices=("unified", "native"), default="unified"); inspect.add_argument("--color-mode", choices=("height", "intensity", "algorithm"), default="height"); inspect.add_argument("--roi", type=Path); inspect.add_argument("--camera", type=Path); inspect.add_argument("--point-size", type=int, default=2); _add_alignment_option(inspect); inspect.set_defaults(func=cmd_inspect)
+    report = sub.add_parser("report"); report.add_argument("--run", type=Path, required=True); report.add_argument("--roi", type=Path); _add_alignment_option(report); report.set_defaults(func=cmd_report)
+    demo = sub.add_parser("demo"); demo.add_argument("--run", type=Path, required=True); demo.add_argument("--algorithms", nargs="+"); demo.add_argument("--roi", type=Path); demo.add_argument("--camera", type=Path); demo.add_argument("--output", type=Path); demo.add_argument("--frames-per-algorithm", type=int, default=24); demo.add_argument("--fps", type=int, default=12); _add_alignment_option(demo); demo.set_defaults(func=cmd_demo)
 
     live = sub.add_parser("live")
     live_sub = live.add_subparsers(dest="live_command", required=True)
