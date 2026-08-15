@@ -8,6 +8,21 @@ from pathlib import Path
 from benchmark_base.lib.registry import FIXED_BASELINES, Registry, RegistryError, validate_fixed_baselines
 
 
+CORE_BASELINES = {
+    "fast_livo2",
+    "fast_lio2",
+    "point_lio",
+    "dlio",
+    "lio_sam",
+    "glim_odometry",
+    "glim_full_slam",
+    "leg_kilo",
+    "kiss_icp",
+}
+RESEARCH_BASELINES = {"faster_lio", "slict"}
+LEGACY_BASELINES = {"leg_kilo2_lidar_imu"}
+
+
 class RegistryTest(unittest.TestCase):
     def test_tracked_fixed_baselines_are_valid(self) -> None:
         registry = Registry()
@@ -16,6 +31,46 @@ class RegistryTest(unittest.TestCase):
         for algorithm_id in FIXED_BASELINES:
             record = registry.load_algorithm(algorithm_id)
             self.assertEqual(algorithm_id, record["algorithm_id"])
+
+    def test_baseline_suite_records_expose_family_tier_roles_and_sensor_profile(self) -> None:
+        registry = Registry()
+        expected = CORE_BASELINES | RESEARCH_BASELINES | LEGACY_BASELINES
+        self.assertTrue(expected.issubset(set(registry.list_algorithms())))
+        for algorithm_id in expected:
+            record = registry.load_algorithm(algorithm_id)
+            self.assertIn(record["tier"], {"CORE", "RESEARCH", "LEGACY"})
+            self.assertTrue(record["family_id"])
+            self.assertTrue(record["family"])
+            self.assertTrue(record["evaluation_roles"])
+            self.assertIsInstance(record["sensor_profile"], dict)
+            self.assertIn("lidar", record["sensor_profile"])
+            self.assertIn(record["adapter_status"], {"PASS", "FAIL_IMPLEMENTATION", "FAIL_ALGORITHM", "BLOCKED_ENVIRONMENT", "BLOCKED_DEPENDENCY", "BLOCKED_INPUT", "BLOCKED_CALIBRATION", "NOT_TESTED"})
+
+    def test_baseline_suite_tiers_are_stable(self) -> None:
+        registry = Registry()
+        for algorithm_id in CORE_BASELINES:
+            self.assertEqual("CORE", registry.load_algorithm(algorithm_id)["tier"])
+        for algorithm_id in RESEARCH_BASELINES:
+            self.assertEqual("RESEARCH", registry.load_algorithm(algorithm_id)["tier"])
+        for algorithm_id in LEGACY_BASELINES:
+            self.assertEqual("LEGACY", registry.load_algorithm(algorithm_id)["tier"])
+
+    def test_current_leg_kilo_is_distinct_from_historical_v2(self) -> None:
+        registry = Registry()
+        current = registry.load_algorithm("leg_kilo")
+        historical = registry.load_algorithm("leg_kilo2_lidar_imu")
+        self.assertEqual("master", current["source"]["branch"])
+        self.assertNotEqual(current["algorithm_generation"], historical["algorithm_generation"])
+        self.assertEqual("leg_kilo", current["family_id"])
+
+    def test_glim_runnable_ids_share_one_family_but_different_roles(self) -> None:
+        registry = Registry()
+        odom = registry.load_algorithm("glim_odometry")
+        full = registry.load_algorithm("glim_full_slam")
+        self.assertEqual("glim", odom["family_id"])
+        self.assertEqual("glim", full["family_id"])
+        self.assertIn("ODOMETRY", odom["evaluation_roles"])
+        self.assertIn("SYSTEM_MAPPING", full["evaluation_roles"])
 
     def test_example_dataset_is_valid(self) -> None:
         record = Registry().load_dataset("example_mid360")
