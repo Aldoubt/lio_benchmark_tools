@@ -18,6 +18,11 @@ MODULE_ROOT = Path(__file__).resolve().parents[1]
 if str(MODULE_ROOT) not in sys.path:
     sys.path.insert(0, str(MODULE_ROOT))
 
+from benchmark_base.lib.artifacts import map_artifact_paths  # noqa: E402
+from benchmark_base.lib.display_alignment import (  # noqa: E402
+    normalize_display_alignment_mode,
+    write_display_alignment_metadata,
+)
 from benchmark_base.lib.manifest import load_json  # noqa: E402
 from visualization.alignment import StartYawAlignment, load_start_yaw_alignment  # noqa: E402
 from visualization.pointcloud_io import PointCloudData, read_standard_ply  # noqa: E402
@@ -101,27 +106,44 @@ def selected_algorithms(manifest: dict[str, Any], requested: list[str] | None) -
     return requested
 
 
-def load_map_data(run: Path, algorithm_id: str, map_kind: str, o3d: Any, align: bool) -> LoadedMap:
-    map_dir = run / "standardized" / "maps" / algorithm_id
+def _native_map_path(run: Path, algorithm_id: str) -> Path:
+    paths = map_artifact_paths(run, algorithm_id)
+    candidates = sorted(paths.native_dir.glob("map.*"))
+    if not candidates:
+        # Historical V2 compatibility during migration.
+        candidates = sorted(paths.root.glob("native_map.*"))
+    if not candidates:
+        raise FileNotFoundError(paths.native_dir / "map.*")
+    return candidates[0]
+
+
+def load_map_data(run: Path, algorithm_id: str, map_kind: str, o3d: Any, alignment_mode: str) -> LoadedMap:
+    paths = map_artifact_paths(run, algorithm_id)
     if map_kind == "unified":
-        path = map_dir / "unified_map.ply"
+        path = paths.unified_map if paths.unified_map.is_file() else paths.compat_unified_map
         if not path.is_file():
             raise FileNotFoundError(path)
         data = read_standard_ply(path)
     else:
-        native = sorted(map_dir.glob("native_map.*"))
-        if not native:
-            raise FileNotFoundError(map_dir / "native_map.*")
-        path = native[0]
+        path = _native_map_path(run, algorithm_id)
         cloud = o3d.io.read_point_cloud(str(path))
         if cloud.is_empty():
             raise ValueError(f"Open3D could not read native point cloud: {path}")
         data = PointCloudData(np.asarray(cloud.points, dtype=np.float64), None)
+
     alignment = None
     trajectory = run / "standardized" / "trajectories" / f"{algorithm_id}.csv"
-    if align and trajectory.is_file():
-        alignment = load_start_yaw_alignment(trajectory)
-        data = PointCloudData(alignment.apply_xyz(data.xyz), data.intensity)
+    if trajectory.is_file():
+        write_display_alignment_metadata(
+            run=run,
+            algorithm_id=algorithm_id,
+            trajectory_role="ODOMETRY",
+            trajectory_path=trajectory,
+            mode=alignment_mode,
+        )
+        if alignment_mode == "START_XY_YAW":
+            alignment = load_start_yaw_alignment(trajectory)
+            data = PointCloudData(alignment.apply_xyz(data.xyz), data.intensity)
     return LoadedMap(algorithm_id, data, path, alignment)
 
 
@@ -176,11 +198,11 @@ def inspect(run: Path, *, algorithms: list[str] | None, map_kind: str, color_mod
     manifest = load_json(run / "manifest.json")
     algorithm_ids = selected_algorithms(manifest, algorithms)
     roi: RoiPreset | None = load_roi(roi_path) if roi_path else None
-    align = display_alignment == "start_yaw"
+    alignment_mode = normalize_display_alignment_mode(display_alignment)
     loaded: list[LoadedMap] = []
     for algorithm_id in algorithm_ids:
         try:
-            entry = load_map_data(run, algorithm_id, map_kind, o3d, align)
+            entry = load_map_data(run, algorithm_id, map_kind, o3d, alignment_mode)
         except (FileNotFoundError, ValueError) as exc:
             print(f"skip {algorithm_id}: {exc}", file=sys.stderr)
             continue
@@ -206,11 +228,15 @@ def inspect(run: Path, *, algorithms: list[str] | None, map_kind: str, color_mod
         trajectory = trajectory_lineset(run / "standardized" / "trajectories" / f"{entry.algorithm_id}.csv", o3d, algorithm_color(entry.algorithm_id), entry.alignment)
         if trajectory is not None:
             objects.append({"name": f"trajectory:{entry.algorithm_id}", "geometry": trajectory, "group": "Trajectories", "is_visible": True})
-        low, high = entry.data.bounds(); bounds_low.append(low); bounds_high.append(high)
-    low = np.min(np.vstack(bounds_low), axis=0); high = np.max(np.vstack(bounds_high), axis=0)
+        low, high = entry.data.bounds()
+        bounds_low.append(low)
+        bounds_high.append(high)
+    low = np.min(np.vstack(bounds_low), axis=0)
+    high = np.max(np.vstack(bounds_high), axis=0)
     cameras = {view: orthographic_like_camera(view.upper(), low, high, view) for view in ("xy", "xz", "yz", "perspective")}
     initial = load_camera(camera_path) if camera_path else cameras["perspective"]
-    preset_dir = run / "metadata" / "camera_presets"; screenshot_dir = run / "figures" / "inspector"
+    preset_dir = run / "metadata" / "camera_presets"
+    screenshot_dir = run / "figures" / "inspector"
 
     def view_action(view: str):
         return lambda vis: apply_camera(vis, cameras[view])
@@ -223,15 +249,23 @@ def inspect(run: Path, *, algorithms: list[str] | None, map_kind: str, color_mod
         screenshot_dir.mkdir(parents=True, exist_ok=True)
         stamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
         path = screenshot_dir / f"inspector_{stamp}.png"
-        vis.export_current_image(str(path)); print(f"exported inspector image: {path}")
+        vis.export_current_image(str(path))
+        print(f"exported inspector image: {path}")
 
-    actions = [("View XY", view_action("xy")), ("View XZ", view_action("xz")), ("View YZ", view_action("yz")), ("View Perspective", view_action("perspective")), ("Save Camera Preset", save_camera_action), ("Export Screenshot", screenshot_action)]
-    print(f"display_alignment={display_alignment}; standardized artifacts are unchanged")
+    actions = [
+        ("View XY", view_action("xy")),
+        ("View XZ", view_action("xz")),
+        ("View YZ", view_action("yz")),
+        ("View Perspective", view_action("perspective")),
+        ("Save Camera Preset", save_camera_action),
+        ("Export Screenshot", screenshot_action),
+    ]
+    print(f"Display alignment: {alignment_mode}; standardized artifacts are unchanged")
     for entry in loaded:
-        print(f"- {entry.algorithm_id}: {entry.source_path.name}")
+        print(f"- {entry.algorithm_id}: {entry.source_path}")
     o3d.visualization.draw(
         geometry=objects,
-        title=f"LIO Benchmark Inspector — {manifest.get('run_id', run.name)}",
+        title=f"LIO Benchmark Inspector — {manifest.get('run_id', run.name)} — {alignment_mode}",
         width=1400,
         height=900,
         actions=actions,
@@ -251,11 +285,26 @@ def main() -> int:
     parser.add_argument("--algorithms", nargs="+")
     parser.add_argument("--map-kind", choices=("unified", "native"), default="unified")
     parser.add_argument("--color-mode", choices=("height", "intensity", "algorithm"), default="height")
-    parser.add_argument("--roi", type=Path); parser.add_argument("--camera", type=Path)
+    parser.add_argument("--roi", type=Path)
+    parser.add_argument("--camera", type=Path)
     parser.add_argument("--point-size", type=int, default=2)
-    parser.add_argument("--display-alignment", choices=("start_yaw", "raw"), default="start_yaw")
+    parser.add_argument(
+        "--display-alignment",
+        choices=("START_XY_YAW", "NONE", "start_yaw", "raw"),
+        default="START_XY_YAW",
+        help="Display-only transform. start_yaw/raw are deprecated aliases.",
+    )
     args = parser.parse_args()
-    inspect(args.run.resolve(), algorithms=args.algorithms, map_kind=args.map_kind, color_mode=args.color_mode, roi_path=args.roi, camera_path=args.camera, point_size=args.point_size, display_alignment=args.display_alignment)
+    inspect(
+        args.run.resolve(),
+        algorithms=args.algorithms,
+        map_kind=args.map_kind,
+        color_mode=args.color_mode,
+        roi_path=args.roi,
+        camera_path=args.camera,
+        point_size=args.point_size,
+        display_alignment=args.display_alignment,
+    )
     return 0
 
 
