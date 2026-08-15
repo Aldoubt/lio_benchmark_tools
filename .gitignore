@@ -8,6 +8,7 @@ install/
 log/
 runs/
 output/
+live_sessions/
 *.db3
 *.mcap
 *.bag
@@ -18,3 +19,4 @@ output/
 *.csv
 *.jsonl
 
+# Curated README GIFs are intentionally not ignored.

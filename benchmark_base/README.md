@@ -1,97 +1,103 @@
-# LIO Benchmark Base
+# LIO Benchmark Base V2
 
-面向 ROS 2 LiDAR-IMU 前端的独立测试基座。它位于 `tools/`，不属于导航、底盘控制或在线定位功能包，也不会被正常 `colcon build` 自动编入机器人运行系统。
+`benchmark_base` 是 `lio_benchmark_tools` 的实验编排核心。V2 将 Dataset、Algorithm、Run、Standardized Artifact 四个对象显式分开，避免一个脚本同时拥有数据、算法配置、地图和报告真值。
 
-## 目标
-
-- 用一份实验清单固定 bag、话题、单位、外参、算法版本和评测口径。
-- 每次实验使用独立 run 目录，禁止覆盖历史结果。
-- 原始输出、标准化轨迹、地图、日志、指标和报告分目录保存。
-- 纯 odometry 与 full SLAM 分组比较。
-- 所有自动报告保留数据限制，不能把首尾高度差自动称为真值误差。
-
-## 快速开始
-
-```bash
-cd /home/yangxuan/ros2_ws
-
-# 1. 检查实验清单、bag、话题和依赖脚本
-lio_benchmark_tools/benchmark_base/bin/lio-benchmark validate \
-  --config lio_benchmark_tools/benchmark_base/config/current_mid360.json
-
-# 2. 创建一个不可覆盖的标准实验目录
-lio_benchmark_tools/benchmark_base/bin/lio-benchmark init \
-  --config lio_benchmark_tools/benchmark_base/config/current_mid360.json \
-  --run-id greenhouse_mid360_001
-
-# 3. 对新 run 执行 bag 数据质量分析
-lio_benchmark_tools/benchmark_base/bin/lio-benchmark analyze-bag \
-  --run runs/greenhouse_mid360_001
-
-# 4. 算法运行仍使用 adapters/ 中明确可审计的适配命令
-lio_benchmark_tools/benchmark_base/bin/lio-benchmark commands \
-  --run runs/greenhouse_mid360_001
-
-# 5. 收集环境、Git commit 和文件校验值
-lio_benchmark_tools/benchmark_base/bin/lio-benchmark snapshot \
-  --run runs/greenhouse_mid360_001
-```
-
-默认 run 根目录是工作区的 `runs/`，可以在实验清单的 `output_root` 中修改。
-
-## 标准 run 目录
+## 核心对象
 
 ```text
-runs/<run_id>/
-├── manifest.json              # 已冻结的实验清单副本
-├── RUN_STATUS.md              # 人工/自动状态记录
-├── input/                     # 输入说明与校验值，不复制大 bag
-├── configs/                   # 本次实际使用的参数副本
-├── raw/
-│   ├── fast_livo2/
-│   ├── point_lio/
-│   ├── glim_odometry/
-│   ├── glim_full_slam/
-│   └── dlio/
-├── standardized/
-│   ├── trajectories/          # 统一 CSV/TUM
-│   └── maps/                  # 统一 PLY/PCD
-├── metrics/                   # JSON/CSV 指标
-├── figures/                   # PNG/SVG
-├── reports/                   # 中文 Markdown 报告
-├── logs/                      # ROS/算法/录包日志
-└── metadata/                  # 环境、Git、校验值、命令记录
+benchmark_base/
+├─ bin/lio-benchmark
+├─ config/
+├─ registry/
+│  ├─ datasets/
+│  └─ algorithms/
+├─ lib/
+└─ tests/
 ```
 
-## 实验阶段
+### Dataset Registry
 
-1. `validate`：检查 bag 目录、metadata、话题和工具。
-2. `init`：冻结 manifest，建立 run 目录。
-3. `analyze-bag`：数据、IMU、时间戳和逐点字段检查。
-4. `run frontend`：分别运行 FAST-LIVO2、Point-LIO、GLIM odometry、DLIO。
-5. `run backend`：只对支持后端的配置单独运行，例如 GLIM full SLAM。
-6. `standardize`：导出统一坐标含义和采样口径的轨迹与地图。
-7. `evaluate`：Z 极差、首尾差、路径归一化漂移、姿态范围和分段指标。
-8. `visualize/report`：生成统一地图、轨迹图和报告。
-9. `snapshot`：保存 Git commit、系统环境、命令和校验值。
+记录 bag 身份、话题、消息类型、逐点时间字段、外参来源和采集方式。bag 本体始终留在外部存储。
+
+### Algorithm Registry
+
+固定算法身份、模式、输入/输出 topic contract、runner、已知预处理要求和 Live Debug 启动信息。
+
+### Run
+
+`init` 把当时解析后的 Dataset / Algorithm registry 记录冻结到 `manifest.json`，避免后续 registry 更新改变历史实验语义。
+
+## V2 quick start
+
+```bash
+# 查看固定基线
+benchmark_base/bin/lio-benchmark list algorithms
+
+# 创建你自己的 dataset JSON 后验证实验
+benchmark_base/bin/lio-benchmark validate --config experiment.json
+benchmark_base/bin/lio-benchmark init --config experiment.json --run-id greenhouse_001
+
+# 冻结环境并运行
+benchmark_base/bin/lio-benchmark snapshot --run /path/to/runs/greenhouse_001
+benchmark_base/bin/lio-benchmark run-all --run /path/to/runs/greenhouse_001
+```
+
+## Standardization
+
+轨迹标准格式：
+
+```text
+timestamp_s,x_m,y_m,z_m,qx,qy,qz,qw,roll_rad,pitch_rad,yaw_rad,source_topic
+```
+
+先将算法轨迹转换：
+
+```bash
+lio-benchmark standardize trajectory \
+  --run <run> --algorithm fast_livo2 \
+  --input <trajectory.csv> --source-topic /aft_mapped_to_init
+```
+
+再统一重建地图：
+
+```bash
+lio-benchmark standardize map --run <run> --algorithm fast_livo2
+```
+
+统一地图只接受时间戳匹配成功的扫描，并在 `map_metadata.json` 保存 selected/matched/unmatched scan 数、插值 gap、timestamp source 和生成命令。
+
+## Inspector / Report / Demo
+
+```bash
+lio-benchmark inspect --run <run>
+lio-benchmark report --run <run>
+lio-benchmark demo --run <run>
+```
+
+Open3D 只属于 Inspector 可选依赖；headless benchmark 不依赖 Open3D。`ffmpeg` 只用于最后的 GIF 合成，没有 ffmpeg 时仍保留已经生成的 PNG frame 和合成命令。
+
+## Live Debug
+
+Live Debug 不是正式 benchmark timing 模式。它的用途是让人观察算法什么时候开始异常：
+
+```bash
+lio-benchmark live prepare \
+  --dataset <dataset_id> \
+  --algorithms fast_livo2 point_lio \
+  --workspace ~/ros2_ws --rate 0.5
+```
+
+当前 adapter 只有在明确验证了 namespace/topic 隔离后才允许 session 标成 `simultaneous_safe=true`。否则 `commands.md` 会要求逐个运行 estimator，防止 `/aft_mapped_to_init` 等共享输出互相污染。
 
 ## 公平比较规则
 
-- 纯前端组：FAST-LIVO2、Point-LIO、GLIM odometry、DLIO。
-- 后端组：GLIM full SLAM 或“前端 + 独立回环后端”。
-- 不把 full SLAM 与纯 odometry 直接排名。
-- 所有算法使用相同 bag、起止区间、LiDAR/IMU 外参和 IMU 单位。
-- PointCloud2 必须保留逐点时间；格式转换必须记录字段映射。
-- 地图比较使用相同扫描、点采样和体素分辨率。
-- 没有真值和等高测量时，`z_end - z_start` 只能称为首尾 Z 差。
-- 不允许通过锁死 Z/roll/pitch 或降低回环阈值美化结果。
+- 同一个正式 run 固定 dataset identity、bag hash、外参、代码版本、参数和标准化口径
+- 正式性能 benchmark 默认算法逐个运行
+- native map 与 unified reconstruction 分开标记
+- GLIM Full SLAM 不伪装成 pure odometry 排名
+- Leg-KILO `lidar_imu` 与未来 kinematics-enabled 结果分开命名
+- 不把首尾 Z 差自动称为真值误差
+- 不通过删掉失败区域、手工换视角或只保留成功 run 美化展示
+- missing / invalid / failure 都保留为实验状态
 
-## 与现有工具的关系
-
-- `benchmark_base`：实验编排、目录契约、配置冻结、环境快照。
-- `evaluators`：bag/轨迹分析、算法运行适配、地图可视化。
-- `src/mid360_nav_demo`、导航与控制包：不被本基座修改或依赖。
-
-当前完整实验可作为基准样例，见 `config/current_mid360.json` 和 `docs/CURRENT_BASELINE.md`。
-
-完整原理、输入规则、指标解释、四算法命令和故障排查见 [docs/USER_MANUAL_ZH.md](docs/USER_MANUAL_ZH.md)。
+完整工作流见 [`docs/V2_WORKFLOW.md`](docs/V2_WORKFLOW.md)。
