@@ -31,6 +31,30 @@ class AdapterLifecycleTest(unittest.TestCase):
             self.assertEqual("FAIL_IMPLEMENTATION", result.status)
             self.assertIn("runner", " ".join(result.reasons).lower())
 
+    def test_unsupported_ros_distro_is_blocked_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self._create_source_and_runner(root)
+            manifest = self._manifest(root)
+            manifest["algorithms"]["lio"]["environment_requirements"] = {
+                "ros_distros": ["noetic"]
+            }
+            result = preflight_algorithm(
+                manifest,
+                "lio",
+                benchmark_root=root,
+                runtime_env={"ROS_DISTRO": "humble"},
+            )
+            self.assertEqual("BLOCKED_ENVIRONMENT", result.status)
+            self.assertIn("noetic", " ".join(result.reasons))
+            result = preflight_algorithm(
+                manifest,
+                "lio",
+                benchmark_root=root,
+                runtime_env={"ROS_DISTRO": "noetic"},
+            )
+            self.assertEqual("PASS", result.status)
+
     def test_missing_required_imu_topic_is_blocked_input(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
