@@ -3,7 +3,13 @@
   "algorithm_id": "fast_livo2",
   "display_name": "FAST-LIVO2",
   "mode": "odometry",
+  "tier": "CORE",
+  "family_id": "fast_livo2",
   "family": ["eskf", "lidar_inertial_visual", "direct_registration"],
+  "evaluation_roles": ["ODOMETRY"],
+  "sensor_profile": {"lidar": true, "imu": true, "camera": false, "kinematics": false, "gnss": false, "wheel_odometry": false},
+  "algorithm_generation": "fast_livo2_v2_reference",
+  "adapter_status": "PASS",
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": ["camera"],
   "source": {"repository": "hku-mars/FAST-LIVO2", "local_path_hint": "src/FAST-LIVO2-ROS2"},
@@ -18,5 +24,5 @@
     "processes": [{"name": "estimator", "command": "ros2 launch fast_livo mapping_mid360_lio.launch.py use_rviz:=false", "background": false}],
     "diagnostic_topics": ["/aft_mapped_to_init", "/cloud_registered"]
   },
-  "benchmark_notes": "Record the effective modality set per run; LiDAR-IMU-only runs are not labeled visual."
+  "benchmark_notes": "Primary reference. Record the effective modality set per run; LiDAR-IMU-only runs are not labeled visual. Adapter PASS reflects the recorded green-house full-bag verification, not universal dataset compatibility."
 }
