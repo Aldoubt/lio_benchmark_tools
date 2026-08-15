@@ -24,7 +24,7 @@
     "point_time_unit": "ns_absolute"
   },
   "calibration": {
-    "rotation_lidar_to_imu_row_major": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+    "rotation_lidar_to_imu_row_major": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
     "translation_lidar_to_imu_m": [0.011, 0.02329, -0.04412],
     "source": "replace_with_dataset_specific_source"
   }
