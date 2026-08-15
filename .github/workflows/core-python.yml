@@ -13,6 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+      - name: Install core numeric dependency
+        run: python3 -m pip install --disable-pip-version-check numpy
       - name: Baseline suite registry contract
         run: python3 -m unittest benchmark_base.tests.test_registry -v
       - name: Unit contracts
