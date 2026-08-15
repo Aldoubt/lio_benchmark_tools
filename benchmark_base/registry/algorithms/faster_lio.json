@@ -12,11 +12,32 @@
   "adapter_status": "NOT_TESTED",
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": [],
-  "source": {"repository": "gaoxiang12/faster-lio", "local_path_hint": "algorithms/faster-lio"},
+  "extrinsic_convention": "LIDAR_TO_IMU",
+  "source": {"repository": "gaoxiang12/faster-lio", "branch": "main", "local_path_hint": "algorithms/faster-lio"},
+  "environment_requirements": {
+    "ros_distros": ["melodic", "noetic"],
+    "ubuntu_versions": ["18.04", "20.04"],
+    "runtime": "ROS1/catkin",
+    "notes": "Upstream documents Ubuntu 18.04/20.04 with ROS Melodic/Noetic. The primary Humble machine is intentionally blocked rather than treated as a supported port."
+  },
+  "input_requirements": {
+    "bag_transport": "ros1_bag",
+    "notes": "The official implementation consumes ROS1 messages/bags. ROS2 datasets require an explicit conversion artifact; the benchmark adapter never converts silently."
+  },
   "runner": {"adapter": "evaluators/run_faster_lio_test.sh"},
   "topics": {
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu"},
-    "outputs": {"trajectory": null, "registered_cloud": null}
+    "outputs": {
+      "trajectory": "/Odometry",
+      "path": "/path",
+      "registered_cloud": "/cloud_registered",
+      "registered_cloud_body": "/cloud_registered_body",
+      "native_map": "PCD/scans.pcd"
+    }
   },
-  "benchmark_notes": "Research-tier efficiency/map-structure baseline; absence does not invalidate a Core baseline run."
+  "native_map": {
+    "default_status": "AVAILABLE_WHEN_PCD_SAVE_ENABLED",
+    "source_output": "PCD/scans.pcd"
+  },
+  "benchmark_notes": "Research-tier efficiency/map-structure baseline. Upstream names its mapping extrinsic Lidar_T/R_wrt_IMU and stores it as offset_T/R_L_I, matching the benchmark LIDAR_TO_IMU convention. Absence or environment blocking does not invalidate a Core baseline run."
 }
