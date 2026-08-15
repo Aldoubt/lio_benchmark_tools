@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "dlio",
+  "display_name": "DLIO",
+  "mode": "odometry",
+  "family": ["direct", "lidar_inertial"],
+  "required_modalities": ["lidar", "imu"],
+  "optional_modalities": [],
+  "source": {
+    "repository": "vectr-ucla/direct_lidar_inertial_odometry",
+    "local_path_hint": "date/algorithms/dlio_ros2"
+  },
+  "runner": {"adapter": "evaluators/run_dlio_test.sh"},
+  "topics": {
+    "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu"},
+    "outputs": {"trajectory": "/dlio/odom_node/odom", "registered_cloud": null}
+  },
+  "preprocessing": {
+    "imu_acceleration_scale": 9.80665,
+    "patch_provenance_required": true
+  },
+  "live_debug": {"namespace_capable": true}
+}

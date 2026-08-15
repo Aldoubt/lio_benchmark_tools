@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "leg_kilo2_lidar_imu",
+  "display_name": "Leg-KILO 2.0 (LiDAR-IMU)",
+  "mode": "odometry",
+  "family": ["eskf", "pointwise_update", "voxel_map", "kinematic_inertial_lidar"],
+  "required_modalities": ["lidar", "imu"],
+  "optional_modalities": ["leg_kinematics"],
+  "source": {
+    "repository": "ouguangjun/Leg-KILO",
+    "local_path_hint": "date/algorithms/Leg-KILO"
+  },
+  "runner": {"adapter": "evaluators/run_leg_kilo_test.sh"},
+  "topics": {
+    "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu", "leg_kinematics": null},
+    "outputs": {"trajectory": null, "registered_cloud": null}
+  },
+  "live_debug": {"namespace_capable": false},
+  "benchmark_mode": {
+    "sensor_fusion": "lidar_imu",
+    "leg_kinematics": false
+  },
+  "benchmark_notes": "Fixed baseline mode disables leg kinematics for common MID360+IMU bags. Adapter output topics must be frozen after the local ROS1/ROS2 bridge or port is selected."
+}

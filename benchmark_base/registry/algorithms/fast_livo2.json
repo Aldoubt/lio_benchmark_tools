@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "fast_livo2",
+  "display_name": "FAST-LIVO2",
+  "mode": "odometry",
+  "family": ["eskf", "lidar_inertial_visual", "direct_registration"],
+  "required_modalities": ["lidar", "imu"],
+  "optional_modalities": ["camera"],
+  "source": {
+    "repository": "hku-mars/FAST-LIVO2",
+    "local_path_hint": "src/FAST-LIVO2-ROS2"
+  },
+  "runner": {
+    "adapter": "evaluators/run_fast_livo_test.sh"
+  },
+  "topics": {
+    "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu", "camera": null},
+    "outputs": {"trajectory": "/aft_mapped_to_init", "registered_cloud": "/cloud_registered"}
+  },
+  "live_debug": {"namespace_capable": true},
+  "benchmark_notes": "Record the effective modality set per run; LiDAR-IMU-only runs are not labeled visual."
+}

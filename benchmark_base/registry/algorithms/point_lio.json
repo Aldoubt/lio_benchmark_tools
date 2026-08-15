@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "point_lio",
+  "display_name": "Point-LIO",
+  "mode": "odometry",
+  "family": ["eskf", "pointwise_update", "lidar_inertial"],
+  "required_modalities": ["lidar", "imu"],
+  "optional_modalities": [],
+  "source": {
+    "repository": "hku-mars/Point-LIO",
+    "local_path_hint": "date/algorithms/point_lio_ros2"
+  },
+  "runner": {"adapter": "evaluators/run_point_lio_test.sh"},
+  "topics": {
+    "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu"},
+    "outputs": {"trajectory": "/aft_mapped_to_init", "registered_cloud": "/cloud_registered"}
+  },
+  "live_debug": {"namespace_capable": true}
+}
