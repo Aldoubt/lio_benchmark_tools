@@ -8,6 +8,7 @@ import csv
 import hashlib
 import math
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,15 +19,17 @@ if str(MODULE_ROOT) not in sys.path:
     sys.path.insert(0, str(MODULE_ROOT))
 
 from benchmark_base.lib.manifest import load_json  # noqa: E402
+from visualization.alignment import StartYawAlignment, load_start_yaw_alignment  # noqa: E402
 from visualization.pointcloud_io import PointCloudData, read_standard_ply  # noqa: E402
-from visualization.presets import (  # noqa: E402
-    CameraPreset,
-    RoiPreset,
-    load_camera,
-    load_roi,
-    orthographic_like_camera,
-    save_camera,
-)
+from visualization.presets import CameraPreset, RoiPreset, load_camera, load_roi, orthographic_like_camera, save_camera  # noqa: E402
+
+
+@dataclass(frozen=True)
+class LoadedMap:
+    algorithm_id: str
+    data: PointCloudData
+    source_path: Path
+    alignment: StartYawAlignment | None
 
 
 def require_open3d() -> Any:
@@ -48,32 +51,43 @@ def algorithm_color(algorithm_id: str) -> tuple[float, float, float]:
     return colorsys.hsv_to_rgb(hue, saturation, value)
 
 
-def scalar_colors(values: np.ndarray) -> np.ndarray:
+def scalar_colors(values: np.ndarray, limits: tuple[float, float]) -> np.ndarray:
     if len(values) == 0:
         return np.empty((0, 3), dtype=np.float64)
-    finite = values[np.isfinite(values)]
-    if finite.size == 0:
-        return np.full((len(values), 3), 0.7, dtype=np.float64)
-    low, high = np.percentile(finite, [2.0, 98.0])
+    low, high = limits
     if not high > low:
         high = low + 1.0
     t = np.clip((values - low) / (high - low), 0.0, 1.0)
-    # Compact blue -> cyan -> yellow map without a matplotlib dependency.
     red = np.clip(1.5 * t - 0.25, 0.0, 1.0)
     green = np.clip(1.8 - np.abs(2.0 * t - 1.0) * 1.8, 0.0, 1.0)
     blue = np.clip(1.25 - 1.5 * t, 0.0, 1.0)
     return np.column_stack((red, green, blue))
 
 
-def cloud_colors(data: PointCloudData, algorithm_id: str, mode: str) -> np.ndarray:
+def shared_scalar_limits(values: list[np.ndarray]) -> tuple[float, float]:
+    sampled: list[np.ndarray] = []
+    for value in values:
+        finite = value[np.isfinite(value)]
+        if finite.size:
+            sampled.append(finite[::max(1, len(finite) // 50_000)])
+    if not sampled:
+        return 0.0, 1.0
+    joined = np.concatenate(sampled)
+    low, high = np.percentile(joined, [2.0, 98.0])
+    return float(low), float(high if high > low else low + 1.0)
+
+
+def cloud_colors(data: PointCloudData, algorithm_id: str, mode: str, limits: tuple[float, float] | None) -> np.ndarray:
     if mode == "algorithm":
         return np.tile(np.asarray(algorithm_color(algorithm_id)), (len(data.xyz), 1))
     if mode == "height":
-        return scalar_colors(data.xyz[:, 2])
+        assert limits is not None
+        return scalar_colors(data.xyz[:, 2], limits)
     if mode == "intensity":
         if data.intensity is None:
             return np.tile(np.asarray(algorithm_color(algorithm_id)), (len(data.xyz), 1))
-        return scalar_colors(data.intensity)
+        assert limits is not None
+        return scalar_colors(data.intensity, limits)
     raise ValueError(f"unsupported color mode: {mode}")
 
 
@@ -87,27 +101,31 @@ def selected_algorithms(manifest: dict[str, Any], requested: list[str] | None) -
     return requested
 
 
-def load_cloud(run: Path, algorithm_id: str, map_kind: str, o3d: Any) -> tuple[Any, PointCloudData | None, Path]:
+def load_map_data(run: Path, algorithm_id: str, map_kind: str, o3d: Any, align: bool) -> LoadedMap:
     map_dir = run / "standardized" / "maps" / algorithm_id
     if map_kind == "unified":
         path = map_dir / "unified_map.ply"
         if not path.is_file():
             raise FileNotFoundError(path)
         data = read_standard_ply(path)
-        return None, data, path
-    native = sorted(map_dir.glob("native_map.*"))
-    if not native:
-        raise FileNotFoundError(map_dir / "native_map.*")
-    path = native[0]
-    cloud = o3d.io.read_point_cloud(str(path))
-    if cloud.is_empty():
-        raise ValueError(f"Open3D could not read native point cloud: {path}")
-    xyz = np.asarray(cloud.points, dtype=np.float64)
-    data = PointCloudData(xyz=xyz, intensity=None)
-    return cloud, data, path
+    else:
+        native = sorted(map_dir.glob("native_map.*"))
+        if not native:
+            raise FileNotFoundError(map_dir / "native_map.*")
+        path = native[0]
+        cloud = o3d.io.read_point_cloud(str(path))
+        if cloud.is_empty():
+            raise ValueError(f"Open3D could not read native point cloud: {path}")
+        data = PointCloudData(np.asarray(cloud.points, dtype=np.float64), None)
+    alignment = None
+    trajectory = run / "standardized" / "trajectories" / f"{algorithm_id}.csv"
+    if align and trajectory.is_file():
+        alignment = load_start_yaw_alignment(trajectory)
+        data = PointCloudData(alignment.apply_xyz(data.xyz), data.intensity)
+    return LoadedMap(algorithm_id, data, path, alignment)
 
 
-def trajectory_lineset(path: Path, o3d: Any, color: tuple[float, float, float]) -> Any | None:
+def trajectory_lineset(path: Path, o3d: Any, color: tuple[float, float, float], alignment: StartYawAlignment | None) -> Any | None:
     if not path.is_file():
         return None
     points: list[list[float]] = []
@@ -116,10 +134,14 @@ def trajectory_lineset(path: Path, o3d: Any, color: tuple[float, float, float]) 
             points.append([float(row["x_m"]), float(row["y_m"]), float(row["z_m"])])
     if len(points) < 2:
         return None
+    xyz = np.asarray(points, dtype=np.float64)
+    if alignment is not None:
+        xyz = alignment.apply_xyz(xyz)
     line = o3d.geometry.LineSet()
-    line.points = o3d.utility.Vector3dVector(np.asarray(points, dtype=np.float64))
-    line.lines = o3d.utility.Vector2iVector(np.column_stack((np.arange(len(points) - 1), np.arange(1, len(points)))))
-    line.colors = o3d.utility.Vector3dVector(np.tile(np.asarray(color), (len(points) - 1, 1)))
+    line.points = o3d.utility.Vector3dVector(xyz)
+    pairs = np.column_stack((np.arange(len(xyz) - 1), np.arange(1, len(xyz)))).astype(np.int32)
+    line.lines = o3d.utility.Vector2iVector(pairs)
+    line.colors = o3d.utility.Vector3dVector(np.tile(np.asarray(color), (len(pairs), 1)))
     return line
 
 
@@ -132,12 +154,7 @@ def apply_camera(vis: Any, preset: CameraPreset) -> None:
         intrinsic = np.array([[fx, 0.0, width * 0.5], [0.0, fx, height * 0.5], [0.0, 0.0, 1.0]], dtype=np.float64)
         vis.setup_camera(intrinsic, np.asarray(preset.view_matrix, dtype=np.float64), width, height)
     else:
-        vis.setup_camera(
-            float(preset.field_of_view_deg),
-            np.asarray(preset.lookat, dtype=np.float32),
-            np.asarray(preset.eye, dtype=np.float32),
-            np.asarray(preset.up, dtype=np.float32),
-        )
+        vis.setup_camera(float(preset.field_of_view_deg), np.asarray(preset.lookat, dtype=np.float32), np.asarray(preset.eye, dtype=np.float32), np.asarray(preset.up, dtype=np.float32))
 
 
 def capture_camera(vis: Any, path: Path, name: str) -> None:
@@ -154,89 +171,64 @@ def capture_camera(vis: Any, path: Path, name: str) -> None:
     print(f"saved camera preset: {path}")
 
 
-def inspect(
-    run: Path,
-    *,
-    algorithms: list[str] | None,
-    map_kind: str,
-    color_mode: str,
-    roi_path: Path | None,
-    camera_path: Path | None,
-    point_size: int,
-) -> None:
+def inspect(run: Path, *, algorithms: list[str] | None, map_kind: str, color_mode: str, roi_path: Path | None, camera_path: Path | None, point_size: int, display_alignment: str) -> None:
     o3d = require_open3d()
     manifest = load_json(run / "manifest.json")
     algorithm_ids = selected_algorithms(manifest, algorithms)
     roi: RoiPreset | None = load_roi(roi_path) if roi_path else None
-    objects: list[dict[str, Any]] = []
-    bounds_low: list[np.ndarray] = []
-    bounds_high: list[np.ndarray] = []
-    loaded: list[str] = []
+    align = display_alignment == "start_yaw"
+    loaded: list[LoadedMap] = []
     for algorithm_id in algorithm_ids:
         try:
-            native_cloud, data, path = load_cloud(run, algorithm_id, map_kind, o3d)
+            entry = load_map_data(run, algorithm_id, map_kind, o3d, align)
         except (FileNotFoundError, ValueError) as exc:
             print(f"skip {algorithm_id}: {exc}", file=sys.stderr)
             continue
-        assert data is not None
-        if roi is not None:
-            data = data.cropped(roi.min_xyz, roi.max_xyz)
-            native_cloud = None  # ROI requires a rebuilt cloud even for native input.
-        if len(data.xyz) == 0:
-            print(f"skip {algorithm_id}: ROI/map has no points", file=sys.stderr)
-            continue
-        cloud = native_cloud or o3d.geometry.PointCloud(o3d.utility.Vector3dVector(data.xyz))
-        cloud.colors = o3d.utility.Vector3dVector(cloud_colors(data, algorithm_id, color_mode))
-        objects.append({"name": f"map:{algorithm_id}", "geometry": cloud, "group": "Maps", "is_visible": True})
-        trajectory = trajectory_lineset(
-            run / "standardized" / "trajectories" / f"{algorithm_id}.csv",
-            o3d,
-            algorithm_color(algorithm_id),
-        )
-        if trajectory is not None:
-            objects.append({"name": f"trajectory:{algorithm_id}", "geometry": trajectory, "group": "Trajectories", "is_visible": True})
-        low, high = data.bounds()
-        bounds_low.append(low)
-        bounds_high.append(high)
-        loaded.append(f"{algorithm_id}:{path.name}")
-    if not objects or not bounds_low:
+        data = entry.data.cropped(roi.min_xyz, roi.max_xyz) if roi is not None else entry.data
+        if len(data.xyz):
+            loaded.append(LoadedMap(entry.algorithm_id, data, entry.source_path, entry.alignment))
+    if not loaded:
         raise SystemExit("Inspector has no readable map artifacts for the selected algorithms")
-    low = np.min(np.vstack(bounds_low), axis=0)
-    high = np.max(np.vstack(bounds_high), axis=0)
-    cameras = {
-        view: orthographic_like_camera(view.upper(), low, high, view)
-        for view in ("xy", "xz", "yz", "perspective")
-    }
+
+    color_limits: tuple[float, float] | None = None
+    if color_mode == "height":
+        color_limits = shared_scalar_limits([entry.data.xyz[:, 2] for entry in loaded])
+    elif color_mode == "intensity":
+        color_limits = shared_scalar_limits([entry.data.intensity for entry in loaded if entry.data.intensity is not None])
+
+    objects: list[dict[str, Any]] = []
+    bounds_low: list[np.ndarray] = []
+    bounds_high: list[np.ndarray] = []
+    for entry in loaded:
+        cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(entry.data.xyz))
+        cloud.colors = o3d.utility.Vector3dVector(cloud_colors(entry.data, entry.algorithm_id, color_mode, color_limits))
+        objects.append({"name": f"map:{entry.algorithm_id}", "geometry": cloud, "group": "Maps", "is_visible": True})
+        trajectory = trajectory_lineset(run / "standardized" / "trajectories" / f"{entry.algorithm_id}.csv", o3d, algorithm_color(entry.algorithm_id), entry.alignment)
+        if trajectory is not None:
+            objects.append({"name": f"trajectory:{entry.algorithm_id}", "geometry": trajectory, "group": "Trajectories", "is_visible": True})
+        low, high = entry.data.bounds(); bounds_low.append(low); bounds_high.append(high)
+    low = np.min(np.vstack(bounds_low), axis=0); high = np.max(np.vstack(bounds_high), axis=0)
+    cameras = {view: orthographic_like_camera(view.upper(), low, high, view) for view in ("xy", "xz", "yz", "perspective")}
     initial = load_camera(camera_path) if camera_path else cameras["perspective"]
-    preset_dir = run / "metadata" / "camera_presets"
-    screenshot_dir = run / "figures" / "inspector"
+    preset_dir = run / "metadata" / "camera_presets"; screenshot_dir = run / "figures" / "inspector"
 
     def view_action(view: str):
         return lambda vis: apply_camera(vis, cameras[view])
 
     def save_camera_action(vis: Any) -> None:
         preset_dir.mkdir(parents=True, exist_ok=True)
-        path = preset_dir / "interactive_camera.json"
-        capture_camera(vis, path, "interactive_camera")
+        capture_camera(vis, preset_dir / "interactive_camera.json", "interactive_camera")
 
     def screenshot_action(vis: Any) -> None:
         screenshot_dir.mkdir(parents=True, exist_ok=True)
         stamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
         path = screenshot_dir / f"inspector_{stamp}.png"
-        vis.export_current_image(str(path))
-        print(f"exported inspector image: {path}")
+        vis.export_current_image(str(path)); print(f"exported inspector image: {path}")
 
-    actions = [
-        ("View XY", view_action("xy")),
-        ("View XZ", view_action("xz")),
-        ("View YZ", view_action("yz")),
-        ("View Perspective", view_action("perspective")),
-        ("Save Camera Preset", save_camera_action),
-        ("Export Screenshot", screenshot_action),
-    ]
-    print("Inspector artifacts:")
-    for item in loaded:
-        print(f"- {item}")
+    actions = [("View XY", view_action("xy")), ("View XZ", view_action("xz")), ("View YZ", view_action("yz")), ("View Perspective", view_action("perspective")), ("Save Camera Preset", save_camera_action), ("Export Screenshot", screenshot_action)]
+    print(f"display_alignment={display_alignment}; standardized artifacts are unchanged")
+    for entry in loaded:
+        print(f"- {entry.algorithm_id}: {entry.source_path.name}")
     o3d.visualization.draw(
         geometry=objects,
         title=f"LIO Benchmark Inspector — {manifest.get('run_id', run.name)}",
@@ -259,19 +251,11 @@ def main() -> int:
     parser.add_argument("--algorithms", nargs="+")
     parser.add_argument("--map-kind", choices=("unified", "native"), default="unified")
     parser.add_argument("--color-mode", choices=("height", "intensity", "algorithm"), default="height")
-    parser.add_argument("--roi", type=Path)
-    parser.add_argument("--camera", type=Path)
+    parser.add_argument("--roi", type=Path); parser.add_argument("--camera", type=Path)
     parser.add_argument("--point-size", type=int, default=2)
+    parser.add_argument("--display-alignment", choices=("start_yaw", "raw"), default="start_yaw")
     args = parser.parse_args()
-    inspect(
-        args.run.resolve(),
-        algorithms=args.algorithms,
-        map_kind=args.map_kind,
-        color_mode=args.color_mode,
-        roi_path=args.roi,
-        camera_path=args.camera,
-        point_size=args.point_size,
-    )
+    inspect(args.run.resolve(), algorithms=args.algorithms, map_kind=args.map_kind, color_mode=args.color_mode, roi_path=args.roi, camera_path=args.camera, point_size=args.point_size, display_alignment=args.display_alignment)
     return 0
 
 
