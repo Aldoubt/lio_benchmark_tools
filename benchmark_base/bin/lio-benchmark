@@ -35,6 +35,10 @@ BASE_RUN_DIRS = (
 REGISTRY = Registry()
 
 
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).astimezone().isoformat()
+
+
 def resolved_runner(config: dict[str, Any]) -> Path:
     if isinstance(config.get("runner"), dict):
         value = config["runner"]["adapter"]
@@ -115,7 +119,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         (run / relative).mkdir(parents=True, exist_ok=False)
     frozen = dict(resolved)
     frozen["run_id"] = run_id
-    frozen["created_at"] = dt.datetime.now(dt.timezone.utc).astimezone().isoformat()
+    frozen["created_at"] = now_iso()
     frozen["source_manifest"] = str(config)
     frozen["source_manifest_schema_version"] = source["schema_version"]
     (run / "manifest.json").write_text(json.dumps(frozen, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -184,7 +188,7 @@ def cmd_snapshot(args: argparse.Namespace) -> None:
         if source.is_dir() and source not in sources:
             sources.append(source)
     metadata = {
-        "captured_at": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
+        "captured_at": now_iso(),
         "platform": platform.platform(),
         "python": platform.python_version(),
         "ros_distro": os.environ.get("ROS_DISTRO", ""),
@@ -196,14 +200,68 @@ def cmd_snapshot(args: argparse.Namespace) -> None:
     print(path)
 
 
+def algorithm_command(run: Path, manifest: dict[str, Any], algorithm_id: str) -> list[str]:
+    if algorithm_id not in manifest["algorithms"]:
+        raise SystemExit(f"algorithm is not selected in this run: {algorithm_id}")
+    runner = resolved_runner(manifest["algorithms"][algorithm_id])
+    if not runner.is_file():
+        raise SystemExit(f"runner does not exist: {runner}")
+    bag = str(manifest["dataset"]["bag_dir"])
+    output = str(run / "raw" / algorithm_id)
+    return ["bash", str(runner), bag, output]
+
+
+def execute_algorithm(run: Path, manifest: dict[str, Any], algorithm_id: str) -> int:
+    command = algorithm_command(run, manifest, algorithm_id)
+    log_path = run / "logs" / f"run_{algorithm_id}.log"
+    status_path = run / "metadata" / f"run_{algorithm_id}.json"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    started = now_iso()
+    with log_path.open("w", encoding="utf-8") as stream:
+        result = subprocess.run(command, cwd=Path(manifest["workspace"]).expanduser(), stdout=stream, stderr=subprocess.STDOUT, text=True, check=False)
+    status = {
+        "algorithm_id": algorithm_id,
+        "started_at": started,
+        "finished_at": now_iso(),
+        "command": command,
+        "returncode": result.returncode,
+        "status": "PASS" if result.returncode == 0 else "FAIL",
+        "log": str(log_path),
+        "raw_output": str(run / "raw" / algorithm_id),
+    }
+    status_path.write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"{algorithm_id}: {status['status']} returncode={result.returncode}")
+    return result.returncode
+
+
+def cmd_run(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    returncode = execute_algorithm(run, manifest, args.algorithm)
+    if returncode:
+        raise SystemExit(returncode)
+
+
+def cmd_run_all(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    failures: list[tuple[str, int]] = []
+    for algorithm_id in manifest["algorithms"]:
+        returncode = execute_algorithm(run, manifest, algorithm_id)
+        if returncode:
+            failures.append((algorithm_id, returncode))
+            if args.stop_on_failure:
+                break
+    if failures:
+        print("failed algorithms:", file=sys.stderr)
+        for algorithm_id, code in failures:
+            print(f"- {algorithm_id}: {code}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def cmd_commands(args: argparse.Namespace) -> None:
     run, manifest = resolve_run(args.run)
-    bag = manifest["dataset"]["bag_dir"]
-    for name, config in manifest["algorithms"].items():
-        runner = resolved_runner(config)
-        output = run / "raw" / name
-        print(f"# {name} ({config['mode']})")
-        print(f"bash {runner} {json.dumps(bag)} {json.dumps(str(output))}")
+    for name in manifest["algorithms"]:
+        print(f"# {name} ({manifest['algorithms'][name]['mode']})")
+        print(" ".join(json.dumps(part) for part in algorithm_command(run, manifest, name)))
 
 
 def cmd_list_registry(args: argparse.Namespace) -> None:
@@ -241,6 +299,16 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot = sub.add_parser("snapshot")
     snapshot.add_argument("--run", type=Path, required=True)
     snapshot.set_defaults(func=cmd_snapshot)
+
+    run = sub.add_parser("run")
+    run.add_argument("--run", type=Path, required=True)
+    run.add_argument("--algorithm", required=True)
+    run.set_defaults(func=cmd_run)
+
+    run_all = sub.add_parser("run-all")
+    run_all.add_argument("--run", type=Path, required=True)
+    run_all.add_argument("--stop-on-failure", action="store_true")
+    run_all.set_defaults(func=cmd_run_all)
 
     commands = sub.add_parser("commands")
     commands.add_argument("--run", type=Path, required=True)

@@ -10,7 +10,10 @@
     "repository": "ouguangjun/Leg-KILO",
     "local_path_hint": "date/algorithms/Leg-KILO"
   },
-  "runner": {"adapter": "evaluators/run_leg_kilo_test.sh"},
+  "runner": {
+    "adapter": "evaluators/run_leg_kilo_test.sh",
+    "local_execution_adapter_env": "LEG_KILO_ADAPTER_BIN"
+  },
   "topics": {
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu", "leg_kinematics": null},
     "outputs": {"trajectory": null, "registered_cloud": null}
@@ -20,5 +23,5 @@
     "sensor_fusion": "lidar_imu",
     "leg_kinematics": false
   },
-  "benchmark_notes": "Fixed baseline mode disables leg kinematics for common MID360+IMU bags. Adapter output topics must be frozen after the local ROS1/ROS2 bridge or port is selected."
+  "benchmark_notes": "Fixed baseline mode disables leg kinematics for common MID360+IMU bags. The machine-specific ROS1/ROS2 execution adapter is explicit provenance."
 }
