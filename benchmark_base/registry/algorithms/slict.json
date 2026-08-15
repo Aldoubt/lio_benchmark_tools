@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "algorithm_id": "slict",
+  "display_name": "SLICT",
+  "mode": "odometry",
+  "tier": "RESEARCH",
+  "family_id": "slict",
+  "family": ["surfel", "continuous_time", "optimization", "lidar_inertial"],
+  "evaluation_roles": ["ODOMETRY"],
+  "sensor_profile": {"lidar": true, "imu": true, "camera": false, "kinematics": false, "gnss": false, "wheel_odometry": false},
+  "algorithm_generation": "slict_research_baseline",
+  "adapter_status": "NOT_TESTED",
+  "required_modalities": ["lidar", "imu"],
+  "optional_modalities": [],
+  "source": {"repository": "brytsknguyen/slict", "local_path_hint": "algorithms/slict"},
+  "runner": {"adapter": "evaluators/run_slict_test.sh"},
+  "topics": {
+    "inputs": {"lidar": "/points", "imu": "/imu"},
+    "outputs": {"trajectory": null, "registered_cloud": null}
+  },
+  "benchmark_notes": "Research-tier continuous-time surfel optimization baseline. ROS/platform support is enforced by adapter preflight; unsupported environments remain BLOCKED_ENVIRONMENT rather than receiving hidden ports."
+}
