@@ -3,10 +3,16 @@
   "algorithm_id": "leg_kilo2_lidar_imu",
   "display_name": "Leg-KILO 2.0 (LiDAR-IMU)",
   "mode": "odometry",
+  "tier": "LEGACY",
+  "family_id": "leg_kilo",
   "family": ["eskf", "pointwise_update", "voxel_map", "kinematic_inertial_lidar"],
+  "evaluation_roles": ["ODOMETRY"],
+  "sensor_profile": {"lidar": true, "imu": true, "camera": false, "kinematics": false, "gnss": false, "wheel_odometry": false},
+  "algorithm_generation": "legkilo_v2_lidar_imu_legacy",
+  "adapter_status": "NOT_TESTED",
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": ["leg_kinematics"],
-  "source": {"repository": "ouguangjun/Leg-KILO", "local_path_hint": "date/algorithms/Leg-KILO"},
+  "source": {"repository": "ouguangjun/Leg-KILO", "branch": "legkilo-v2", "local_path_hint": "date/algorithms/Leg-KILO"},
   "runner": {"adapter": "evaluators/run_leg_kilo_test.sh", "local_execution_adapter_env": "LEG_KILO_ADAPTER_BIN"},
   "topics": {
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu", "leg_kinematics": null},
@@ -15,9 +21,9 @@
   "live_debug": {
     "namespace_capable": false,
     "setup": ["source /opt/ros/humble/setup.bash", "if [[ -f \"$WORKSPACE/install/setup.bash\" ]]; then source \"$WORKSPACE/install/setup.bash\"; fi"],
-    "processes": [{"name": "estimator", "command": "\"${LEG_KILO_LIVE_BIN:?set LEG_KILO_LIVE_BIN to your validated node-only Leg-KILO launcher}\"", "background": false}],
+    "processes": [{"name": "estimator", "command": "\"${LEG_KILO_LIVE_BIN:?set LEG_KILO_LIVE_BIN to your validated node-only historical Leg-KILO launcher}\"", "background": false}],
     "diagnostic_topics": []
   },
   "benchmark_mode": {"sensor_fusion": "lidar_imu", "leg_kinematics": false},
-  "benchmark_notes": "Fixed baseline mode disables leg kinematics for common MID360+IMU bags. Machine-specific ROS1/ROS2 adaptation remains explicit provenance."
+  "benchmark_notes": "Historical Leg-KILO 2.0 identity. It must never be silently reinterpreted as the current master implementation."
 }
