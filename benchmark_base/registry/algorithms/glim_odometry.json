@@ -6,14 +6,16 @@
   "family": ["optimization", "lidar_inertial"],
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": [],
-  "source": {
-    "repository": "koide3/glim",
-    "local_path_hint": "date/algorithms/glim"
-  },
+  "source": {"repository": "koide3/glim", "local_path_hint": "date/algorithms/glim"},
   "runner": {"adapter": "evaluators/run_glim_odometry_test.sh"},
   "topics": {
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu"},
     "outputs": {"trajectory": "/glim_ros/odom", "registered_cloud": null}
   },
-  "live_debug": {"namespace_capable": true}
+  "live_debug": {
+    "namespace_capable": false,
+    "setup": ["source /opt/ros/humble/setup.bash", "export CMAKE_PREFIX_PATH=\"$WORKSPACE/date/install/glim_deps:${CMAKE_PREFIX_PATH:-}\"", "export LD_LIBRARY_PATH=\"$WORKSPACE/date/install/glim_deps/lib:$WORKSPACE/date/install/glim_ros2/glim_ros/lib:${LD_LIBRARY_PATH:-}\"", "source \"$WORKSPACE/date/install/glim_ros2/setup.bash\""],
+    "processes": [{"name": "estimator", "command": "ros2 run glim_ros glim_rosnode --ros-args -p config_path:=\"$WORKSPACE/date/glim_test/config\" -p dump_path:=\"$SESSION_DIR/logs/glim_odometry_dump\"", "background": false}],
+    "diagnostic_topics": ["/glim_ros/odom", "/glim_ros/odom_scanend", "/glim_ros/lidar_odom"]
+  }
 }

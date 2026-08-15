@@ -6,14 +6,19 @@
   "family": ["eskf", "pointwise_update", "lidar_inertial"],
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": [],
-  "source": {
-    "repository": "hku-mars/Point-LIO",
-    "local_path_hint": "date/algorithms/point_lio_ros2"
-  },
+  "source": {"repository": "hku-mars/Point-LIO", "local_path_hint": "date/algorithms/point_lio_ros2"},
   "runner": {"adapter": "evaluators/run_point_lio_test.sh"},
   "topics": {
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu"},
     "outputs": {"trajectory": "/aft_mapped_to_init", "registered_cloud": "/cloud_registered"}
   },
-  "live_debug": {"namespace_capable": true}
+  "live_debug": {
+    "namespace_capable": false,
+    "setup": ["source /opt/ros/humble/setup.bash", "source \"$WORKSPACE/install/setup.bash\"", "source \"$WORKSPACE/date/install/point_dlio/setup.bash\""],
+    "processes": [
+      {"name": "converter", "command": "python3 \"$BENCHMARK_ROOT/evaluators/pointcloud2_to_livox_custom.py\"", "background": true, "startup_delay_s": 1.0},
+      {"name": "estimator", "command": "ros2 run point_lio pointlio_mapping --ros-args --params-file \"$WORKSPACE/date/algorithms/point_lio_ros2/config/mid360.yaml\" -p common.lid_topic:=/lio_eval/livox_custom -p publish.scan_publish_en:=true -p publish.tf_send_en:=false -p pcd_save.pcd_save_en:=false", "background": false}
+    ],
+    "diagnostic_topics": ["/aft_mapped_to_init", "/cloud_registered", "/lio_eval/livox_custom"]
+  }
 }

@@ -6,18 +6,20 @@
   "family": ["direct", "lidar_inertial"],
   "required_modalities": ["lidar", "imu"],
   "optional_modalities": [],
-  "source": {
-    "repository": "vectr-ucla/direct_lidar_inertial_odometry",
-    "local_path_hint": "date/algorithms/dlio_ros2"
-  },
+  "source": {"repository": "vectr-ucla/direct_lidar_inertial_odometry", "local_path_hint": "date/algorithms/dlio_ros2"},
   "runner": {"adapter": "evaluators/run_dlio_test.sh"},
   "topics": {
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu"},
-    "outputs": {"trajectory": "/dlio/odom_node/odom", "registered_cloud": null}
+    "outputs": {"trajectory": "/dlio/odom_node/odom", "registered_cloud": "/dlio/odom_node/pointcloud/deskewed"}
   },
-  "preprocessing": {
-    "imu_acceleration_scale": 9.80665,
-    "patch_provenance_required": true
-  },
-  "live_debug": {"namespace_capable": true}
+  "preprocessing": {"imu_acceleration_scale": 9.80665, "patch_provenance_required": true},
+  "live_debug": {
+    "namespace_capable": false,
+    "setup": ["source /opt/ros/humble/setup.bash", "source \"$WORKSPACE/install/setup.bash\"", "source \"$WORKSPACE/date/install/point_dlio/setup.bash\""],
+    "processes": [
+      {"name": "imu_scaler", "command": "python3 \"$BENCHMARK_ROOT/evaluators/scale_imu_acceleration.py\"", "background": true, "startup_delay_s": 1.0},
+      {"name": "estimator", "command": "ros2 run direct_lidar_inertial_odometry dlio_odom_node --ros-args --params-file \"$WORKSPACE/date/dlio_test/dlio.yaml\" --params-file \"$WORKSPACE/date/dlio_test/params.yaml\" -r pointcloud:=/livox/lidar -r imu:=/lio_eval/imu_si -r odom:=/dlio/odom_node/odom -r pose:=/dlio/odom_node/pose -r path:=/dlio/odom_node/path -r deskewed:=/dlio/odom_node/pointcloud/deskewed", "background": false}
+    ],
+    "diagnostic_topics": ["/dlio/odom_node/odom", "/dlio/odom_node/pointcloud/deskewed", "/lio_eval/imu_si"]
+  }
 }

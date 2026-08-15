@@ -17,6 +17,7 @@ MODULE_ROOT = Path(__file__).resolve().parents[2]
 if str(MODULE_ROOT) not in sys.path:
     sys.path.insert(0, str(MODULE_ROOT))
 
+from benchmark_base.lib.live_debug import append_marker, prepare_session  # noqa: E402
 from benchmark_base.lib.manifest import load_json, resolve_manifest, validate_manifest  # noqa: E402
 from benchmark_base.lib.registry import Registry, RegistryError  # noqa: E402
 
@@ -278,6 +279,39 @@ def cmd_show_registry(args: argparse.Namespace) -> None:
     print(json.dumps(record, ensure_ascii=False, indent=2))
 
 
+def cmd_live_prepare(args: argparse.Namespace) -> None:
+    try:
+        session = prepare_session(
+            registry=REGISTRY,
+            dataset_id=args.dataset,
+            algorithm_ids=args.algorithms,
+            workspace=args.workspace,
+            session_root=args.session_root,
+            benchmark_root=MODULE_ROOT,
+            rate=args.rate,
+            session_id=args.session_id,
+            check_paths=not args.allow_missing_paths,
+        )
+    except (ValueError, RegistryError) as exc:
+        raise SystemExit(str(exc)) from exc
+    print(session)
+    print(f"open {session / 'commands.md'}")
+
+
+def cmd_mark(args: argparse.Namespace) -> None:
+    try:
+        record = append_marker(
+            session=args.session,
+            algorithm_id=args.algorithm,
+            event=args.event,
+            bag_time_s=args.bag_time,
+            note=args.note,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(json.dumps(record, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lio-benchmark")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -322,6 +356,26 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("kind", choices=("algorithm", "dataset"))
     show.add_argument("id")
     show.set_defaults(func=cmd_show_registry)
+
+    live = sub.add_parser("live")
+    live_sub = live.add_subparsers(dest="live_command", required=True)
+    live_prepare = live_sub.add_parser("prepare")
+    live_prepare.add_argument("--dataset", required=True)
+    live_prepare.add_argument("--algorithms", nargs="+", required=True)
+    live_prepare.add_argument("--workspace", type=Path, required=True)
+    live_prepare.add_argument("--session-root", type=Path, default=MODULE_ROOT / "live_sessions")
+    live_prepare.add_argument("--session-id")
+    live_prepare.add_argument("--rate", type=float, default=1.0)
+    live_prepare.add_argument("--allow-missing-paths", action="store_true", help=argparse.SUPPRESS)
+    live_prepare.set_defaults(func=cmd_live_prepare)
+
+    mark = sub.add_parser("mark")
+    mark.add_argument("--session", type=Path, required=True)
+    mark.add_argument("--algorithm", required=True)
+    mark.add_argument("--event", required=True)
+    mark.add_argument("--bag-time", type=float, required=True)
+    mark.add_argument("--note", default="")
+    mark.set_defaults(func=cmd_mark)
     return parser
 
 
