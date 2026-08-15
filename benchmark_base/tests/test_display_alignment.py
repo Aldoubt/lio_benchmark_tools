@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -83,6 +84,36 @@ class DisplayAlignmentContractTest(unittest.TestCase):
             self.assertEqual(before, after)
             self.assertTrue(output.is_file())
             self.assertIn('"scientific_artifacts_modified": false', output.read_text(encoding="utf-8"))
+
+    def test_run_manifest_corrects_incompatible_hardcoded_odometry_role(self) -> None:
+        qx, qy, qz, qw = quaternion_from_rpy(0.0, 0.0, 0.2)
+        header = "timestamp_s,x_m,y_m,z_m,qx,qy,qz,qw,roll_rad,pitch_rad,yaw_rad,source_topic\n"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            trajectory = root / "standardized/trajectories/glim_full_slam.csv"
+            trajectory.parent.mkdir(parents=True)
+            trajectory.write_text(
+                header + f"0,1,2,3,{qx},{qy},{qz},{qw},0,0,0.2,/glim_ros/odom_corrected\n",
+                encoding="utf-8",
+            )
+            (root / "manifest.json").write_text(
+                json.dumps({
+                    "algorithms": {
+                        "glim_full_slam": {"evaluation_roles": ["SYSTEM_MAPPING"]}
+                    }
+                }),
+                encoding="utf-8",
+            )
+            output = write_display_alignment_metadata(
+                run=root,
+                algorithm_id="glim_full_slam",
+                trajectory_role="ODOMETRY",
+                trajectory_path=trajectory,
+                mode="START_XY_YAW",
+            )
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual("SYSTEM_MAPPING", payload["trajectory_role"])
+            self.assertTrue(output.name.endswith("__system_mapping.json"))
 
     def test_unknown_alignment_mode_fails_closed(self) -> None:
         with self.assertRaises(ValueError):
