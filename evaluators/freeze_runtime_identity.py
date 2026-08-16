@@ -19,10 +19,12 @@ from benchmark_base.lib.execution_contract import (  # noqa: E402
     EXPLICIT_EXECUTABLE_OVERRIDE,
     ExecutionContractError,
     build_runtime_identity,
+    fingerprint_runtime_overlays,
     resolve_execution,
     write_runtime_identity,
 )
 from benchmark_base.lib.manifest import load_json  # noqa: E402
+from benchmark_base.lib.ros_workspace import runtime_overlays_for_algorithm  # noqa: E402
 from benchmark_base.lib.runtime_provenance import workspace_from_package_prefix  # noqa: E402
 
 
@@ -144,6 +146,8 @@ def main() -> int:
         raise SystemExit(f"effective config does not exist: {config}")
 
     try:
+        overlay_paths = runtime_overlays_for_algorithm(manifest, args.algorithm)
+        overlay_evidence = fingerprint_runtime_overlays(overlay_paths)
         payload = build_runtime_identity(
             manifest=manifest,
             algorithm_id=args.algorithm,
@@ -154,9 +158,10 @@ def main() -> int:
             source_state=git_state(source_candidate),
             runtime_package=runtime_package,
             runtime_package_prefix=runtime_prefix,
+            runtime_overlays=overlay_evidence,
         )
         path = write_runtime_identity(run, args.algorithm, payload)
-    except ExecutionContractError as exc:
+    except (ExecutionContractError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
     print(path)
     return 0
