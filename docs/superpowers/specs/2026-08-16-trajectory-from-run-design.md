@@ -56,7 +56,7 @@ The new path will:
 standardized/trajectories/<algorithm>.csv
 ```
 
-11. Emit a small machine-readable metadata artifact describing source bag, source topic, source message type, timestamp policy, sample count, and output path.
+11. Write a small machine-readable metadata artifact describing source bag, source topic, source message type, timestamp policy, sample count, and output path.
 
 ### 3.2. Out of scope
 
@@ -80,7 +80,7 @@ Those remain separate benchmark stages.
 
 ### 4.1. Shared ROS bag pose reader
 
-Extract the generic ROS 2 trajectory-bag discovery and pose-reading behavior currently embedded in `evaluators/audit_trajectory_frames.py` into a focused shared module, for example:
+Extract the generic ROS 2 trajectory-bag discovery and pose-reading behavior currently embedded in `evaluators/audit_trajectory_frames.py` into:
 
 ```text
 benchmark_base/lib/rosbag_trajectory.py
@@ -99,13 +99,13 @@ pose_fields
 read_pose_observations
 ```
 
-The module is ROS-dependent and therefore remains outside the pure-Python core tests that run without ROS. Pure pose-to-standardized-sample conversion logic should remain testable independently where possible.
+The module is ROS-dependent and therefore is not imported by ROS-independent benchmark core paths. Pure pose-to-standardized-sample conversion logic remains testable independently.
 
-`audit_trajectory_frames.py` becomes a consumer of this shared reader rather than the owner of duplicate bag parsing logic.
+`evaluators/audit_trajectory_frames.py` becomes a consumer of this shared reader rather than the owner of duplicate bag parsing logic.
 
 ### 4.2. New evaluator
 
-Add a dedicated evaluator, for example:
+Add:
 
 ```text
 evaluators/standardize_trajectory_from_run.py
@@ -184,7 +184,7 @@ source_topic
 
 No new scientific trajectory representation is introduced.
 
-Recommended metadata path:
+The metadata path is fixed as:
 
 ```text
 metadata/algorithms/<algorithm>/trajectory_standardization.json
@@ -220,9 +220,9 @@ The command fails closed when:
 - no readable pose messages exist;
 - pose values are non-finite or the quaternion is invalid;
 - timestamps violate the existing `Trajectory` monotonicity contract;
-- the output already exists unless an explicit overwrite policy is later designed.
+- `standardized/trajectories/<algorithm>.csv` already exists.
 
-For this phase, the command should refuse to silently overwrite an existing standardized trajectory. A rerun that needs different source evidence should use a new benchmark run ID or remove the derived artifact deliberately outside the benchmark command.
+This phase has no `--overwrite` option. The command never silently replaces existing standardized trajectory evidence. A run that needs different source evidence should use a new benchmark run ID; intentional removal of an existing derived artifact remains an explicit operator action outside this command.
 
 No failure is converted into a synthetic empty trajectory or PASS state.
 
@@ -261,9 +261,10 @@ Add tests for reusable conversion behavior using synthetic pose observations:
 
 - odometry-style pose becomes the expected standardized sample;
 - quaternion normalization and derived RPY match existing trajectory utilities;
-- header timestamp policy is explicit;
+- timestamp policy is explicit;
 - non-monotonic timestamps fail through the existing `Trajectory` contract;
-- no frame/gauge transform is applied.
+- no frame/gauge transform is applied;
+- an existing standardized trajectory is rejected rather than overwritten.
 
 ### 8.2. CLI contract tests
 
@@ -298,7 +299,7 @@ For each algorithm:
 2. `trajectory-from-run` writes the standardized CSV;
 3. sample count is non-zero;
 4. timestamps are monotonic;
-5. first standardized pose matches the raw first pose within serialization/normalization tolerance;
+5. first standardized pose matches the raw first pose within serialization/quaternion-normalization tolerance;
 6. `audit trajectory-frames` can compare raw and standardized first poses;
 7. Unified Map can consume the generated standardized trajectory without manual CSV conversion.
 
@@ -341,6 +342,7 @@ Repository-side acceptance requires:
 5. zero/multiple bag matches and unsupported messages fail closed;
 6. existing CSV trajectory standardization remains compatible;
 7. existing frame audit remains read-only;
-8. unit/contract tests, Python compilation, shell syntax checks, and registry smoke remain green.
+8. existing standardized trajectory output is never silently overwritten;
+9. unit/contract tests, Python compilation, shell syntax checks, and registry smoke remain green.
 
 Target-machine acceptance requires a new three-algorithm greenhouse smoke proving raw run-local trajectory bags can reach Unified Map reconstruction without any manual trajectory CSV conversion.
