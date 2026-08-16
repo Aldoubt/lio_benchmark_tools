@@ -18,9 +18,9 @@ if str(MODULE_ROOT) not in sys.path:
 from benchmark_base.lib.cloud_contract import scan_timestamp  # noqa: E402
 from benchmark_base.lib.manifest import load_json  # noqa: E402
 from benchmark_base.lib.map_sampling import (  # noqa: E402
-    ScanWindow,
     SelectedScan,
     in_scan_window,
+    resolve_scan_window,
     write_scan_manifest,
 )
 
@@ -44,18 +44,15 @@ def build_manifest(
     if scan_step < 1:
         raise ValueError("map_scan_step must be >= 1")
 
-    configured_window = manifest.get("replay_window", {})
-    configured_window = configured_window if isinstance(configured_window, dict) else {}
-    if start_offset_s is None:
-        start_offset_s = float(configured_window.get("start_offset_s", 0.0))
-    if duration_s is None and configured_window.get("duration_s") is not None:
-        duration_s = float(configured_window["duration_s"])
-    window = ScanWindow(start_offset_s=float(start_offset_s), duration_s=duration_s)
-    window_source = (
-        "CLI_OVERRIDE"
-        if start_offset_s != float(configured_window.get("start_offset_s", 0.0))
-        or duration_s != configured_window.get("duration_s")
-        else ("RUN_MANIFEST" if configured_window else "FULL_BAG_DEFAULT")
+    replay = manifest.get("replay")
+    legacy_replay_window = manifest.get("replay_window")
+    window, window_source = resolve_scan_window(
+        replay=replay if isinstance(replay, dict) else None,
+        legacy_replay_window=(
+            legacy_replay_window if isinstance(legacy_replay_window, dict) else None
+        ),
+        start_offset_override=start_offset_s,
+        duration_override=duration_s,
     )
 
     bag = Path(dataset["bag_dir"]).expanduser()
@@ -110,7 +107,7 @@ def build_manifest(
         raise ValueError("no LiDAR scans selected for map manifest")
     write_scan_manifest(output, rows)
     metadata = {
-        "schema_version": 2,
+        "schema_version": 3,
         "dataset_id": dataset.get("dataset_id", "legacy_v1_dataset"),
         "lidar_topic": topic,
         "total_lidar_scans": scan_index,
