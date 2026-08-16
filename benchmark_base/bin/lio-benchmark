@@ -426,6 +426,13 @@ def cmd_audit_trajectory_frames(args: argparse.Namespace) -> None:
     run_python("evaluators/audit_trajectory_frames.py", command)
 
 
+def cmd_audit_runtime_provenance(args: argparse.Namespace) -> None:
+    command = ["--run", str(args.run)]
+    if args.algorithms:
+        command.extend(["--algorithms", *args.algorithms])
+    run_python("evaluators/audit_runtime_provenance.py", command)
+
+
 def cmd_inspect(args: argparse.Namespace) -> None:
     command = [
         "--run", str(args.run),
@@ -504,6 +511,7 @@ def build_parser() -> argparse.ArgumentParser:
     audit = sub.add_parser("audit")
     audit_sub = audit.add_subparsers(dest="audit_command", required=True)
     trajectory_frames = audit_sub.add_parser("trajectory-frames"); trajectory_frames.add_argument("--run", type=Path, required=True); trajectory_frames.add_argument("--algorithms", nargs="+"); trajectory_frames.set_defaults(func=cmd_audit_trajectory_frames)
+    runtime_provenance = audit_sub.add_parser("runtime-provenance"); runtime_provenance.add_argument("--run", type=Path, required=True); runtime_provenance.add_argument("--algorithms", nargs="+"); runtime_provenance.set_defaults(func=cmd_audit_runtime_provenance)
 
     inspect = sub.add_parser("inspect"); inspect.add_argument("--run", type=Path, required=True); inspect.add_argument("--algorithms", nargs="+"); inspect.add_argument("--map-kind", choices=("unified", "native"), default="unified"); inspect.add_argument("--color-mode", choices=("height", "intensity", "algorithm"), default="height"); inspect.add_argument("--roi", type=Path); inspect.add_argument("--camera", type=Path); inspect.add_argument("--point-size", type=int, default=2); _add_alignment_option(inspect); inspect.set_defaults(func=cmd_inspect)
     report = sub.add_parser("report"); report.add_argument("--run", type=Path, required=True); report.add_argument("--roi", type=Path); report.add_argument("--warmup-s", type=float, default=0.0); _add_alignment_option(report); report.set_defaults(func=cmd_report)
