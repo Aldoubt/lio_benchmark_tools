@@ -72,6 +72,48 @@ class RuntimePackagePreflightTest(unittest.TestCase):
             self.assertFalse(result.checks["runtime_package_available"])
             self.assertIn("runtime ROS package is unavailable", " ".join(result.reasons))
 
+    def test_ament_resource_index_proves_runtime_package_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prefix = root / "install/fast_livo"
+            marker = prefix / "share/ament_index/resource_index/packages/fast_livo"
+            marker.parent.mkdir(parents=True)
+            marker.write_text("", encoding="utf-8")
+            manifest = self._manifest(root, package="fast_livo")
+            result = preflight_algorithm(
+                manifest,
+                "algo",
+                benchmark_root=root,
+                runtime_env={
+                    "ROS_DISTRO": "humble",
+                    "AMENT_PREFIX_PATH": str(prefix),
+                },
+            )
+            self.assertEqual("PASS", result.status)
+            self.assertTrue(result.runnable)
+            self.assertEqual(str(prefix), result.checks["runtime_package_prefix"])
+            self.assertTrue(result.checks["runtime_package_available"])
+
+    def test_known_ament_environment_without_package_blocks_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prefix = root / "install/fast_livo"
+            prefix.mkdir(parents=True)
+            manifest = self._manifest(root, package="kiss_icp")
+            result = preflight_algorithm(
+                manifest,
+                "algo",
+                benchmark_root=root,
+                runtime_env={
+                    "ROS_DISTRO": "humble",
+                    "AMENT_PREFIX_PATH": str(prefix),
+                },
+            )
+            self.assertEqual("BLOCKED_ENVIRONMENT", result.status)
+            self.assertFalse(result.runnable)
+            self.assertFalse(result.checks["runtime_package_available"])
+            self.assertIn("runtime ROS package is unavailable", " ".join(result.reasons))
+
 
 if __name__ == "__main__":
     unittest.main()
