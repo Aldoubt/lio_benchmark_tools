@@ -88,6 +88,12 @@ class TrajectoryCoverageCliTest(unittest.TestCase):
             calls["ros"],
         )
 
+    def test_coverage_evaluator_uses_frozen_replay_without_cli_overrides(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        text = (root / "evaluators/audit_trajectory_coverage.py").read_text(encoding="utf-8")
+        self.assertIn("start_offset_override=None", text)
+        self.assertIn("duration_override=None", text)
+
     def test_kiss_runner_records_converter_boundary_for_diagnostics(self) -> None:
         root = Path(__file__).resolve().parents[2]
         text = (root / "evaluators/run_kiss_icp_test.sh").read_text(encoding="utf-8")
