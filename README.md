@@ -148,7 +148,7 @@ lio-benchmark preflight --run runs/greenhouse_001
 lio-benchmark run --run runs/greenhouse_001 --algorithm fast_livo2
 ```
 
-正式 benchmark 默认逐个运行算法，`BAG_PLAY_RATE=1.0`，避免多个前端争用 CPU/GPU 污染运行时间和实时行为
+正式 benchmark 默认逐个运行算法，避免多个前端争用 CPU/GPU 污染运行时间和实时行为
 
 Preflight 会把问题区分为：
 
@@ -160,10 +160,74 @@ BLOCKED_ENVIRONMENT
 BLOCKED_DEPENDENCY
 BLOCKED_INPUT
 BLOCKED_CALIBRATION
+BLOCKED_EXECUTION
 NOT_TESTED
 ```
 
-不会因为算法没安装就伪记为 PASS
+不会因为算法没安装、显式 executable 不存在或环境不满足就伪记为 PASS
+
+### Runtime Execution Contract
+
+机器相关的真实执行路径不写进全局 Algorithm Registry，而由 experiment manifest 显式冻结。例如：
+
+```json
+{
+  "execution_overrides": {
+    "fast_lio2": {
+      "executable": "/absolute/path/to/fastlio_mapping"
+    }
+  },
+  "replay": {
+    "rate": 1.0,
+    "start_offset_s": 0.0,
+    "duration_s": 15.0
+  }
+}
+```
+
+执行解析只有两条路径：
+
+```text
+EXPLICIT_EXECUTABLE_OVERRIDE
+REGISTRY_DEFAULT_EXECUTION
+```
+
+工具不会扫描 `$HOME`、`$WORKSPACE/build` 或其它猜测路径。显式 override 不存在、不可执行或无法 fingerprint 时直接 `BLOCKED_EXECUTION`，不会偷偷回退到另一个 binary。
+
+算法真正启动前会写入：
+
+```text
+metadata/algorithms/<algorithm>/runtime_identity.json
+```
+
+其中冻结至少包含：
+
+```text
+resolution method
+requested/resolved executable
+binary SHA256 / size / mtime
+registry package vs runtime package/prefix
+source git facts when provable
+effective command
+effective config + SHA256
+workspace / ROS distro
+bag path
+replay rate / start / duration
+```
+
+`runtime_identity.json` 与 trajectory frame audit 是两个独立 gate：binary 已经精确冻结，并不意味着 `odom -> sensor` 之类的 frame mismatch 可以被忽略。
+
+同一个 run 已经存在 runtime identity 时禁止静默重跑；需要重新执行算法时创建新的 run ID。
+
+当前有限时长 runtime smoke 的目标机迁移先覆盖：
+
+```text
+fast_livo2
+fast_lio2
+kiss_icp
+```
+
+其它 baseline 保留各自 adapter 状态，在对应 runner 完成同一 execution/replay contract 迁移前，不会被文档伪装成已验证有限时长 replay。
 
 ### 2. Standardize + Inspector
 
@@ -268,7 +332,7 @@ benchmark_base/bin/lio-benchmark bundle --run /path/to/frozen/run
 <run>/reports/bundles/<run_id>_diagnostic_bundle.tar.gz
 ```
 
-默认包只包含 manifest、audit/diagnostic CSV/JSON、Common Scan Manifest、各算法 Unified Map metadata，以及打包时的 benchmark Git HEAD / status / local diff。它不会包含 `raw/`、rosbag 数据库、`.ply` / `.pcd` 地图、报告或 PNG 图。
+默认包只包含 manifest、runtime identity、audit/diagnostic CSV/JSON、Common Scan Manifest、各算法 Unified Map metadata，以及打包时的 benchmark Git HEAD / status / local diff。它不会包含 `raw/`、rosbag 数据库、`.ply` / `.pcd` 地图、报告或 PNG 图。
 
 需要把现有 report 和诊断图一并交给 reviewer 时：
 
@@ -302,7 +366,10 @@ runs/<run_id>/
 │  └─ display_alignment/
 ├─ reports/
 ├─ logs/
-└─ metadata/algorithms/<algorithm>/
+└─ metadata/
+   ├─ algorithms/<algorithm>/runtime_identity.json
+   ├─ frame_audit/
+   └─ runtime_provenance/
 ```
 
 旧 V2 路径仍保留兼容入口，例如：
@@ -321,13 +388,15 @@ standardized/maps/<algorithm>/map_metadata.json
 source repository / branch / commit
 source dirty state
 adapter identity
+runtime executable realpath + SHA256
+execution resolution method
+effective command + config hash
+frozen replay interval
 algorithm parameters + hash
 effective sensor modalities
 canonical calibration source/status
 algorithm-specific extrinsic convention
 bag identity/hash
-bag replay rate
-run command
 environment snapshot
 raw output
 standardized output
@@ -353,12 +422,21 @@ unified map                 772,631 points
 
 该数据集当时的 LiDAR–IMU 外参数值尚未完成正式确认，因此地图仍按 `DIAGNOSTIC_ONLY / BLOCKED_CALIBRATION` 对待，不把诊断结果包装成正式算法排名
 
+三算法 Runtime Execution Contract 的目标机验证使用独立配置：
+
+```text
+benchmark_base/config/green_house_three_runtime_smoke.json
+```
+
+该验证必须创建新的 run ID，不覆盖历史 smoke。目标机验证完成前，README 不声明这项 runtime contract 已通过真实机器回放。
+
 ## Repository boundary
 
 本仓库保存：
 
 - benchmark orchestration / registry
 - dataset and algorithm contracts
+- runtime execution identity / provenance contracts
 - adapters and explicit compatibility patches
 - standardization / calibration / map-sampling logic
 - Display Alignment / ROI / camera presets
@@ -376,6 +454,7 @@ unified map                 772,631 points
 - [`docs/superpowers/specs/2026-08-15-lio-benchmark-v2-design.md`](docs/superpowers/specs/2026-08-15-lio-benchmark-v2-design.md) — V2 design
 - [`docs/superpowers/specs/2026-08-15-lio-baseline-suite-design.md`](docs/superpowers/specs/2026-08-15-lio-baseline-suite-design.md) — baseline suite / two-map / Display Alignment contract
 - [`docs/superpowers/specs/2026-08-16-diagnostic-bundle-design.md`](docs/superpowers/specs/2026-08-16-diagnostic-bundle-design.md) — diagnostic bundle contract
+- [`docs/superpowers/specs/2026-08-16-runtime-execution-contract-design.md`](docs/superpowers/specs/2026-08-16-runtime-execution-contract-design.md) — explicit executable / replay / runtime identity contract
 
 ## License
 
