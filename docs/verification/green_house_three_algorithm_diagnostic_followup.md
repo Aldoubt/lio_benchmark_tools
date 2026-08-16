@@ -51,11 +51,12 @@ Z drift
 roll / pitch evolution
 yaw evolution
 initialization/warmup
+trajectory frame semantics
 ```
 
 before adding more baseline families.
 
-## 4. New diagnostic artifacts
+## 4. Divergence diagnostic artifacts
 
 The full-run `warmup=0` report produces canonical filenames:
 
@@ -101,24 +102,100 @@ never uses trajectory index matching
 
 Pairwise quantities are named **disagreement**, not error/accuracy, because no ground-truth trajectory is assumed.
 
-## 5. Re-run the existing smoke artifacts
+## 5. Warmup result and new frame-semantics hypothesis
 
-After pulling the latest `feat/lio-baseline-suite`:
+The `warmup=0` and `warmup=2 s` diagnostics show that the large late-run disagreement remains after removing the first two seconds. Therefore the current evidence does not support `INITIALIZATION_DOMINANT` as the primary explanation.
+
+The trajectories also show a large initial pitch-gauge difference: FAST-LIVO2 is far from the FAST-LIO2/KISS-ICP initial pitch values. Because `START_XY_YAW` deliberately preserves Z, roll and pitch, a mismatch in parent/tracked-frame semantics can project otherwise similar physical motion into different reported Z axes.
+
+Until the raw ROS message semantics are audited, the observed large Z disagreement must not be labeled estimator vertical error.
+
+Current diagnostic labels:
+
+```text
+INITIALIZATION_DOMINANT       -> not supported by current warmup test
+EVENT_TRIGGERED_DIVERGENCE    -> observed
+POSE_FRAME_SEMANTICS_SUSPECT  -> high priority
+VERTICAL_DIVERGENCE           -> observed, not yet an accuracy/error claim
+ATTITUDE_DIVERGENCE           -> observed
+CALIBRATION_SUSPECT           -> still open
+```
+
+## 6. Trajectory Frame Audit
+
+Run the read-only audit on the existing raw output bags and standardized trajectories:
 
 ```bash
 cd /home/yangxuan/lio_benchmark_tools
+git checkout feat/lio-baseline-suite
 git pull --ff-only
+
+RUN=/tmp/lio_benchmark_runs/green_house_three_smoke_004
+
+benchmark_base/bin/lio-benchmark audit trajectory-frames \
+  --run "$RUN" \
+  --algorithms fast_livo2 fast_lio2 kiss_icp
+```
+
+Outputs:
+
+```text
+metadata/frame_audit/fast_livo2.json
+metadata/frame_audit/fast_lio2.json
+metadata/frame_audit/kiss_icp.json
+metrics/trajectory_frame_audit.csv
+```
+
+The audit records, without rewriting data:
+
+```text
+raw trajectory rosbag actually used
+source trajectory topic
+ROS message type
+header.frame_id
+child_frame_id
+frame-id changes during the run
+raw first position/quaternion/RPY
+standardized first position/quaternion/RPY
+raw -> standardized first timestamp delta
+raw -> standardized first position delta
+raw -> standardized first orientation delta
+pose-semantics basis
+registry-declared pose_represents/world_frame_semantics, or UNKNOWN
+```
+
+For `nav_msgs/msg/Odometry`, the audit records the ROS message semantics as `T_parent_child`. It does not infer that strings such as `body`, `lidar`, `base_link`, `camera_init` or `odom` necessarily mean LiDAR/IMU/base/gravity-aligned frames.
+
+Interpretation gate:
+
+```text
+raw-to-standardized orientation delta ~= 0
+    -> initial attitude difference already exists in upstream raw output
+
+raw-to-standardized orientation delta is large
+    -> trajectory extraction/standardization path is suspect
+
+parent/child frame IDs differ across estimators
+    -> investigate frame definitions before comparing Z/roll/pitch
+
+frame IDs change during one estimator run
+    -> treat as a contract violation or upstream mode transition requiring investigation
+```
+
+Do not add `START_SE3` to hide the difference at this stage.
+
+## 7. Re-run the existing report artifacts
+
+The existing standardized trajectories and maps are enough; the algorithms do not need to be replayed just to regenerate diagnostics.
+
+```bash
 RUN=/tmp/lio_benchmark_runs/green_house_three_smoke_004
 
 benchmark_base/bin/lio-benchmark report \
   --run "$RUN" \
   --display-alignment START_XY_YAW \
   --warmup-s 0
-```
 
-Then generate an additional post-initialization view without modifying or overwriting the source/full-run artifacts:
-
-```bash
 benchmark_base/bin/lio-benchmark report \
   --run "$RUN" \
   --display-alignment START_XY_YAW \
@@ -127,11 +204,13 @@ benchmark_base/bin/lio-benchmark report \
 
 The exact warmup value is an analysis choice, not hidden filtering. Keep the full-run (`warmup=0`) outputs as the canonical diagnostic evidence and use warmup views only to test whether initialization dominates the observed divergence.
 
-## 6. Gate before expanding the baseline count
+## 8. Gate before expanding the baseline count
 
-Review both the full-run and warmup variants of:
+Review:
 
 ```text
+trajectory_frame_audit.csv
+metadata/frame_audit/*.json
 trajectory_z_vs_time*.png
 trajectory_roll_vs_time*.png
 trajectory_pitch_vs_time*.png
@@ -142,26 +221,20 @@ smoke_diagnostics*.csv
 pairwise_disagreement*.csv
 ```
 
-Then classify the current difference as one or more of:
-
-```text
-INITIALIZATION_DOMINANT
-PLANAR_DIVERGENCE
-VERTICAL_DIVERGENCE
-ATTITUDE_DIVERGENCE
-TIMESTAMP_OR_EXPORT_SUSPECT
-CALIBRATION_SUSPECT
-UNRESOLVED
-```
+Only after trajectory parent/tracked-frame semantics are understood should the current difference be promoted from `POSE_FRAME_SEMANTICS_SUSPECT` to a more specific estimator/calibration diagnosis.
 
 These labels are diagnostic notes, not algorithm-quality scores.
 
-## 7. Next experiment sequence
+## 9. Next experiment sequence
 
 ```text
 three-algorithm diagnostic smoke
         ↓
 full vs post-warmup divergence review
+        ↓
+raw -> standardized Trajectory Frame Audit
+        ↓
+resolve parent/tracked-frame semantics
         ↓
 freeze/verify LiDAR–IMU calibration
         ↓
@@ -176,4 +249,4 @@ Point-LIO / DLIO / Leg-KILO / LIO-SAM / GLIM integration
 full 623 s frozen benchmark
 ```
 
-Do not expand to a full baseline suite until the current three-algorithm divergence is explainable enough to distinguish estimator behavior from calibration/timestamp/export artifacts.
+Do not expand to a full baseline suite until the current three-algorithm divergence is explainable enough to distinguish frame conventions, estimator behavior, calibration, timestamp and export artifacts.
