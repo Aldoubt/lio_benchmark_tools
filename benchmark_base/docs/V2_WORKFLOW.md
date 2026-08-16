@@ -104,6 +104,44 @@ lio-benchmark snapshot --run /path/to/runs/scene_001
 
 `manifest.json` 是该 run 的冻结契约，后续 registry 修改不会回写历史 run
 
+### 3.1. Freeze replay and machine-specific executable choices
+
+Source manifest 可以显式增加：
+
+```json
+{
+  "execution_overrides": {
+    "fast_lio2": {
+      "executable": "/absolute/path/to/fastlio_mapping"
+    }
+  },
+  "replay": {
+    "rate": 1.0,
+    "start_offset_s": 0.0,
+    "duration_s": 15.0
+  }
+}
+```
+
+`execution_overrides` 只用于当前实验/当前机器，不修改 Algorithm Registry。执行解析严格只有：
+
+```text
+EXPLICIT_EXECUTABLE_OVERRIDE
+REGISTRY_DEFAULT_EXECUTION
+```
+
+不扫描 `$HOME`、`$WORKSPACE/build` 或其它常见目录。显式 executable 缺失、不是普通文件、无执行权限或无法 fingerprint 时返回 `BLOCKED_EXECUTION`，不回退到另一个实现。
+
+`replay` 默认：
+
+```text
+rate = 1.0
+start_offset_s = 0.0
+duration_s = null   # run to bag end
+```
+
+run 初始化后，这些值写入 frozen `manifest.json`。后续 shell 变量 `BAG_PLAY_RATE / BAG_START_OFFSET / BAG_DURATION` 只是从 frozen manifest 派生的兼容变量，不再拥有覆盖权。
+
 ## 4. Preflight before running algorithms
 
 先运行：
@@ -128,13 +166,15 @@ BLOCKED_ENVIRONMENT
 BLOCKED_DEPENDENCY
 BLOCKED_INPUT
 BLOCKED_CALIBRATION
+BLOCKED_EXECUTION
 NOT_TESTED
 ```
 
 Preflight 负责检查：
 
 ```text
-source path
+explicit execution override
+source path when registry-default execution is used
 runner adapter
 ROS distro contract
 required modalities
@@ -143,9 +183,11 @@ calibration status
 extrinsic convention
 ```
 
-不要把算法未安装、系统版本不匹配或数据输入不兼容写成算法失败
+显式 executable 已经给定且可执行时，缺少 registry `local_path_hint` 不应覆盖这个事实；但 runner、输入、ROS 环境、标定等其它 gate 仍独立生效。
 
-## 5. Offline benchmark
+不要把算法未安装、系统版本不匹配、执行文件无效或数据输入不兼容写成算法失败
+
+## 5. Offline benchmark and Runtime Identity
 
 正式 benchmark 默认一次只跑一个算法：
 
@@ -160,14 +202,6 @@ lio-benchmark run --run <run> --algorithm fast_lio2
 lio-benchmark run-all --run <run>
 ```
 
-正式默认：
-
-```text
-BAG_PLAY_RATE=1.0
-```
-
-失败日志保留，不自动删除
-
 每个 adapter 遵守：
 
 ```text
@@ -179,15 +213,92 @@ collect
 
 `prepare` 只能生成 run-local config/remap/calibration，不允许修改 upstream source tree
 
+### 5.1. Runtime identity is frozen before estimator startup
+
+runner 在实际 ROS/workspace overlay 已 source 的环境中、estimator 启动之前写：
+
+```text
+metadata/algorithms/<algorithm>/runtime_identity.json
+```
+
+最低证据包括：
+
+```text
+identity_status = FROZEN | BLOCKED_EXECUTION
+resolution_method
+requested/resolved executable
+executable SHA256 / size / mtime
+registry package
+runtime package / package prefix when applicable
+source git root / remote / commit / branch / dirty when provable
+source_relationship = REGISTRY_MATCH | REGISTRY_MISMATCH | UNKNOWN_SOURCE
+effective command
+effective config path + SHA256
+ROS distro / workspace
+bag path
+frozen replay interval
+```
+
+`EXPLICIT_EXECUTABLE_OVERRIDE` 是合法执行方式，不是错误状态。即使它对应的源码与 registry 默认实现不同，只要 binary 已被精确 fingerprint，这个事实就被保留；source relationship 独立记录。
+
+同一个 run 已经存在 runtime identity 时，不允许静默覆盖或重跑。创建新的 run ID。
+
+### 5.2. Current finite-replay migration scope
+
+当前目标机 finite-replay / runtime-identity smoke 首先迁移并验证：
+
+```text
+fast_livo2
+fast_lio2
+kiss_icp
+```
+
+其它 baseline 仍保留其各自 adapter 状态。除非相应 runner 已实现并验证同一 replay/runtime identity contract，否则不能因为 core manifest 支持 `replay` 就宣称该 adapter 已完成有限时长回放验证。
+
+失败日志保留，不自动删除
+
 ## 6. Freeze common LiDAR scan sampling
 
 Unified Map 不再让每个算法自己选择“差不多的一批 scan”
 
 先生成：
 
+```bash
+lio-benchmark standardize scan-manifest --run <run>
+```
+
+输出：
+
 ```text
 standardized/map_sampling/selected_scans.csv
+standardized/map_sampling/metadata.json
 ```
+
+默认 scan window 直接读取 frozen run `replay`：
+
+```text
+source = RUN_MANIFEST_REPLAY
+```
+
+因此一个 15 s smoke 不会把 source bag 后面几百秒的 scan 计为 unmatched。
+
+显式 derived diagnostic 仍可使用：
+
+```bash
+lio-benchmark standardize scan-manifest \
+  --run <run> \
+  --start-offset-s 2 \
+  --duration-s 5 \
+  --overwrite
+```
+
+这种结果必须记录：
+
+```text
+source = CLI_OVERRIDE
+```
+
+历史 run 仍可使用 `LEGACY_REPLAY_WINDOW`，完全没有 replay 信息的老 run 才是 `FULL_BAG_DEFAULT`。
 
 所有 Unified Maps 使用同一个 selected scan manifest
 
@@ -302,7 +413,47 @@ same voxel rule
 same reconstruction code
 ```
 
-## 9. Display Alignment
+## 9. Runtime provenance and frame audit
+
+先保留运行时事实，再做事后审计：
+
+```text
+runtime_identity.json
+        ↓
+trajectory frame audit
+        ↓
+post-run source/package enrichment
+        ↓
+runtime provenance verdict
+```
+
+执行：
+
+```bash
+lio-benchmark audit trajectory-frames \
+  --run <run> \
+  --algorithms fast_livo2 fast_lio2 kiss_icp
+
+lio-benchmark audit runtime-provenance \
+  --run <run> \
+  --algorithms fast_livo2 fast_lio2 kiss_icp
+```
+
+新 run：
+
+```text
+identity_evidence_source = RUNTIME_IDENTITY
+```
+
+旧 run 没有 runtime identity 时：
+
+```text
+identity_evidence_source = LEGACY_RECONSTRUCTED
+```
+
+binary identity 与 frame semantics 是不同 gate。精确知道运行的是哪个 executable，并不会自动把 `odom -> sensor` 解释为 registry 声明的 `camera_init -> body`。
+
+## 10. Display Alignment
 
 Display Alignment 是 derived visualization，不是科学数据处理
 
@@ -354,7 +505,7 @@ figures/display_alignment/
 
 Runnable ID 的 role 从 frozen registry 推导，例如 `glim_full_slam` 的 alignment metadata 是 `SYSTEM_MAPPING`，不是硬编码 `ODOMETRY`
 
-## 10. Inspect maps interactively
+## 11. Inspect maps interactively
 
 ```bash
 lio-benchmark inspect \
@@ -386,7 +537,7 @@ Save Camera Preset
 Export Screenshot
 ```
 
-## 11. Generate reports
+## 12. Generate reports
 
 ```bash
 lio-benchmark report \
@@ -418,7 +569,44 @@ Control / Extension
 
 没有 Ground Truth 时，不把首尾位移、Z 差等冒充 ATE 真值误差
 
-## 12. Generate README Demo
+## 13. Diagnostic bundle
+
+将本轮小型诊断证据打成单一上传包：
+
+```bash
+lio-benchmark bundle --run <run>
+```
+
+默认包含：
+
+```text
+manifest / run status
+runtime_identity.json
+runtime provenance
+trajectory frame audit
+diagnostic CSV
+Common Scan Manifest
+Unified Map metadata
+benchmark Git HEAD / status / local diff
+```
+
+不包含：
+
+```text
+raw rosbag
+DB3 / MCAP
+PLY / PCD
+executable binary
+report / PNG (default)
+```
+
+需要 report/PNG：
+
+```bash
+lio-benchmark bundle --run <run> --include-reports
+```
+
+## 14. Generate README Demo
 
 ```bash
 lio-benchmark demo \
@@ -445,7 +633,7 @@ same viewport
 
 最终小体积 GIF 必须人工检查后再提交
 
-## 13. Live Debug
+## 15. Live Debug
 
 Live Debug 与正式性能 benchmark 分开
 
@@ -478,7 +666,81 @@ lio-benchmark mark \
   --note "row alias begins after turn"
 ```
 
-## 14. Recommended integration order on a new machine
+## 16. Current green-house three-algorithm Runtime Contract smoke
+
+目标机专用配置：
+
+```text
+benchmark_base/config/green_house_three_runtime_smoke.json
+```
+
+它冻结：
+
+```text
+algorithms = fast_livo2, fast_lio2, kiss_icp
+FAST-LIO2 executable = /home/yangxuan/RM-NAV/build/fast_lio/fastlio_mapping
+replay = 15 s @ 1.0x
+output root = /home/yangxuan/lio_benchmark_runs/green_house
+```
+
+必须使用新的 run ID，例如：
+
+```bash
+CONFIG=benchmark_base/config/green_house_three_runtime_smoke.json
+RUN_ID=green_house_runtime_contract_smoke_001
+
+benchmark_base/bin/lio-benchmark validate --config "$CONFIG"
+benchmark_base/bin/lio-benchmark init --config "$CONFIG" --run-id "$RUN_ID"
+RUN=/home/yangxuan/lio_benchmark_runs/green_house/$RUN_ID
+```
+
+当前数据集 LiDAR–IMU calibration 仍是 diagnostic/unverified，因此 LIO smoke 要显式允许 diagnostic calibration：
+
+```bash
+for ALG in fast_livo2 fast_lio2 kiss_icp; do
+  benchmark_base/bin/lio-benchmark run \
+    --run "$RUN" \
+    --algorithm "$ALG" \
+    --allow-diagnostic-calibration || break
+done
+```
+
+然后：
+
+```bash
+benchmark_base/bin/lio-benchmark standardize scan-manifest --run "$RUN"
+
+benchmark_base/bin/lio-benchmark audit trajectory-frames \
+  --run "$RUN" \
+  --algorithms fast_livo2 fast_lio2 kiss_icp
+
+benchmark_base/bin/lio-benchmark audit runtime-provenance \
+  --run "$RUN" \
+  --algorithms fast_livo2 fast_lio2 kiss_icp
+
+for ALG in fast_livo2 fast_lio2 kiss_icp; do
+  benchmark_base/bin/lio-benchmark standardize map \
+    --run "$RUN" --algorithm "$ALG"
+done
+
+benchmark_base/bin/lio-benchmark bundle --run "$RUN"
+```
+
+Runtime Contract gate 至少确认：
+
+```text
+3 × runtime_identity.json exist
+FAST-LIO2 resolution_method = EXPLICIT_EXECUTABLE_OVERRIDE
+FAST-LIO2 resolved executable + SHA256 are non-empty
+all three replay.duration_s = 15.0
+scan manifest source = RUN_MANIFEST_REPLAY
+runtime provenance identity_evidence_source = RUNTIME_IDENTITY
+frame audit remains independent
+```
+
+完成这道 gate 后再进入 Relative SE(3) Motion Benchmark，避免把 implementation/gauge 问题混成 estimator drift。
+
+## 17. Recommended integration order on a new machine
 
 先短段 smoke，再完整 bag
 
@@ -502,6 +764,7 @@ lio-benchmark mark \
 ```text
 startup
 full/partial bag consumption
+runtime identity
 trajectory monotonic timestamps
 NaN / Inf
 trajectory duration coverage
@@ -510,7 +773,7 @@ native-map provenance
 logs / failure evidence
 ```
 
-## 15. Research use
+## 18. Research use
 
 工程仓库可以保留全部可运行 baseline，但论文正文不需要堆满算法
 
