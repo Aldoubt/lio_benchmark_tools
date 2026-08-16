@@ -115,6 +115,44 @@ def normalized_execution_overrides(
     return normalized
 
 
+def normalized_runtime_overlays(
+    manifest: dict[str, Any], selected_algorithms: list[str] | tuple[str, ...]
+) -> dict[str, list[str]]:
+    raw = manifest.get("runtime_overlays", {})
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("runtime_overlays must be an object")
+    selected = set(selected_algorithms)
+    normalized: dict[str, list[str]] = {}
+    for algorithm_id, overlays in raw.items():
+        algorithm_id = str(algorithm_id)
+        if algorithm_id not in selected:
+            raise ValueError(
+                f"runtime_overlays.{algorithm_id} references an unselected algorithm"
+            )
+        if not isinstance(overlays, list) or not overlays:
+            raise ValueError(f"runtime_overlays.{algorithm_id} must be a non-empty list")
+        values: list[str] = []
+        seen: set[str] = set()
+        for index, overlay in enumerate(overlays):
+            if not isinstance(overlay, str) or not overlay.strip():
+                raise ValueError(
+                    f"runtime_overlays.{algorithm_id}[{index}] must be a non-empty string"
+                )
+            value = overlay.strip()
+            if not Path(value).expanduser().is_absolute():
+                raise ValueError(f"runtime_overlays.{algorithm_id}[{index}] must be absolute")
+            if value in seen:
+                raise ValueError(
+                    f"runtime_overlays.{algorithm_id} contains duplicate overlay path: {value}"
+                )
+            seen.add(value)
+            values.append(value)
+        normalized[algorithm_id] = values
+    return normalized
+
+
 def resolve_manifest(manifest: dict[str, Any], registry: Registry | None = None) -> dict[str, Any]:
     """Resolve schema-v2 references into a frozen v1-like runtime structure."""
     version = schema_version(manifest)
@@ -125,7 +163,11 @@ def resolve_manifest(manifest: dict[str, Any], registry: Registry | None = None)
     algorithm_refs = manifest.get("algorithms")
     if not isinstance(dataset_ref, str) or not dataset_ref:
         raise ValueError("schema-v2 dataset must be a registry id string")
-    if not isinstance(algorithm_refs, list) or not algorithm_refs or not all(isinstance(item, str) and item for item in algorithm_refs):
+    if (
+        not isinstance(algorithm_refs, list)
+        or not algorithm_refs
+        or not all(isinstance(item, str) and item for item in algorithm_refs)
+    ):
         raise ValueError("schema-v2 algorithms must be a non-empty list of registry ids")
     try:
         dataset = active.load_dataset(dataset_ref)
@@ -139,6 +181,7 @@ def resolve_manifest(manifest: dict[str, Any], registry: Registry | None = None)
     resolved["dataset"] = dataset
     resolved["algorithms"] = algorithms
     resolved["execution_overrides"] = normalized_execution_overrides(manifest, algorithm_refs)
+    resolved["runtime_overlays"] = normalized_runtime_overlays(manifest, algorithm_refs)
     resolved["replay"] = normalized_replay(manifest)
     return resolved
 
@@ -156,15 +199,38 @@ def validate_manifest(
     except ValueError as exc:
         return [str(exc)]
     if version == 1:
-        return _validate_v1(manifest, verify_hash=verify_hash, check_paths=check_paths, module_root=module_root)
-    return _validate_v2(manifest, registry=registry, verify_hash=verify_hash, check_paths=check_paths, module_root=module_root)
+        return _validate_v1(
+            manifest,
+            verify_hash=verify_hash,
+            check_paths=check_paths,
+            module_root=module_root,
+        )
+    return _validate_v2(
+        manifest,
+        registry=registry,
+        verify_hash=verify_hash,
+        check_paths=check_paths,
+        module_root=module_root,
+    )
 
 
 def _validate_v1(
-    manifest: dict[str, Any], *, verify_hash: bool, check_paths: bool, module_root: str | Path | None
+    manifest: dict[str, Any],
+    *,
+    verify_hash: bool,
+    check_paths: bool,
+    module_root: str | Path | None,
 ) -> list[str]:
     errors: list[str] = []
-    for key in ("name", "workspace", "output_root", "dataset", "calibration", "evaluation", "algorithms"):
+    for key in (
+        "name",
+        "workspace",
+        "output_root",
+        "dataset",
+        "calibration",
+        "evaluation",
+        "algorithms",
+    ):
         if key not in manifest:
             errors.append(f"missing top-level field: {key}")
     dataset = manifest.get("dataset", {})
@@ -214,7 +280,12 @@ def _validate_v1(
 
 
 def _validate_v2(
-    manifest: dict[str, Any], *, registry: Registry | None, verify_hash: bool, check_paths: bool, module_root: str | Path | None
+    manifest: dict[str, Any],
+    *,
+    registry: Registry | None,
+    verify_hash: bool,
+    check_paths: bool,
+    module_root: str | Path | None,
 ) -> list[str]:
     errors: list[str] = []
     for key in ("name", "workspace", "output_root", "dataset", "algorithms", "standardization"):
@@ -231,7 +302,9 @@ def _validate_v2(
     for algorithm_id, algorithm in algorithms.items():
         for modality in algorithm["required_modalities"]:
             if dataset.get("topics", {}).get(modality) in (None, ""):
-                errors.append(f"algorithm {algorithm_id} requires unavailable dataset modality: {modality}")
+                errors.append(
+                    f"algorithm {algorithm_id} requires unavailable dataset modality: {modality}"
+                )
     standardization = manifest.get("standardization", {})
     if not isinstance(standardization, dict):
         errors.append("standardization must be an object")
