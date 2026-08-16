@@ -51,6 +51,16 @@ class RuntimeProvenanceTest(unittest.TestCase):
         )
         self.assertEqual(ProvenanceStatus.UNRESOLVED, result.status)
 
+    def test_missing_declared_execution_repository_is_unresolved(self) -> None:
+        result = classify_runtime_provenance(
+            expected_repository=None,
+            actual_repository="https://github.com/local/fast-livo2-ros2.git",
+            frame_status="MATCH",
+            ros_package_prefix="/workspace/install/fast_livo",
+        )
+        self.assertEqual(ProvenanceStatus.UNRESOLVED, result.status)
+        self.assertIn("declared execution repository", result.reasons[0])
+
 
 if __name__ == "__main__":
     unittest.main()
