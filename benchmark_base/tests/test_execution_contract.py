@@ -8,6 +8,7 @@ from pathlib import Path
 
 from benchmark_base.lib.execution_contract import (
     ExecutionContractError,
+    build_blocked_runtime_identity,
     build_runtime_identity,
     fingerprint_executable,
     resolve_execution,
@@ -87,7 +88,7 @@ class RuntimeExecutionContractTest(unittest.TestCase):
         self.assertEqual(3, value["size_bytes"])
         self.assertIsInstance(value["mtime_ns"], int)
 
-    def test_runtime_identity_records_binary_replay_and_config_hash(self) -> None:
+    def test_runtime_identity_records_binary_replay_config_and_package_dimensions(self) -> None:
         binary = self._make_executable("fastlio_mapping", b"binary-v2")
         config = self.root / "benchmark.yaml"
         config.write_text("publish:\n  path_en: true\n", encoding="utf-8")
@@ -99,14 +100,36 @@ class RuntimeExecutionContractTest(unittest.TestCase):
             effective_command=[str(binary), "--ros-args", "--params-file", str(config)],
             effective_config=config,
             ros_distro="humble",
-            source_state={"path": None},
-            ros_package_prefix=None,
+            source_state={
+                "path": str(self.root),
+                "remote_origin": "https://github.com/local/custom-fastlio.git",
+            },
+            runtime_package=None,
+            runtime_package_prefix=None,
         )
         self.assertEqual("FROZEN", payload["identity_status"])
+        self.assertIsNone(payload["blocking_reason"])
         self.assertEqual("EXPLICIT_EXECUTABLE_OVERRIDE", payload["resolution_method"])
         self.assertEqual(hashlib.sha256(b"binary-v2").hexdigest(), payload["executable_sha256"])
         self.assertEqual(15.0, payload["replay"]["duration_s"])
         self.assertEqual(hashlib.sha256(config.read_bytes()).hexdigest(), payload["effective_config"]["sha256"])
+        self.assertEqual("fast_lio", payload["registry_package"])
+        self.assertIsNone(payload["runtime_package"])
+        self.assertIsNone(payload["runtime_package_prefix"])
+        self.assertEqual("REGISTRY_MISMATCH", payload["source_relationship"])
+
+    def test_blocked_execution_identity_preserves_attempt_without_inventing_binary(self) -> None:
+        payload = build_blocked_runtime_identity(
+            manifest=self._manifest(self.root / "missing"),
+            algorithm_id="fast_lio2",
+            reason="BLOCKED_EXECUTION: explicit executable cannot be resolved",
+        )
+        self.assertEqual("BLOCKED_EXECUTION", payload["identity_status"])
+        self.assertIn("cannot be resolved", payload["blocking_reason"])
+        self.assertEqual("EXPLICIT_EXECUTABLE_OVERRIDE", payload["resolution_method"])
+        self.assertIsNone(payload["resolved_executable"])
+        self.assertIsNone(payload["executable_sha256"])
+        self.assertEqual(15.0, payload["replay"]["duration_s"])
 
     def test_existing_frozen_identity_is_not_overwritten(self) -> None:
         payload = {
