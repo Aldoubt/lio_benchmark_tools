@@ -46,6 +46,8 @@ RELATIVE_SE3_ARTIFACTS = (
     "metrics/relative_se3/pairwise_summary.csv",
     "metrics/relative_se3/onset_thresholds.csv",
 )
+TRAJECTORY_COVERAGE_ARTIFACT = "metrics/trajectory_coverage.csv"
+TRAJECTORY_COVERAGE_METADATA_GLOB = "metadata/trajectory_coverage/*.json"
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,12 @@ def collect_bundle_files(
     for relative in RELATIVE_SE3_ARTIFACTS:
         if _safe_relative_file(run, relative):
             included.add(relative)
+
+    # Coverage diagnostics are additive evidence for new runs and remain
+    # optional for historical bundles.
+    if _safe_relative_file(run, TRAJECTORY_COVERAGE_ARTIFACT):
+        included.add(TRAJECTORY_COVERAGE_ARTIFACT)
+    included.update(_existing_glob(run, TRAJECTORY_COVERAGE_METADATA_GLOB))
 
     for algorithm_id in _algorithm_ids(manifest):
         for relative in (
