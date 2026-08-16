@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Audit the exact runtime implementation behind benchmark trajectory artifacts.
 
-This is a read-only diagnostic. It combines current source-backed registry
-contracts with run-local frame-audit evidence and local ROS/git provenance. It
-never edits algorithm sources, raw bags, standardized trajectories, or maps.
+New runs consume runtime identity frozen immediately before estimator startup.
+Historical runs without that artifact retain explicit legacy reconstruction.
+This diagnostic never edits algorithm sources, raw bags, trajectories, or maps.
 """
 from __future__ import annotations
 
@@ -119,44 +119,78 @@ def git_state(path: Path | None) -> dict[str, Any]:
     }
 
 
-def load_frame_audit(run: Path, algorithm_id: str) -> dict[str, Any]:
-    path = run / "metadata" / "frame_audit" / f"{algorithm_id}.json"
+def load_json_object(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
-        return {"status": "MISSING", "error": f"frame audit missing: {path}"}
+        return None
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return {"status": "AUDIT_FAILED", "error": str(exc)}
-    return value if isinstance(value, dict) else {"status": "AUDIT_FAILED", "error": "frame audit is not an object"}
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def load_frame_audit(run: Path, algorithm_id: str) -> dict[str, Any]:
+    path = run / "metadata" / "frame_audit" / f"{algorithm_id}.json"
+    value = load_json_object(path)
+    if value is None:
+        return {"status": "MISSING", "error": f"frame audit missing or invalid: {path}"}
+    return value
+
+
+def load_runtime_identity(run: Path, algorithm_id: str) -> dict[str, Any] | None:
+    return load_json_object(
+        run / "metadata" / "algorithms" / algorithm_id / "runtime_identity.json"
+    )
+
+
+def frozen_algorithm(manifest: dict[str, Any], algorithm_id: str) -> tuple[dict[str, Any], str]:
+    algorithms = manifest.get("algorithms", {})
+    if isinstance(algorithms, dict):
+        record = algorithms.get(algorithm_id)
+        if isinstance(record, dict):
+            return record, "FROZEN_RUN_MANIFEST"
+    return REGISTRY.load_algorithm(algorithm_id), "CURRENT_REGISTRY_FALLBACK"
 
 
 def audit_algorithm(
     run: Path,
+    manifest: dict[str, Any],
     workspace: Path,
     algorithm_id: str,
     package_sources: dict[str, Path],
 ) -> dict[str, Any]:
-    algorithm = REGISTRY.load_algorithm(algorithm_id)
+    algorithm, contract_source = frozen_algorithm(manifest, algorithm_id)
     implementation = algorithm.get("execution_implementation", {})
     implementation = implementation if isinstance(implementation, dict) else {}
     package = str(implementation.get("package", "")) or None
-    prefix = package_prefix(package)
+    identity = load_runtime_identity(run, algorithm_id)
+
+    frozen_prefix = None
+    if identity is not None:
+        frozen_prefix = identity.get("runtime_package_prefix") or identity.get("ros_package_prefix")
+    prefix = str(frozen_prefix) if frozen_prefix else package_prefix(package)
     runtime_workspace = workspace_from_package_prefix(prefix)
-    runtime_package_sources = colcon_package_sources(runtime_workspace)
-    source = source_candidate(
-        workspace,
-        algorithm,
-        package_sources,
-        runtime_package_sources,
-    )
+
+    source_state: dict[str, Any] | None = None
+    if identity is None:
+        runtime_package_sources = colcon_package_sources(runtime_workspace)
+        source = source_candidate(
+            workspace,
+            algorithm,
+            package_sources,
+            runtime_package_sources,
+        )
+        source_state = git_state(source)
+
     row = build_runtime_provenance_record(
         algorithm=algorithm,
         frame_audit=load_frame_audit(run, algorithm_id),
         ros_package_prefix=prefix,
-        source_state=git_state(source),
+        source_state=source_state,
+        runtime_identity=identity,
     )
     row["runtime_workspace"] = str(runtime_workspace) if runtime_workspace else None
-    row["contract_source"] = "CURRENT_REGISTRY"
+    row["contract_source"] = contract_source
     row["registry_algorithm_generation"] = algorithm.get("algorithm_generation")
     return row
 
@@ -207,14 +241,15 @@ def main() -> int:
     rows: list[dict[str, Any]] = []
     for algorithm_id in selected:
         try:
-            rows.append(audit_algorithm(run, workspace, algorithm_id, package_sources))
+            rows.append(audit_algorithm(run, manifest, workspace, algorithm_id, package_sources))
         except (RegistryError, ValueError) as exc:
             rows.append(
                 {
                     "algorithm_id": algorithm_id,
                     "status": "UNRESOLVED",
                     "reasons": [str(exc)],
-                    "contract_source": "CURRENT_REGISTRY",
+                    "identity_evidence_source": "UNAVAILABLE",
+                    "contract_source": "UNKNOWN",
                 }
             )
 
