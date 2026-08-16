@@ -48,9 +48,9 @@ If omitted, output is derived from `run_id` in `manifest.json` and written under
 
 ## 3. Default Bundle Contents
 
-The minimal bundle includes only existing small diagnostic files.
+The minimal bundle includes only existing small diagnostic files plus generated bundle metadata.
 
-Expected candidates:
+Expected archive members:
 
 ```text
 manifest.json
@@ -85,6 +85,8 @@ The tool must discover selected algorithms from the frozen run manifest rather t
 
 Missing optional files are allowed. They are recorded in `bundle_manifest.json` and are not converted into empty placeholder science artifacts.
 
+`metadata/bundle/*` are generated directly as archive members. They are not written back into the run directory before packaging.
+
 ## 4. Optional Report Contents
 
 With `--include-reports`, add existing files under:
@@ -95,16 +97,16 @@ reports/*.html
 figures/*.png
 ```
 
-Do not regenerate reports or figures during bundling. The bundle command is a read-only packaging operation for existing run artifacts.
+Do not regenerate reports or figures during bundling. The bundle command is read-only with respect to existing run artifacts.
 
 ## 5. Repository Provenance Capture
 
-The tool captures the benchmark repository state at bundle time:
+The tool captures the benchmark repository state at bundle time as archive-only metadata:
 
 ```text
-benchmark_git_head.txt
-benchmark_git_status.txt
-benchmark_local.patch
+metadata/bundle/benchmark_git_head.txt
+metadata/bundle/benchmark_git_status.txt
+metadata/bundle/benchmark_local.patch
 ```
 
 `benchmark_local.patch` contains `git diff` output for tracked modifications so machine-specific runner adjustments are recoverable.
@@ -136,11 +138,11 @@ Each archive contains `metadata/bundle/bundle_manifest.json` with at least:
 }
 ```
 
-`included` and `missing` contain run-relative paths so the bundle remains interpretable after the run directory is moved.
+`included` and `missing` contain run-relative archive paths so the bundle remains interpretable after the run directory is moved. Generated `metadata/bundle/*` members are also listed in `included`.
 
 ## 7. Summary File
 
-`SUMMARY.txt` provides a human-readable quick view containing:
+`metadata/bundle/SUMMARY.txt` provides a human-readable quick view containing:
 
 - run ID
 - dataset ID and bag path
@@ -164,9 +166,11 @@ The default command must never package:
 - algorithm build/install trees
 - source repositories
 
-The archive creator should reject an output path that resolves inside the archive input staging directory if that would cause recursive inclusion.
+The archive creator must not recursively include its own output file.
 
-The archive should use deterministic run-relative member names without embedding the user's absolute filesystem paths as archive paths.
+The archive uses deterministic run-relative member names without embedding the user's absolute filesystem paths as archive paths. File contents such as `manifest.json` may still legitimately contain the original dataset/source paths because preserving provenance is the point of the bundle.
+
+The only filesystem mutation performed by the default command is creation/replacement of the requested output archive. Existing run artifacts and source repositories are not modified.
 
 ## 9. Error Handling
 
@@ -185,7 +189,7 @@ Non-fatal missing evidence:
 - reports/figures absent when `--include-reports` is requested
 - Git provenance unavailable
 
-These conditions are written to `bundle_manifest.json` and `SUMMARY.txt`.
+These conditions are written into archive-local `bundle_manifest.json` and `SUMMARY.txt`.
 
 ## 10. Architecture
 
@@ -199,7 +203,7 @@ benchmark_base/lib/diagnostic_bundle.py
     enforce exclusion rules
     build summary data
     build bundle manifest
-    create tar.gz archive
+    create tar.gz archive and generated in-memory members
 
 benchmark_base/bin/lio-benchmark
     parse `bundle`
@@ -207,7 +211,7 @@ benchmark_base/bin/lio-benchmark
     call diagnostic bundle library
 ```
 
-The library must operate on filesystem paths and plain dictionaries so it can be unit-tested without ROS.
+The library must operate on filesystem paths and plain dictionaries/bytes so it can be unit-tested without ROS.
 
 ## 11. Tests
 
@@ -223,6 +227,8 @@ TDD coverage should include:
 8. main CLI exposes `bundle --run`, `--include-reports`, and `--output`
 9. invalid run manifest fails closed
 10. generated archive can be opened and its `bundle_manifest.json` matches actual included members
+11. bundling does not create staging files inside the run except the final archive
+12. the output archive never includes itself recursively
 
 ## 12. Non-Goals
 
