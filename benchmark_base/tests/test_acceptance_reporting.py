@@ -76,9 +76,9 @@ class AcceptanceReportingTest(unittest.TestCase):
         self._write(
             run,
             "metrics/runtime_provenance.csv",
-            "algorithm_id,status,frame_contract_status\n"
-            "algo_a,MATCH,MATCH\n"
-            "algo_b,MATCH,MATCH\n",
+            "algorithm_id,status,frame_contract_status,source_reproducibility_status\n"
+            "algo_a,MATCH,MATCH,DIRTY_SOURCE_WARNING\n"
+            "algo_b,MATCH,MATCH,CLEAN_SOURCE\n",
         )
         self._write(
             run,
@@ -107,6 +107,17 @@ class AcceptanceReportingTest(unittest.TestCase):
             self.assertIn("frame evidence: AVAILABLE", summary)
             self.assertIn("frame contract: MATCH", summary)
             self.assertNotIn("frame audit: AVAILABLE", summary)
+
+    def test_summary_exposes_source_reproducibility_quality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run, _ = self._run(root)
+            archive = create_diagnostic_bundle(run, repository_root=self._repo(root))
+            with tarfile.open(archive, "r:gz") as stream:
+                summary = stream.extractfile("metadata/bundle/SUMMARY.txt").read().decode("utf-8")
+            self.assertIn("runtime provenance: MATCH", summary)
+            self.assertIn("source reproducibility: DIRTY_SOURCE_WARNING", summary)
+            self.assertIn("source reproducibility: CLEAN_SOURCE", summary)
 
     def test_bundle_refreshes_stale_run_status_from_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
