@@ -4,7 +4,6 @@ set -eo pipefail
 WORKSPACE=${WORKSPACE:-$PWD}
 BAG_DIR=${1:?usage: run_fast_lio2_test.sh BAG_DIR OUTPUT_DIR}
 OUTPUT_DIR=${2:?usage: run_fast_lio2_test.sh BAG_DIR OUTPUT_DIR}
-BAG_PLAY_RATE=${BAG_PLAY_RATE:-1.0}
 BENCHMARK_RUN_DIR=${BENCHMARK_RUN_DIR:?BENCHMARK_RUN_DIR is required}
 BENCHMARK_ROOT=${BENCHMARK_ROOT:?BENCHMARK_ROOT is required}
 BENCHMARK_GENERATED_CONFIG_DIR=${BENCHMARK_GENERATED_CONFIG_DIR:?BENCHMARK_GENERATED_CONFIG_DIR is required}
@@ -15,12 +14,13 @@ source /opt/ros/humble/setup.bash
 if [[ -f "$WORKSPACE/install/setup.bash" ]]; then
   source "$WORKSPACE/install/setup.bash"
 fi
-set -u
 
-if ! ros2 pkg prefix fast_lio >/dev/null 2>&1; then
-  echo "FAST-LIO2 ROS2 package 'fast_lio' is not available in the sourced environment" >&2
-  exit 65
-fi
+eval "$(python3 "$BENCHMARK_ROOT/evaluators/emit_runtime_env.py" \
+  --run "$BENCHMARK_RUN_DIR" --algorithm fast_lio2)"
+export BENCHMARK_EXECUTION_RESOLUTION_METHOD BENCHMARK_RESOLVED_EXECUTABLE
+export BENCHMARK_REPLAY_RATE BENCHMARK_REPLAY_START_OFFSET_S BENCHMARK_REPLAY_DURATION_S
+export BAG_PLAY_RATE BAG_START_OFFSET BAG_DURATION
+set -u
 
 CONFIG="$BENCHMARK_GENERATED_CONFIG_DIR/benchmark.yaml"
 prepare_args=(
@@ -33,16 +33,42 @@ if [[ "$BENCHMARK_COLLECT_NATIVE_MAP" == "1" ]]; then
 fi
 python3 "${prepare_args[@]}"
 
+if [[ "$BENCHMARK_EXECUTION_RESOLUTION_METHOD" == "EXPLICIT_EXECUTABLE_OVERRIDE" ]]; then
+  [[ -n "$BENCHMARK_RESOLVED_EXECUTABLE" ]] || {
+    echo "explicit FAST-LIO2 override resolved without an executable" >&2
+    exit 65
+  }
+  estimator_cmd=("$BENCHMARK_RESOLVED_EXECUTABLE" --ros-args --params-file "$CONFIG")
+else
+  if ! ros2 pkg prefix fast_lio >/dev/null 2>&1; then
+    echo "FAST-LIO2 ROS2 package 'fast_lio' is not available in the sourced environment" >&2
+    exit 65
+  fi
+  estimator_cmd=(
+    ros2 launch fast_lio mapping.launch.py
+    config_path:="$BENCHMARK_GENERATED_CONFIG_DIR"
+    config_file:=benchmark.yaml
+    rviz:=false use_sim_time:=true
+  )
+fi
+
+command_json=$(python3 - "${estimator_cmd[@]}" <<'PY'
+import json,sys
+print(json.dumps(sys.argv[1:]))
+PY
+)
+python3 "$BENCHMARK_ROOT/evaluators/freeze_runtime_identity.py" \
+  --run "$BENCHMARK_RUN_DIR" \
+  --algorithm fast_lio2 \
+  --effective-command-json "$command_json" \
+  --effective-config "$CONFIG"
+
 export ROS_LOG_DIR="$OUTPUT_DIR/ros_logs"
 mkdir -p "$ROS_LOG_DIR"
 cleanup() { jobs -pr | xargs -r kill 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
-ros2 launch fast_lio mapping.launch.py \
-  config_path:="$BENCHMARK_GENERATED_CONFIG_DIR" \
-  config_file:=benchmark.yaml \
-  rviz:=false use_sim_time:=true \
-  >"$OUTPUT_DIR/fast_lio2.log" 2>&1 &
+"${estimator_cmd[@]}" >"$OUTPUT_DIR/fast_lio2.log" 2>&1 &
 node_pid=$!
 sleep 3
 if ! kill -0 "$node_pid" 2>/dev/null || ! ros2 node list 2>/dev/null | grep -q '/laser_mapping'; then
@@ -63,8 +89,25 @@ if ! kill -0 "$record_pid" 2>/dev/null; then
   exit 67
 fi
 
-ros2 bag play "$BAG_DIR" --rate "$BAG_PLAY_RATE" --clock 100.0 \
-  >"$OUTPUT_DIR/play.log" 2>&1
+play_args=(
+  ros2 bag play "$BAG_DIR"
+  --rate "$BENCHMARK_REPLAY_RATE"
+  --clock 100.0
+  --start-offset "$BENCHMARK_REPLAY_START_OFFSET_S"
+)
+if [[ -n "$BENCHMARK_REPLAY_DURATION_S" ]]; then
+  set +e
+  timeout --signal=INT --kill-after=5s "${BENCHMARK_REPLAY_DURATION_S}s" \
+    "${play_args[@]}" >"$OUTPUT_DIR/play.log" 2>&1
+  play_status=$?
+  set -e
+  case "$play_status" in
+    0|124|130) ;;
+    *) echo "FAST-LIO2 bag replay failed with status $play_status" >&2; exit 69 ;;
+  esac
+else
+  "${play_args[@]}" >"$OUTPUT_DIR/play.log" 2>&1
+fi
 sleep 2
 
 if [[ "$BENCHMARK_COLLECT_NATIVE_MAP" == "1" ]]; then
