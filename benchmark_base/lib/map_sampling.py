@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import csv
 import math
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 
 CSV_FIELDS = (
@@ -30,6 +30,45 @@ class ScanWindow:
         if self.duration_s is not None:
             if not math.isfinite(float(self.duration_s)) or self.duration_s <= 0:
                 raise ValueError("duration_s must be finite and > 0 when provided")
+
+
+def resolve_scan_window(
+    *,
+    replay: dict[str, Any] | None,
+    legacy_replay_window: dict[str, Any] | None,
+    start_offset_override: float | None,
+    duration_override: float | None,
+) -> tuple[ScanWindow, str]:
+    """Resolve one auditable scan window without silently changing run facts."""
+    if replay is not None and not isinstance(replay, dict):
+        raise ValueError("replay must be an object when present")
+    if legacy_replay_window is not None and not isinstance(legacy_replay_window, dict):
+        raise ValueError("legacy replay_window must be an object when present")
+
+    if replay is not None:
+        base_start = float(replay.get("start_offset_s", 0.0))
+        raw_duration = replay.get("duration_s")
+        base_duration = None if raw_duration is None else float(raw_duration)
+        base_source = "RUN_MANIFEST_REPLAY"
+    elif legacy_replay_window is not None:
+        base_start = float(legacy_replay_window.get("start_offset_s", 0.0))
+        raw_duration = legacy_replay_window.get("duration_s")
+        base_duration = None if raw_duration is None else float(raw_duration)
+        base_source = "LEGACY_REPLAY_WINDOW"
+    else:
+        base_start = 0.0
+        base_duration = None
+        base_source = "FULL_BAG_DEFAULT"
+
+    if start_offset_override is not None or duration_override is not None:
+        start = base_start if start_offset_override is None else float(start_offset_override)
+        duration = base_duration if duration_override is None else float(duration_override)
+        source = "CLI_OVERRIDE"
+    else:
+        start = base_start
+        duration = base_duration
+        source = base_source
+    return ScanWindow(start_offset_s=start, duration_s=duration), source
 
 
 def in_scan_window(
