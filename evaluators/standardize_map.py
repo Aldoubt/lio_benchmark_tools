@@ -3,7 +3,9 @@
 
 Every Unified Map consumes the run-level frozen selected-scan manifest. LiDAR
 scans are matched to standardized trajectories by timestamp and are rejected
-when they cannot be matched within the configured tolerance.
+when they cannot be matched within the configured tolerance. Scan points are
+first expressed in the physical frame tracked by that algorithm's trajectory;
+this prevents LiDAR-tracked and IMU/body-tracked estimators from being mixed.
 """
 from __future__ import annotations
 
@@ -33,7 +35,9 @@ from benchmark_base.lib.artifacts import (  # noqa: E402
 )
 from benchmark_base.lib.cloud_contract import cloud_rows, scan_timestamp  # noqa: E402
 from benchmark_base.lib.manifest import load_json  # noqa: E402
+from benchmark_base.lib.map_frame_contract import lidar_points_in_tracked_frame  # noqa: E402
 from benchmark_base.lib.map_sampling import read_scan_manifest  # noqa: E402
+from benchmark_base.lib.registry import Registry  # noqa: E402
 from benchmark_base.lib.trajectory import Trajectory, TrajectoryMatchError  # noqa: E402
 from evaluators.build_scan_manifest import build_manifest  # noqa: E402
 
@@ -78,6 +82,22 @@ def write_binary_ply(path: Path, cloud: np.ndarray) -> None:
         records.tofile(stream)
 
 
+def trajectory_contract(manifest: dict[str, Any], algorithm_id: str) -> tuple[dict[str, Any], str]:
+    algorithm = manifest.get("algorithms", {}).get(algorithm_id, {})
+    if isinstance(algorithm, dict):
+        contract = algorithm.get("trajectory_contract")
+        if isinstance(contract, dict) and contract.get("tracked_frame_physical"):
+            return contract, "FROZEN_MANIFEST"
+    current = Registry().load_algorithm(algorithm_id)
+    contract = current.get("trajectory_contract")
+    if not isinstance(contract, dict) or not contract.get("tracked_frame_physical"):
+        raise ValueError(
+            f"algorithm has no tracked-frame trajectory contract: {algorithm_id}; "
+            "Unified Map reconstruction refuses to guess"
+        )
+    return contract, "CURRENT_REGISTRY_FALLBACK"
+
+
 def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
     manifest = load_json(run / "manifest.json")
     dataset = manifest["dataset"]
@@ -88,6 +108,9 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
     tolerance_s = float(standardization.get("trajectory_time_tolerance_s", 0.05))
     if point_step < 1 or voxel_m <= 0 or tolerance_s < 0:
         raise ValueError("invalid standardization point sampling/voxel/tolerance settings")
+
+    contract, contract_source = trajectory_contract(manifest, algorithm_id)
+    tracked_frame = str(contract["tracked_frame_physical"]).upper()
 
     trajectory_path = run / "standardized" / "trajectories" / f"{algorithm_id}.csv"
     trajectory = Trajectory.from_csv(trajectory_path)
@@ -100,8 +123,6 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
         "point_time_unit", dataset.get("point_time_unit", "ns_absolute")
     )
     calibration = dataset.get("calibration", manifest.get("calibration", {}))
-    r_li = np.asarray(calibration["rotation_lidar_to_imu_row_major"], dtype=np.float64).reshape(3, 3)
-    t_li = np.asarray(calibration["translation_lidar_to_imu_m"], dtype=np.float64)
 
     sampling_path = build_manifest(run)
     selected_rows = read_scan_manifest(sampling_path)
@@ -164,10 +185,14 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
 
         scan = cloud_rows(msg, point_step=point_step, near_range_m=near_range_m)
         if scan.size:
-            xyz_imu = (r_li @ scan[:, :3].astype(np.float64).T).T + t_li
+            xyz_tracked = lidar_points_in_tracked_frame(
+                scan[:, :3],
+                tracked_frame_physical=tracked_frame,
+                calibration=calibration,
+            )
             pose = match.pose
-            r_wi = quaternion_matrix(pose.qx, pose.qy, pose.qz, pose.qw)
-            xyz_world = (r_wi @ xyz_imu.T).T + np.array(
+            r_world_tracked = quaternion_matrix(pose.qx, pose.qy, pose.qz, pose.qw)
+            xyz_world = (r_world_tracked @ xyz_tracked.T).T + np.array(
                 [pose.x_m, pose.y_m, pose.z_m], dtype=np.float64
             )
             chunks.append(np.column_stack((xyz_world, scan[:, 3])).astype(np.float32))
@@ -218,6 +243,12 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
         generated_at=dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
         timestamp_matching=timing,
     )
+    metadata["tracked_frame_physical"] = tracked_frame
+    metadata["trajectory_contract_source"] = contract_source
+    metadata["scan_frame_transform"] = (
+        "IDENTITY_LIDAR_TO_LIDAR" if tracked_frame == "LIDAR" else "CANONICAL_LIDAR_TO_IMU"
+    )
+    metadata["world_gauge"] = contract.get("world_gauge", "UNKNOWN")
     write_unified_map_metadata(paths, metadata)
     merge_standardization_report(
         run / "standardized" / "standardization_report.json", algorithm_id, metadata
