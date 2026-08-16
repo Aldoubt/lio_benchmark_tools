@@ -25,11 +25,23 @@
       "local_map": "kiss/local_map"
     }
   },
+  "trajectory_contract": {
+    "pose_semantics": "T_PARENT_TRACKED",
+    "tracked_frame_physical": "LIDAR",
+    "world_gauge": "INITIAL_LIDAR_ALIGNED",
+    "expected_parent_frames": ["odom_lidar"],
+    "child_frame_policy": "INPUT_LIDAR_FRAME",
+    "evidence": [
+      "KISS-ICP RegisterFrame estimates an ego-centric LiDAR pose.",
+      "With base_frame empty, the official ROS2 wrapper uses the input cloud frame as the moving frame and publishes lidar_odom_frame->cloud_frame.",
+      "The default lidar_odom_frame is odom_lidar and the benchmark Livox converter preserves the original input header frame."
+    ]
+  },
   "preprocessing": {
     "livox_custom_to_pointcloud2": "evaluators/livox_custom_to_pointcloud2.py",
     "point_time_field": "t",
     "point_time_datatype": "uint32",
     "native_global_map": "NOT_PROVIDED"
   },
-  "benchmark_notes": "LiDAR-only control baseline. The official ROS2 node consumes PointCloud2, so Livox CustomMsg bags use the benchmark-owned loss-minimizing converter with x/y/z plus t=offset_time. KISS local_map is a local debug map and is not labeled a Native global map."
+  "benchmark_notes": "LiDAR-only control baseline. The official ROS2 node consumes PointCloud2, so Livox CustomMsg bags use the benchmark-owned loss-minimizing converter with x/y/z plus t=offset_time. KISS local_map is a local debug map and is not labeled a Native global map. Its world gauge is the initial LiDAR odometry frame; it has no gravity observation and therefore cannot preserve a handheld sensor's absolute tilt relative to gravity."
 }
