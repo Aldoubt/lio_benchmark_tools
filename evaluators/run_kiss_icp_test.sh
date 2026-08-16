@@ -85,7 +85,11 @@ if ! kill -0 "$node_pid" 2>/dev/null || ! ros2 node list 2>/dev/null | grep -q '
   exit 68
 fi
 
+# Record the converter output in the same run-local bag as KISS outputs. This
+# is diagnostic evidence only: estimator input, converter logic, QoS, replay,
+# and KISS launch arguments remain unchanged.
 ros2 bag record -o "$OUTPUT_DIR/kiss_icp_outputs" \
+  /lio_benchmark/kiss_icp_points \
   /kiss/odometry /kiss/frame /kiss/keypoints /kiss/local_map \
   >"$OUTPUT_DIR/record.log" 2>&1 &
 record_pid=$!
