@@ -15,7 +15,9 @@ import json
 from pathlib import Path
 import subprocess
 import tarfile
-from typing import Any, Iterable
+from typing import Any
+
+from benchmark_base.lib.run_status import refresh_run_status
 
 
 BUNDLE_SCHEMA = "lio_benchmark_diagnostic_bundle/v1"
@@ -32,6 +34,10 @@ EXCLUDED_LARGE_ARTIFACTS = (
     "**/*.mcap",
     "**/*.ply",
     "**/*.pcd",
+)
+LEGACY_OPTIONAL_ARTIFACTS = (
+    "metrics/smoke_diagnostics.csv",
+    "metrics/pairwise_disagreement.csv",
 )
 RELATIVE_SE3_ARTIFACTS = (
     "metrics/relative_se3/metadata.json",
@@ -102,8 +108,6 @@ def collect_bundle_files(
         "RUN_STATUS.md",
         "metrics/runtime_provenance.csv",
         "metrics/trajectory_frame_audit.csv",
-        "metrics/smoke_diagnostics.csv",
-        "metrics/pairwise_disagreement.csv",
         "standardized/map_sampling/metadata.json",
         "standardized/map_sampling/selected_scans.csv",
     )
@@ -113,6 +117,11 @@ def collect_bundle_files(
         else:
             missing.add(relative)
 
+    # Historical diagnostics remain useful when present, but a modern
+    # Relative SE(3) acceptance run does not require them.
+    for relative in LEGACY_OPTIONAL_ARTIFACTS:
+        if _safe_relative_file(run, relative):
+            included.add(relative)
     for pattern in (
         "metrics/smoke_diagnostics_warmup_*.csv",
         "metrics/pairwise_disagreement_warmup_*.csv",
@@ -192,28 +201,29 @@ def _load_json_if_available(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def _read_csv_statuses(path: Path) -> dict[str, str]:
+def _read_csv_field(path: Path, field: str) -> dict[str, str]:
     if not path.is_file():
         return {}
     try:
         with path.open("r", encoding="utf-8", newline="") as stream:
-            reader = csv.DictReader(stream)
-            rows = list(reader)
+            rows = list(csv.DictReader(stream))
     except OSError:
         return {}
     values: dict[str, str] = {}
     for row in rows:
         algorithm_id = row.get("algorithm_id")
-        status = row.get("status")
-        if algorithm_id and status:
-            values[str(algorithm_id)] = str(status)
+        value = row.get(field)
+        if algorithm_id and value:
+            values[str(algorithm_id)] = str(value)
     return values
 
 
 def _summary_text(run: Path, manifest: dict[str, Any], selection: BundleSelection) -> str:
     algorithms = _algorithm_ids(manifest)
-    provenance = _read_csv_statuses(run / "metrics/runtime_provenance.csv")
-    frame_audit = _read_csv_statuses(run / "metrics/trajectory_frame_audit.csv")
+    provenance_path = run / "metrics/runtime_provenance.csv"
+    provenance = _read_csv_field(provenance_path, "status")
+    frame_contract = _read_csv_field(provenance_path, "frame_contract_status")
+    frame_evidence = _read_csv_field(run / "metrics/trajectory_frame_audit.csv", "status")
     lines = [
         "LIO Benchmark Diagnostic Bundle",
         "================================",
@@ -235,7 +245,8 @@ def _summary_text(run: Path, manifest: dict[str, Any], selection: BundleSelectio
         lines.append(
             f"{algorithm_id}: runtime identity: {identity_status}; "
             f"runtime provenance: {provenance.get(algorithm_id, 'UNAVAILABLE')}; "
-            f"frame audit: {frame_audit.get(algorithm_id, 'UNAVAILABLE')}"
+            f"frame evidence: {frame_evidence.get(algorithm_id, 'UNAVAILABLE')}; "
+            f"frame contract: {frame_contract.get(algorithm_id, 'UNAVAILABLE')}"
         )
     lines.extend(
         [
@@ -286,6 +297,9 @@ def create_diagnostic_bundle(
     if not isinstance(manifest, dict):
         raise ValueError("run manifest root must be an object")
 
+    # The archived status must reflect the evidence that is actually being
+    # packaged, not the initialization template left behind by `init`.
+    refresh_run_status(run, manifest, bundle_will_exist=True)
     selection = collect_bundle_files(run, manifest, include_reports)
     repository_root = Path(repository_root).resolve()
     git = capture_git_provenance(repository_root)
