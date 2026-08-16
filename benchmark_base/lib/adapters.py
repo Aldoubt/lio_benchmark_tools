@@ -95,6 +95,15 @@ def _source_path(manifest: dict[str, Any], algorithm: dict[str, Any]) -> Path | 
     return path.resolve()
 
 
+def _runtime_package(algorithm: dict[str, Any]) -> str | None:
+    implementation = algorithm.get("execution_implementation", {})
+    if not isinstance(implementation, dict):
+        return None
+    package = implementation.get("package")
+    value = str(package).strip() if package is not None else ""
+    return value or None
+
+
 def _runner_path(algorithm: dict[str, Any], benchmark_root: str | Path) -> Path | None:
     runner = algorithm.get("runner", {})
     adapter = runner.get("adapter") if isinstance(runner, dict) else None
@@ -113,6 +122,7 @@ def preflight_algorithm(
     benchmark_root: str | Path,
     allow_diagnostic_calibration: bool = False,
     runtime_env: Mapping[str, str] | None = None,
+    runtime_package_prefixes: Mapping[str, str | None] | None = None,
 ) -> AdapterStatus:
     algorithm = _algorithm(manifest, algorithm_id)
     dataset = manifest.get("dataset", {})
@@ -143,13 +153,42 @@ def preflight_algorithm(
     source = _source_path(manifest, algorithm)
     checks["source_path"] = str(source) if source else None
     checks["source_exists"] = bool(source and source.is_dir())
-    if (
-        execution.resolution_method != EXPLICIT_EXECUTABLE_OVERRIDE
-        and source is not None
-        and not source.is_dir()
-    ):
-        reasons.append(f"source repository/path does not exist: {source}")
-        return AdapterStatus(algorithm_id, "BLOCKED_ENVIRONMENT", False, False, tuple(reasons), checks)
+
+    runtime_package = _runtime_package(algorithm)
+    checks["runtime_package"] = runtime_package
+    if execution.resolution_method != EXPLICIT_EXECUTABLE_OVERRIDE:
+        if runtime_package is not None:
+            prefix = (
+                runtime_package_prefixes.get(runtime_package)
+                if runtime_package_prefixes is not None
+                else None
+            )
+            checks["runtime_package_prefix"] = prefix
+            checks["runtime_package_available"] = (
+                bool(prefix) if runtime_package_prefixes is not None else None
+            )
+            if runtime_package_prefixes is not None and not prefix:
+                reasons.append(
+                    f"runtime ROS package is unavailable in the sourced environment: {runtime_package}"
+                )
+                return AdapterStatus(
+                    algorithm_id,
+                    "BLOCKED_ENVIRONMENT",
+                    False,
+                    False,
+                    tuple(reasons),
+                    checks,
+                )
+        elif source is not None and not source.is_dir():
+            reasons.append(f"source repository/path does not exist: {source}")
+            return AdapterStatus(
+                algorithm_id,
+                "BLOCKED_ENVIRONMENT",
+                False,
+                False,
+                tuple(reasons),
+                checks,
+            )
 
     runner = _runner_path(algorithm, benchmark_root)
     checks["runner_path"] = str(runner) if runner else None
@@ -251,6 +290,7 @@ def prepare_algorithm(
     *,
     benchmark_root: str | Path,
     allow_diagnostic_calibration: bool = False,
+    runtime_package_prefixes: Mapping[str, str | None] | None = None,
 ) -> PreparedAdapter:
     run = Path(run_dir)
     algorithm = _algorithm(manifest, algorithm_id)
@@ -259,6 +299,7 @@ def prepare_algorithm(
         algorithm_id,
         benchmark_root=benchmark_root,
         allow_diagnostic_calibration=allow_diagnostic_calibration,
+        runtime_package_prefixes=runtime_package_prefixes,
     )
     if not preflight.runnable:
         raise ValueError(f"adapter preflight blocked {algorithm_id}: {preflight.status}: {'; '.join(preflight.reasons)}")
