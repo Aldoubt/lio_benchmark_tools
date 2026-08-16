@@ -2,6 +2,7 @@
 """Runtime execution resolution and immutable run-time identity evidence."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 import datetime as dt
 import json
@@ -111,6 +112,33 @@ def fingerprint_executable(path: str | Path) -> dict[str, Any]:
     }
 
 
+def fingerprint_runtime_overlays(
+    paths: Iterable[str | Path],
+) -> list[dict[str, Any]]:
+    """Fingerprint the exact frozen setup scripts in declared source order."""
+    evidence: list[dict[str, Any]] = []
+    for path in paths:
+        candidate = Path(path).expanduser()
+        try:
+            resolved = candidate.resolve(strict=True)
+            if not resolved.is_file():
+                raise OSError("not a regular file")
+            stat = resolved.stat()
+            digest = sha256_file(resolved)
+        except (OSError, RuntimeError) as exc:
+            raise ExecutionContractError(
+                f"BLOCKED_EXECUTION: failed to fingerprint runtime overlay: {candidate}"
+            ) from exc
+        evidence.append(
+            {
+                "setup_path": str(resolved),
+                "setup_sha256": digest,
+                "setup_size_bytes": int(stat.st_size),
+            }
+        )
+    return evidence
+
+
 def _config_identity(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {"path": None, "sha256": None}
@@ -153,6 +181,7 @@ def build_runtime_identity(
     source_state: dict[str, Any] | None,
     runtime_package: str | None,
     runtime_package_prefix: str | None,
+    runtime_overlays: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the immutable run-time identity payload before estimator startup."""
     implementation = _implementation(manifest, algorithm_id)
@@ -189,6 +218,7 @@ def build_runtime_identity(
         "registry_package": registry_package,
         "runtime_package": runtime_package,
         "runtime_package_prefix": runtime_package_prefix,
+        "runtime_overlays": list(runtime_overlays or []),
         "source": source,
         "registry_execution_implementation": implementation,
         "source_relationship": relationship,
@@ -243,6 +273,7 @@ def build_blocked_runtime_identity(
         "registry_package": implementation.get("package"),
         "runtime_package": None,
         "runtime_package_prefix": None,
+        "runtime_overlays": [],
         "source": _source_state(None),
         "registry_execution_implementation": implementation,
         "source_relationship": "UNKNOWN_SOURCE",
