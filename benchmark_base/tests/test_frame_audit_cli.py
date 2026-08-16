@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.machinery
 import importlib.util
 import unittest
 from pathlib import Path
@@ -10,11 +11,12 @@ class FrameAuditCliTest(unittest.TestCase):
     def _load_cli():
         root = Path(__file__).resolve().parents[2]
         path = root / "benchmark_base/bin/lio-benchmark"
-        spec = importlib.util.spec_from_file_location("lio_benchmark_cli", path)
-        if spec is None or spec.loader is None:
+        loader = importlib.machinery.SourceFileLoader("lio_benchmark_cli", str(path))
+        spec = importlib.util.spec_from_loader("lio_benchmark_cli", loader)
+        if spec is None:
             raise RuntimeError("unable to load lio-benchmark CLI")
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        loader.exec_module(module)
         return module
 
     def test_trajectory_frame_audit_is_exposed_through_main_cli(self) -> None:
