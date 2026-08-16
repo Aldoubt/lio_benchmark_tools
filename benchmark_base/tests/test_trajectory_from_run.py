@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 import unittest
 
 from benchmark_base.lib.frame_audit import RawPoseObservation
@@ -94,6 +95,15 @@ class TrajectoryFromRunContractTest(unittest.TestCase):
         self.assertEqual("HEADER_STAMP_ELSE_BAG_RECORD_TIME", metadata["timestamp_policy"])
         self.assertEqual(139, metadata["sample_count"])
         self.assertEqual("standardized/trajectories/fast_lio2.csv", metadata["output"])
+
+    def test_frame_audit_consumes_shared_rosbag_reader_instead_of_defining_its_own(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        text = (root / "evaluators/audit_trajectory_frames.py").read_text(encoding="utf-8")
+        self.assertIn("benchmark_base.lib.rosbag_trajectory", text)
+        self.assertIn("read_pose_observations", text)
+        self.assertNotIn("def open_reader(", text)
+        self.assertNotIn("def find_bag_for_topic(", text)
+        self.assertNotIn("def read_observations(", text)
 
 
 if __name__ == "__main__":
