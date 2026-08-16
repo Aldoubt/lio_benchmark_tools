@@ -126,7 +126,12 @@ standardized/map_sampling/
 
 Rows remain sorted by original `scan_index` and are never renumbered.
 
-The file is immutable by default. Re-running the command against an existing common manifest must either return the existing artifact after validating its inputs/fingerprints or fail closed according to the repository's existing artifact policy. It must never silently rewrite evidence.
+The artifact is immutable by default. On re-run:
+
+- if `common_matched_scans.csv` and `common_matched_metadata.json` both exist and all recorded source fingerprints still match the current `selected_scans.csv` and standardized trajectories, return the existing artifact without rewriting it
+- if only one artifact exists, or any recorded source fingerprint differs, fail closed and require a new run rather than overwriting evidence
+
+There is no `--overwrite` option in V1.
 
 ## 8. Common-manifest metadata
 
@@ -151,9 +156,10 @@ trajectory_sha256
 trajectory_sample_count
 individually_matched_scan_count
 individually_rejected_scan_count
+rejected_scan_indices
 ```
 
-Also record per-algorithm rejection evidence sufficient to explain why the strict intersection shrank. At minimum this includes rejected scan count; an auditable list of rejected original `scan_index` values is preferred because the current smoke-scale manifest is small and this avoids losing information.
+`rejected_scan_indices` is mandatory and contains the original frozen `scan_index` values rejected for that algorithm, sorted ascending.
 
 The metadata must make it possible to prove that the common manifest was derived from a specific frozen selected-scan manifest and specific standardized trajectories.
 
@@ -168,6 +174,8 @@ During reconstruction, trajectory interpolation is performed again for every com
 A scan listed in `common_matched_scans.csv` that no longer matches the algorithm trajectory is a contract violation and must fail closed. It must not be converted into an ordinary unmatched count and skipped.
 
 This catches trajectory mutation or stale common-manifest evidence.
+
+Before reading LiDAR data, map reconstruction must validate the common-manifest metadata fingerprints against the current selected-scan manifest and all standardized trajectories. A mismatch is a hard failure.
 
 ## 10. Unified Map metadata contract
 
@@ -197,15 +205,13 @@ Historical runs may not contain `common_matched_scans.csv`.
 
 P2 must not retroactively reinterpret old map artifacts as strict-intersection maps.
 
-For a new formal map reconstruction, absence of the common manifest should trigger a clear instruction to run:
+For formal Unified Map reconstruction after P2, absence of the common manifest is a hard precondition failure with a clear instruction to run:
 
 ```bash
 lio-benchmark standardize common-map-manifest --run <run>
 ```
 
-It must not silently fall back to the old independently matched `selected_scans.csv` path while claiming strict fairness.
-
-If a legacy workflow must remain available for diagnostic use, it must be explicitly labelled as legacy/non-strict and must not share the strict metadata policy.
+V1 provides no silent fallback and no legacy map mode inside `standardize map`. Existing historical map artifacts remain readable as artifacts, but a new map reconstruction must satisfy the strict common-intersection contract.
 
 ## 12. Scientific interpretation
 
@@ -228,12 +234,14 @@ Implementation follows TDD. At minimum lock these behaviors:
 5. Missing standardized trajectory -> fail closed.
 6. Invalid or missing matching tolerance -> fail closed.
 7. Existing selected-scan manifest and standardized trajectories are not modified.
-8. Metadata fingerprints selected manifest and every trajectory.
-9. `standardize map` requires the common manifest for strict reconstruction.
-10. A common-manifest scan that fails re-validation during map reconstruction -> hard failure, not `unmatched += 1`.
-11. Three map metadata files point to the identical common-manifest SHA and have `unmatched_scan_count = 0`.
-12. Point counts are allowed to differ despite identical scan counts.
-13. Relative SE(3), trajectory coverage, runtime provenance, and existing CLI contracts remain unchanged.
+8. Metadata fingerprints selected manifest and every trajectory and records mandatory rejected scan indices.
+9. Identical re-run returns the existing common artifact byte-for-byte without rewriting it.
+10. Partial common artifacts or changed input fingerprints -> fail closed and require a new run.
+11. `standardize map` requires the common manifest for strict reconstruction.
+12. A common-manifest scan that fails re-validation during map reconstruction -> hard failure, not `unmatched += 1`.
+13. Three map metadata files point to the identical common-manifest SHA and have `unmatched_scan_count = 0`.
+14. Point counts are allowed to differ despite identical scan counts.
+15. Relative SE(3), trajectory coverage, runtime provenance, and existing CLI contracts remain unchanged.
 
 ## 14. Target-machine acceptance
 
