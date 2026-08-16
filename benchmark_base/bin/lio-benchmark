@@ -34,6 +34,7 @@ from benchmark_base.lib.manifest import (  # noqa: E402
 )
 from benchmark_base.lib.registry import Registry, RegistryError  # noqa: E402
 from benchmark_base.lib.ros_workspace import build_sourced_python_command  # noqa: E402
+from benchmark_base.lib.run_outcome import classify_runner_status  # noqa: E402
 
 BASE_RUN_DIRS = (
     "input",
@@ -423,7 +424,7 @@ def execute_algorithm(
         "finished_at": now_iso(),
         "command": command,
         "returncode": result.returncode,
-        "status": "PASS" if result.returncode == 0 else "FAIL_ALGORITHM",
+        "status": classify_runner_status(result.returncode),
         "diagnostic_only": preflight.diagnostic_only,
         "preflight_status": preflight.status,
         "log": str(log_path),
