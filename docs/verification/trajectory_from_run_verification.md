@@ -4,7 +4,7 @@ Date: 2026-08-16
 
 ## Scope
 
-This note verifies the repository-side contract for run-local ROS 2 trajectory standardization. It does **not** claim that the new path has already passed a fresh greenhouse target-machine replay.
+This note verifies the repository-side contract and fresh greenhouse target-machine replay for run-local ROS 2 trajectory standardization.
 
 ## Repository contract status
 
@@ -60,7 +60,25 @@ Registry smoke
 
 ## Target-machine integration status
 
-Status: **PENDING**
+Status: **ACCEPTED**
+
+Target run:
+
+```text
+/home/yangxuan/lio_benchmark_runs/green_house/green_house_provenance_accept_20260816_172559
+```
+
+Measured trajectory outputs from `trajectory-from-run`:
+
+```text
+fast_livo2: 135 samples
+fast_lio2:  123 samples
+kiss_icp:   145 samples
+```
+
+All three outputs were non-empty, strictly timestamp-increasing, and had raw/standardized first-pose deltas of zero. Frame audit was available for all three algorithms with `camera_init/aft_mapped`, `odom/sensor`, and `odom_lidar/livox_frame` respectively. Runtime provenance was `MATCH` for all three with `identity_evidence_source=RUNTIME_IDENTITY`.
+
+Scientific blockers remain unchanged: LiDAR-IMU calibration is `UNCONFIRMED`, and FAST-LIVO2/FAST-LIO2 remain `DIAGNOSTIC_ONLY`.
 
 A new run ID must be used. The historical `green_house_three_smoke_004` run must not be overwritten or reused as if it had frozen runtime identities from the new execution contract.
 
@@ -103,4 +121,4 @@ For each of the three algorithms, the fresh run must prove:
 9. runtime provenance consumes frozen runtime identity first;
 10. `lio-benchmark bundle --run <run>` contains all small evidence artifacts.
 
-Only after these target-machine checks pass should this note be extended with a real run ID and measured counts.
+These target-machine checks passed for the run above. No accuracy or Relative SE(3) claim is made here.

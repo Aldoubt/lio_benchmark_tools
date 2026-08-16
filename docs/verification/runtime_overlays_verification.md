@@ -122,9 +122,19 @@ Registry smoke
 
 Because this verification note update creates one final documentation commit after `1549f074...`, the exact final repository HEAD must still receive one last successful `Core Contracts` run before repository-side completion is claimed.
 
-## Target-machine acceptance — PENDING
+## Target-machine acceptance — ACCEPTED
 
-Repository CI does not contain ROS2 Humble or the user's persistent KISS workspace. Therefore the following acceptance remains **PENDING** until it is run on the target machine and the resulting output is reviewed.
+Target-machine acceptance was completed on repository implementation HEAD `496df8bdaf2cc686e5dac1b4af249f4ead3e0f11` using the fresh run:
+
+```text
+/home/yangxuan/lio_benchmark_runs/green_house/green_house_provenance_accept_20260816_172559
+```
+
+The three algorithms all had runtime `PASS`, identity `FROZEN`, provenance `MATCH`, and frame contract `MATCH`. The KISS-ICP identity recorded the persistent overlay setup path, SHA-256, and package prefix required by this note.
+
+FAST-LIVO2 and FAST-LIO2 preflight remained `BLOCKED_CALIBRATION` with `runnable=true` and `diagnostic_only=true`; KISS-ICP preflight was `PASS` and non-diagnostic.
+
+The implementation exact-head GitHub Actions `Core Contracts` run `31939808531` passed.
 
 Start from a fresh shell and intentionally source only the base ROS distro:
 
@@ -214,7 +224,7 @@ runtime_overlays[0].setup_sha256 = non-empty
 runtime_overlays[0].setup_size_bytes > 0
 ```
 
-Only after this fresh-shell KISS acceptance succeeds should the full three-algorithm runtime smoke and `trajectory-from-run -> frame audit -> Common Scan Manifest -> Unified Map` chain be run.
+This fresh-shell KISS acceptance and the full three-algorithm runtime smoke plus `trajectory-from-run -> frame audit -> runtime provenance` chain were completed for the target run above. The runtime provenance evidence is recorded in the run-local `metrics/runtime_provenance.csv`.
 
 ## Scientific boundary
 
