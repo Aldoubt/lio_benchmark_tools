@@ -17,10 +17,21 @@ if str(MODULE_ROOT) not in sys.path:
 
 from benchmark_base.lib.cloud_contract import scan_timestamp  # noqa: E402
 from benchmark_base.lib.manifest import load_json  # noqa: E402
-from benchmark_base.lib.map_sampling import SelectedScan, write_scan_manifest  # noqa: E402
+from benchmark_base.lib.map_sampling import (  # noqa: E402
+    ScanWindow,
+    SelectedScan,
+    in_scan_window,
+    write_scan_manifest,
+)
 
 
-def build_manifest(run: Path, overwrite: bool = False) -> Path:
+def build_manifest(
+    run: Path,
+    overwrite: bool = False,
+    *,
+    start_offset_s: float | None = None,
+    duration_s: float | None = None,
+) -> Path:
     run = run.resolve()
     output = run / "standardized" / "map_sampling" / "selected_scans.csv"
     if output.exists() and not overwrite:
@@ -32,6 +43,20 @@ def build_manifest(run: Path, overwrite: bool = False) -> Path:
     scan_step = int(standardization.get("map_scan_step", 5))
     if scan_step < 1:
         raise ValueError("map_scan_step must be >= 1")
+
+    configured_window = manifest.get("replay_window", {})
+    configured_window = configured_window if isinstance(configured_window, dict) else {}
+    if start_offset_s is None:
+        start_offset_s = float(configured_window.get("start_offset_s", 0.0))
+    if duration_s is None and configured_window.get("duration_s") is not None:
+        duration_s = float(configured_window["duration_s"])
+    window = ScanWindow(start_offset_s=float(start_offset_s), duration_s=duration_s)
+    window_source = (
+        "CLI_OVERRIDE"
+        if start_offset_s != float(configured_window.get("start_offset_s", 0.0))
+        or duration_s != configured_window.get("duration_s")
+        else ("RUN_MANIFEST" if configured_window else "FULL_BAG_DEFAULT")
+    )
 
     bag = Path(dataset["bag_dir"]).expanduser()
     topic = dataset.get("topics", {}).get("lidar", dataset.get("lidar_topic"))
@@ -53,35 +78,52 @@ def build_manifest(run: Path, overwrite: bool = False) -> Path:
 
     rows: list[SelectedScan] = []
     scan_index = 0
+    window_scan_index = 0
+    first_lidar_record_time_s: float | None = None
+    window_lidar_scan_count = 0
     while reader.has_next():
         name, raw, bag_stamp_ns = reader.read_next()
         if name != topic:
             continue
-        if scan_index % scan_step == 0:
-            msg = deserialize_message(raw, cls)
-            timestamp_s, source = scan_timestamp(msg, bag_stamp_ns, point_time_field, point_time_unit)
-            rows.append(
-                SelectedScan(
-                    scan_index=scan_index,
-                    timestamp_s=timestamp_s,
-                    timestamp_source=source,
-                    bag_record_time_s=bag_stamp_ns * 1e-9,
-                    lidar_topic=topic,
-                    selected=True,
+        bag_record_time_s = bag_stamp_ns * 1e-9
+        if first_lidar_record_time_s is None:
+            first_lidar_record_time_s = bag_record_time_s
+        if in_scan_window(bag_record_time_s, first_lidar_record_time_s, window):
+            window_lidar_scan_count += 1
+            if window_scan_index % scan_step == 0:
+                msg = deserialize_message(raw, cls)
+                timestamp_s, source = scan_timestamp(msg, bag_stamp_ns, point_time_field, point_time_unit)
+                rows.append(
+                    SelectedScan(
+                        scan_index=scan_index,
+                        timestamp_s=timestamp_s,
+                        timestamp_source=source,
+                        bag_record_time_s=bag_record_time_s,
+                        lidar_topic=topic,
+                        selected=True,
+                    )
                 )
-            )
+            window_scan_index += 1
         scan_index += 1
 
     if not rows:
         raise ValueError("no LiDAR scans selected for map manifest")
     write_scan_manifest(output, rows)
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "dataset_id": dataset.get("dataset_id", "legacy_v1_dataset"),
         "lidar_topic": topic,
         "total_lidar_scans": scan_index,
+        "window_lidar_scans": window_lidar_scan_count,
         "scan_step": scan_step,
         "selected_scan_count": len(rows),
+        "window": {
+            "start_offset_s": window.start_offset_s,
+            "duration_s": window.duration_s,
+            "source": window_source,
+            "basis": "LIDAR_BAG_RECORD_TIME",
+            "first_lidar_record_time_s": first_lidar_record_time_s,
+        },
         "manifest": str(output),
     }
     (output.parent / "metadata.json").write_text(
@@ -94,8 +136,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--start-offset-s", type=float)
+    parser.add_argument("--duration-s", type=float)
     args = parser.parse_args()
-    print(build_manifest(args.run, overwrite=args.overwrite))
+    print(
+        build_manifest(
+            args.run,
+            overwrite=args.overwrite,
+            start_offset_s=args.start_offset_s,
+            duration_s=args.duration_s,
+        )
+    )
     return 0
 
 
