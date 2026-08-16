@@ -142,6 +142,40 @@ duration_s = null   # run to bag end
 
 run 初始化后，这些值写入 frozen `manifest.json`。后续 shell 变量 `BAG_PLAY_RATE / BAG_START_OFFSET / BAG_DURATION` 只是从 frozen manifest 派生的兼容变量，不再拥有覆盖权。
 
+### 3.2. Freeze per-algorithm ROS runtime overlays
+
+算法依赖独立 ROS workspace 时，不要求用户在运行 benchmark 前手工 source，也不把机器路径写进全局 Algorithm Registry。Source manifest 显式冻结：
+
+```json
+{
+  "runtime_overlays": {
+    "kiss_icp": [
+      "/home/yangxuan/lio_benchmark_dependencies/kiss_icp_ws/install/setup.bash"
+    ]
+  }
+}
+```
+
+当前版本只支持 **per-algorithm overlays**，不提供 global overlay。每个值必须是有序、非空、无重复的绝对 setup-script 路径列表；key 必须属于当前选择的 algorithm。
+
+正式环境顺序固定为：
+
+```text
+/opt/ros/<distro>/setup.bash
+        ↓
+<workspace>/install/setup.bash, if present
+        ↓
+runtime_overlays[algorithm][0]
+        ↓
+runtime_overlays[algorithm][1]
+        ↓
+...
+```
+
+新 frozen run 的 preflight/runner 在构造这条链之前清除 caller 继承的 ROS overlay 路径变量，因此交互终端里已有的 `AMENT_PREFIX_PATH / CMAKE_PREFIX_PATH / COLCON_PREFIX_PATH / LD_LIBRARY_PATH / PYTHONPATH / ROS_PACKAGE_PATH` 不能让一个未声明 overlay 的 formal run 偶然通过。
+
+不允许扫描 `$HOME`、build tree、`/tmp` 或其它目录猜 overlay；不自动 clone/build/install。声明路径缺失、不是普通文件、source 失败或最终 runtime package 不可见时，结果是 `BLOCKED_ENVIRONMENT`。
+
 ## 4. Preflight before running algorithms
 
 先运行：
@@ -174,7 +208,9 @@ Preflight 负责检查：
 
 ```text
 explicit execution override
-source path when registry-default execution is used
+frozen runtime overlay stack
+runtime ROS package availability
+source path as provenance evidence when applicable
 runner adapter
 ROS distro contract
 required modalities
@@ -183,9 +219,11 @@ calibration status
 extrinsic convention
 ```
 
-显式 executable 已经给定且可执行时，缺少 registry `local_path_hint` 不应覆盖这个事实；但 runner、输入、ROS 环境、标定等其它 gate 仍独立生效。
+对于带 `runtime_overlays` 的新 frozen run，preflight 不使用 caller 的 ambient overlay 作为 package 证据，而是从基础 ROS + workspace + frozen algorithm overlays 重新构造正式环境。
 
-不要把算法未安装、系统版本不匹配、执行文件无效或数据输入不兼容写成算法失败
+显式 executable 已经给定且可执行时，缺少 registry `local_path_hint` 不应覆盖这个事实；对于 ROS package execution，`local_path_hint` 也不再代替真实 runtime package availability gate。runner、输入、ROS 环境、标定等 gate 仍独立生效。
+
+不要把算法未安装、系统版本不匹配、执行文件无效、overlay 缺失或数据输入不兼容写成算法失败。
 
 ## 5. Offline benchmark and Runtime Identity
 
@@ -215,7 +253,7 @@ collect
 
 ### 5.1. Runtime identity is frozen before estimator startup
 
-runner 在实际 ROS/workspace overlay 已 source 的环境中、estimator 启动之前写：
+runner 在正式 ROS/workspace/runtime-overlay 环境已经按 frozen contract source 后、estimator 启动之前写：
 
 ```text
 metadata/algorithms/<algorithm>/runtime_identity.json
@@ -230,6 +268,7 @@ requested/resolved executable
 executable SHA256 / size / mtime
 registry package
 runtime package / package prefix when applicable
+runtime overlay setup path / SHA256 / size, in frozen order
 source git root / remote / commit / branch / dirty when provable
 source_relationship = REGISTRY_MATCH | REGISTRY_MISMATCH | UNKNOWN_SOURCE
 effective command
@@ -239,9 +278,13 @@ bag path
 frozen replay interval
 ```
 
+每个 frozen setup script 在 estimator 启动前独立 fingerprint。最终 `runtime_package_prefix` 单独记录，不猜多个 overlay 中到底哪一层“拥有”该 package。
+
 `EXPLICIT_EXECUTABLE_OVERRIDE` 是合法执行方式，不是错误状态。即使它对应的源码与 registry 默认实现不同，只要 binary 已被精确 fingerprint，这个事实就被保留；source relationship 独立记录。
 
 同一个 run 已经存在 runtime identity 时，不允许静默覆盖或重跑。创建新的 run ID。
+
+runner source overlay 阶段使用保留返回码 `65` 表示 runtime environment failure；如果 overlay 在 preflight 后、estimator 启动前失效，run metadata 仍写 `BLOCKED_ENVIRONMENT`，而不是错误归类为 `FAIL_ALGORITHM`。
 
 ### 5.2. Current finite-replay migration scope
 
@@ -495,7 +538,7 @@ identity_evidence_source = RUNTIME_IDENTITY
 identity_evidence_source = LEGACY_RECONSTRUCTED
 ```
 
-binary identity 与 frame semantics 是不同 gate。精确知道运行的是哪个 executable，并不会自动把 `odom -> sensor` 解释为 registry 声明的 `camera_init -> body`。
+binary / overlay identity 与 frame semantics 是不同 gate。精确知道运行的是哪个 executable、source 了哪个 setup 文件，并不会自动把 `odom -> sensor` 解释为 registry 声明的 `camera_init -> body`。
 
 ## 10. Display Alignment
 
@@ -724,26 +767,95 @@ benchmark_base/config/green_house_three_runtime_smoke.json
 ```text
 algorithms = fast_livo2, fast_lio2, kiss_icp
 FAST-LIO2 executable = /home/yangxuan/RM-NAV/build/fast_lio/fastlio_mapping
+KISS runtime overlay = /home/yangxuan/lio_benchmark_dependencies/kiss_icp_ws/install/setup.bash
 replay = 15 s @ 1.0x
 output root = /home/yangxuan/lio_benchmark_runs/green_house
 ```
 
-必须使用新的 run ID，例如：
+### 16.1. Fresh-shell runtime overlay gate
+
+目标机 runtime-overlay acceptance 必须从新的 shell 开始。只 source 基础 ROS distro：
 
 ```bash
-CONFIG=benchmark_base/config/green_house_three_runtime_smoke.json
-RUN_ID=green_house_runtime_contract_smoke_001
+cd /home/yangxuan/lio_benchmark_tools
+git pull --ff-only
+source /opt/ros/humble/setup.bash
+```
+
+在正式 preflight / run 之前**不要**手工 source：
+
+```text
+/home/yangxuan/agt_navigation_v2/install/setup.bash
+/home/yangxuan/lio_benchmark_dependencies/kiss_icp_ws/install/setup.bash
+```
+
+benchmark 必须自己从 frozen manifest 重建这两层环境，否则不能证明 runtime overlay contract 生效。
+
+创建新 run：
+
+```bash
+CONFIG=/home/yangxuan/lio_benchmark_tools/benchmark_base/config/green_house_three_runtime_smoke.json
+RUN_ID="green_house_runtime_overlay_$(date +%Y%m%d_%H%M%S)"
+RUN="/home/yangxuan/lio_benchmark_runs/green_house/$RUN_ID"
+export RUN
 
 benchmark_base/bin/lio-benchmark validate --config "$CONFIG"
 benchmark_base/bin/lio-benchmark init --config "$CONFIG" --run-id "$RUN_ID"
-RUN=/home/yangxuan/lio_benchmark_runs/green_house/$RUN_ID
 benchmark_base/bin/lio-benchmark snapshot --run "$RUN"
+benchmark_base/bin/lio-benchmark preflight \
+  --run "$RUN" \
+  --allow-diagnostic-calibration
+
+echo "preflight rc=$?"
 ```
 
-当前数据集 LiDAR–IMU calibration 仍是 diagnostic/unverified，因此 LIO smoke 要显式允许 diagnostic calibration：
+当前数据集 LiDAR–IMU calibration 仍是 diagnostic/unverified，因此 required gate 是：
+
+```text
+FAST-LIVO2 -> BLOCKED_CALIBRATION, runnable=true, diagnostic_only=true
+FAST-LIO2  -> BLOCKED_CALIBRATION, runnable=true, diagnostic_only=true
+KISS-ICP   -> PASS, runnable=true, diagnostic_only=false
+preflight rc=0
+```
+
+先只运行 KISS，证明它不依赖 caller 手工 source：
 
 ```bash
-for ALG in fast_livo2 fast_lio2 kiss_icp; do
+benchmark_base/bin/lio-benchmark run \
+  --run "$RUN" \
+  --algorithm kiss_icp \
+  --allow-diagnostic-calibration
+
+echo "kiss run rc=$?"
+```
+
+检查：
+
+```text
+metadata/algorithms/kiss_icp/runtime_identity.json
+metadata/run_kiss_icp.json
+raw/kiss_icp/
+```
+
+runtime identity 至少要求：
+
+```text
+identity_status = FROZEN
+runtime_package = kiss_icp
+runtime_package_prefix = /home/yangxuan/lio_benchmark_dependencies/kiss_icp_ws/install/kiss_icp
+runtime_overlays[0].setup_path = /home/yangxuan/lio_benchmark_dependencies/kiss_icp_ws/install/setup.bash
+runtime_overlays[0].setup_sha256 is non-empty
+runtime_overlays[0].setup_size_bytes > 0
+```
+
+目标机这道 gate 尚未完成前，不把 runtime overlays 写成真实机器 PASS。
+
+### 16.2. Full three-algorithm diagnostic smoke
+
+Fresh-shell KISS gate 成功后，才继续同一个新 run 的三个算法诊断回放：
+
+```bash
+for ALG in fast_livo2 fast_lio2; do
   benchmark_base/bin/lio-benchmark run \
     --run "$RUN" \
     --algorithm "$ALG" \
@@ -751,7 +863,9 @@ for ALG in fast_livo2 fast_lio2 kiss_icp; do
 done
 ```
 
-先把三个 run-local raw trajectory bag 标准化：
+KISS 已在 16.1 单独执行，不要在同一个 run 上重复执行，否则 immutable runtime identity 会正确拒绝重跑。
+
+把三个 run-local raw trajectory bag 标准化：
 
 ```bash
 for ALG in fast_livo2 fast_lio2 kiss_icp; do
@@ -790,6 +904,7 @@ Runtime + trajectory standardization gate 至少确认：
 
 ```text
 3 × runtime_identity.json exist
+KISS runtime overlay setup fingerprint is frozen
 3 × trajectory_standardization.json exist
 3 × standardized trajectory CSV exist and are non-empty
 FAST-LIO2 resolution_method = EXPLICIT_EXECUTABLE_OVERRIDE
@@ -827,6 +942,7 @@ frame audit remains independent
 startup
 full/partial bag consumption
 runtime identity
+runtime overlay evidence when declared
 trajectory standardization evidence
 trajectory monotonic timestamps
 NaN / Inf
