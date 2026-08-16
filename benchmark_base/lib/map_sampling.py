@@ -20,6 +20,32 @@ CSV_FIELDS = (
 
 
 @dataclass(frozen=True)
+class ScanWindow:
+    start_offset_s: float = 0.0
+    duration_s: float | None = None
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(float(self.start_offset_s)) or self.start_offset_s < 0:
+            raise ValueError("start_offset_s must be finite and >= 0")
+        if self.duration_s is not None:
+            if not math.isfinite(float(self.duration_s)) or self.duration_s <= 0:
+                raise ValueError("duration_s must be finite and > 0 when provided")
+
+
+def in_scan_window(
+    bag_record_time_s: float,
+    first_lidar_record_time_s: float,
+    window: ScanWindow,
+) -> bool:
+    relative = float(bag_record_time_s) - float(first_lidar_record_time_s)
+    if relative + 1e-12 < window.start_offset_s:
+        return False
+    if window.duration_s is None:
+        return True
+    return relative <= window.start_offset_s + window.duration_s + 1e-12
+
+
+@dataclass(frozen=True)
 class SelectedScan:
     scan_index: int
     timestamp_s: float
