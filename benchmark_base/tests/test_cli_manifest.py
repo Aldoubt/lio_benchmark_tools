@@ -10,8 +10,9 @@ from benchmark_base.lib.registry import Registry
 
 
 class ManifestTest(unittest.TestCase):
-    def test_v2_manifest_resolves_registry_records(self) -> None:
-        manifest = {
+    @staticmethod
+    def _v2_manifest() -> dict:
+        return {
             "schema_version": 2,
             "name": "unit",
             "workspace": "/tmp/workspace",
@@ -24,26 +25,77 @@ class ManifestTest(unittest.TestCase):
                 "trajectory_time_tolerance_s": 0.05,
             },
         }
+
+    def test_v2_manifest_resolves_registry_records(self) -> None:
+        manifest = self._v2_manifest()
         errors = validate_manifest(manifest, registry=Registry(), check_paths=False)
         self.assertEqual([], errors)
         resolved = resolve_manifest(manifest, Registry())
         self.assertEqual("example_mid360", resolved["dataset"]["dataset_id"])
         self.assertEqual(["fast_livo2", "point_lio"], resolved["algorithm_refs"])
 
-    def test_v2_unknown_algorithm_fails_closed(self) -> None:
-        manifest = {
-            "schema_version": 2,
-            "name": "unit",
-            "workspace": "/tmp/workspace",
-            "output_root": "/tmp/runs",
-            "dataset": "example_mid360",
-            "algorithms": ["missing_algorithm"],
-            "standardization": {
-                "map_voxel_m": 0.12,
-                "near_range_m": 0.5,
-                "trajectory_time_tolerance_s": 0.05,
-            },
+    def test_v2_replay_defaults_are_frozen(self) -> None:
+        manifest = self._v2_manifest()
+        resolved = resolve_manifest(manifest, Registry())
+        self.assertEqual(
+            {"rate": 1.0, "start_offset_s": 0.0, "duration_s": None},
+            resolved["replay"],
+        )
+        self.assertEqual({}, resolved["execution_overrides"])
+
+    def test_v2_accepts_selected_algorithm_executable_override(self) -> None:
+        manifest = self._v2_manifest()
+        manifest["execution_overrides"] = {
+            "fast_livo2": {"executable": "/tmp/fastlivo_mapping"}
         }
+        errors = validate_manifest(
+            manifest,
+            registry=Registry(),
+            check_paths=False,
+        )
+        self.assertEqual([], errors)
+        resolved = resolve_manifest(manifest, Registry())
+        self.assertEqual(
+            "/tmp/fastlivo_mapping",
+            resolved["execution_overrides"]["fast_livo2"]["executable"],
+        )
+
+    def test_v2_rejects_override_for_unselected_algorithm(self) -> None:
+        manifest = self._v2_manifest()
+        manifest["execution_overrides"] = {
+            "kiss_icp": {"executable": "/tmp/kiss_icp"}
+        }
+        errors = validate_manifest(manifest, registry=Registry(), check_paths=False)
+        self.assertIn(
+            "execution_overrides.kiss_icp references an unselected algorithm",
+            errors,
+        )
+
+    def test_v2_rejects_malformed_execution_override(self) -> None:
+        manifest = self._v2_manifest()
+        manifest["execution_overrides"] = {"fast_livo2": {"executable": ""}}
+        errors = validate_manifest(manifest, registry=Registry(), check_paths=False)
+        self.assertIn(
+            "execution_overrides.fast_livo2.executable must be a non-empty string",
+            errors,
+        )
+
+    def test_v2_rejects_invalid_replay_values(self) -> None:
+        cases = (
+            ({"rate": 0.0}, "replay.rate must be finite and > 0"),
+            ({"start_offset_s": -1.0}, "replay.start_offset_s must be finite and >= 0"),
+            ({"duration_s": 0.0}, "replay.duration_s must be null or finite and > 0"),
+        )
+        for replay, expected in cases:
+            with self.subTest(replay=replay):
+                manifest = self._v2_manifest()
+                manifest["replay"] = replay
+                errors = validate_manifest(manifest, registry=Registry(), check_paths=False)
+                self.assertIn(expected, errors)
+
+    def test_v2_unknown_algorithm_fails_closed(self) -> None:
+        manifest = self._v2_manifest()
+        manifest["algorithms"] = ["missing_algorithm"]
         errors = validate_manifest(manifest, registry=Registry(), check_paths=False)
         self.assertTrue(any("not found" in error for error in errors))
 
