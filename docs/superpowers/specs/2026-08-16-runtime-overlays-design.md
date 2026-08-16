@@ -84,7 +84,7 @@ estimator runner execution
 
 Overlay order is scientifically relevant and must be preserved exactly as frozen in the run manifest.
 
-The benchmark must not treat pre-existing interactive-shell `AMENT_PREFIX_PATH`, `CMAKE_PREFIX_PATH`, `LD_LIBRARY_PATH`, or `PATH` content as proof that an undeclared algorithm-specific overlay was part of the formal run. The formal runner rebuilds the intended ROS environment from the frozen contract before resolving package identity.
+The benchmark must not treat pre-existing interactive-shell `AMENT_PREFIX_PATH`, `CMAKE_PREFIX_PATH`, `LD_LIBRARY_PATH`, or `PATH` content as proof that an undeclared algorithm-specific overlay was part of the formal run. Formal preflight and formal execution rebuild the intended ROS environment from the frozen contract before resolving package identity.
 
 ## 5. Preflight Semantics
 
@@ -138,22 +138,23 @@ No runner may scan `/home`, build trees, `/tmp`, or arbitrary workspaces to disc
 
 `metadata/algorithms/<algorithm>/runtime_identity.json` is extended with the exact frozen runtime overlay evidence used by the estimator process.
 
-The identity records:
+Each declared setup script is fingerprinted immediately before estimator startup. The identity records, in frozen order:
 
 ```json
 "runtime_overlays": [
   {
     "setup_path": "/home/yangxuan/lio_benchmark_dependencies/kiss_icp_ws/install/setup.bash",
-    "prefix": "/home/yangxuan/lio_benchmark_dependencies/kiss_icp_ws/install/kiss_icp"
+    "setup_sha256": "<sha256>",
+    "setup_size_bytes": 1234
   }
 ]
 ```
 
-`setup_path` is the exact frozen setup script path.
+`setup_path` is the exact frozen setup-script path. `setup_sha256` and `setup_size_bytes` fingerprint the file that was actually sourced. A missing or unreadable setup file blocks before identity can be frozen as a successful execution identity.
 
-`prefix` is the resolved runtime package prefix when that overlay contributes the algorithm's registry-declared package. If an overlay does not itself own the target package, its `prefix` may be null; the final runtime package prefix remains separately recorded by the existing runtime identity package fields.
+The final registry-declared runtime package prefix continues to be recorded separately in the existing `runtime_package_prefix` field. This avoids guessing which individual overlay "owns" a package when multiple overlays are present.
 
-The existing runtime identity source/provenance fields continue to resolve the actual package prefix back to its source workspace/git repository when possible. For the KISS v1.3.0 persistent workspace, this allows the final identity to recover the checked-out git commit/tag instead of relying on the stale registry `local_path_hint`.
+The existing runtime identity source/provenance fields continue to resolve the final runtime package prefix back to its source workspace/git repository when possible. For the persistent KISS v1.3.0 workspace, this should recover the source checkout under `/home/yangxuan/lio_benchmark_dependencies/kiss_icp_ws/src/kiss-icp` rather than relying on the stale registry `local_path_hint`.
 
 Runtime identity remains immutable once written.
 
@@ -161,9 +162,9 @@ Runtime identity remains immutable once written.
 
 Introduce one ROS-independent manifest helper for normalized overlay data, and one shell-safe emission path used by runners.
 
-The existing `emit_runtime_env.py` is extended to emit the frozen overlay list for the selected algorithm in a shell-safe representation. Runners consume only that emitted frozen contract; they do not parse ad-hoc environment variables supplied by the user.
+The existing `emit_runtime_env.py` is extended to emit the frozen overlay list for the selected algorithm in a shell-safe representation. Runners consume only that emitted frozen contract; they do not parse ad-hoc overlay variables supplied by the user.
 
-Core manifest normalization and validation remain importable in CI without ROS installed.
+Formal preflight uses the same normalized overlay list and the same base-environment ordering as formal execution. The implementation may use a small sourced-shell probe to obtain the resulting Ament package facts, but the core manifest/adapters modules remain importable in CI without ROS installed.
 
 ## 9. Error Handling
 
@@ -204,13 +205,15 @@ TDD coverage must include:
 - manifest rejects relative, empty, duplicate, and malformed overlay declarations
 - resolution freezes overlay order exactly
 - shell environment emission preserves overlay order and paths
+- preflight and runner share the same normalized overlay order
 - runner structure sources frozen overlays before runtime identity freeze and estimator startup
 - missing frozen overlay is represented as a fail-closed environment condition
-- runtime identity includes exact setup paths and final package-prefix evidence
+- runtime identity includes exact setup paths and setup-file fingerprints
+- final runtime package prefix remains separately recorded
 - algorithms without runtime overlays preserve current behavior
 - current greenhouse smoke config freezes the persistent KISS v1.3.0 setup path
 
-Target-machine acceptance is separate from CI and must verify:
+Target-machine acceptance is separate from CI and must verify from a fresh shell that does not manually source the KISS workspace:
 
 ```text
 FAST-LIVO2 -> BLOCKED_CALIBRATION, runnable=true, diagnostic_only=true
@@ -219,7 +222,7 @@ KISS-ICP   -> PASS, runnable=true
 preflight rc=0
 ```
 
-Then a fresh run must prove KISS works without manually sourcing the KISS workspace in the invoking shell.
+Then a fresh run must prove KISS execution also succeeds without manually sourcing the KISS workspace in the invoking shell.
 
 ## 11. Non-Goals
 
@@ -243,7 +246,7 @@ The feature is complete when all of the following are true:
 2. Formal preflight and formal execution construct the same declared ROS overlay stack.
 3. KISS-ICP is runnable from a fresh shell without manually sourcing its workspace first.
 4. Missing/broken declared overlays fail closed as `BLOCKED_ENVIRONMENT`.
-5. Runtime identity records the exact overlay setup path(s) and resolved package evidence.
+5. Runtime identity records exact overlay setup path(s), setup-file fingerprints, and the existing final runtime package-prefix evidence.
 6. FAST-LIVO2 and FAST-LIO2 behavior is unchanged except for consuming the shared normalized contract infrastructure.
 7. Repository CI passes with no ROS installation required.
 8. The greenhouse three-algorithm runtime smoke config points to the persistent KISS v1.3.0 overlay under `/home/yangxuan/lio_benchmark_dependencies`, never `/tmp`.
