@@ -3,7 +3,8 @@
 
 The helpers here classify facts collected by an evaluator so a formal run
 cannot silently mix a declared implementation with a different package/source
-tree or frame contract.
+tree or frame contract. New runs prefer the identity frozen immediately before
+estimator startup; historical runs retain explicit reconstructed provenance.
 """
 from __future__ import annotations
 
@@ -78,6 +79,17 @@ def _normalize_expected_repository(value: str | None) -> str | None:
     return None
 
 
+def source_relationship(
+    expected_repository: str | None,
+    actual_repository: str | None,
+) -> str:
+    expected = _normalize_expected_repository(expected_repository)
+    actual = normalize_github_repository(actual_repository)
+    if expected is None or actual is None:
+        return "UNKNOWN_SOURCE"
+    return "REGISTRY_MATCH" if expected == actual else "REGISTRY_MISMATCH"
+
+
 def classify_runtime_provenance(
     *,
     expected_repository: str | None,
@@ -85,7 +97,7 @@ def classify_runtime_provenance(
     frame_status: str,
     ros_package_prefix: str | None,
 ) -> ProvenanceClassification:
-    """Classify whether a runtime implementation matches the frozen contract."""
+    """Classify legacy reconstructed runtime evidence against registry contract."""
     expected = _normalize_expected_repository(expected_repository)
     actual = normalize_github_repository(actual_repository)
 
@@ -114,34 +126,124 @@ def classify_runtime_provenance(
     return ProvenanceClassification(ProvenanceStatus.MATCH, ())
 
 
+def _frozen_identity_classification(
+    *,
+    identity: dict[str, Any],
+    frame_status: str,
+    relationship: str,
+) -> ProvenanceClassification:
+    if str(identity.get("identity_status", "")) != "FROZEN":
+        return ProvenanceClassification(
+            ProvenanceStatus.UNRESOLVED,
+            (f"runtime identity status is {identity.get('identity_status', 'UNKNOWN')}",),
+        )
+    if not identity.get("executable_sha256") and not identity.get("resolved_executable"):
+        # Registry launch identities may not have a hash if no package executable was
+        # resolvable. Exact launch command alone is useful, but not sufficient to call
+        # the implementation identity resolved.
+        return ProvenanceClassification(
+            ProvenanceStatus.UNRESOLVED,
+            ("frozen runtime identity has no resolved executable fingerprint",),
+        )
+    if frame_status != "MATCH":
+        return ProvenanceClassification(
+            ProvenanceStatus.FRAME_CONTRACT_MISMATCH,
+            (f"runtime frame contract status is {frame_status}",),
+        )
+    method = str(identity.get("resolution_method", ""))
+    if method == "EXPLICIT_EXECUTABLE_OVERRIDE":
+        # A user-selected binary is valid when it is exactly fingerprinted. Its
+        # relationship to the registry remains a separate descriptive dimension.
+        return ProvenanceClassification(ProvenanceStatus.MATCH, ())
+    if relationship == "REGISTRY_MISMATCH":
+        return ProvenanceClassification(
+            ProvenanceStatus.SOURCE_MISMATCH,
+            ("registry-default execution resolved to a different source repository",),
+        )
+    if relationship == "UNKNOWN_SOURCE":
+        return ProvenanceClassification(
+            ProvenanceStatus.UNRESOLVED,
+            ("registry-default execution source relationship is unknown",),
+        )
+    return ProvenanceClassification(ProvenanceStatus.MATCH, ())
+
+
 def build_runtime_provenance_record(
     *,
     algorithm: dict[str, Any],
     frame_audit: dict[str, Any],
     ros_package_prefix: str | None,
     source_state: dict[str, Any] | None,
+    runtime_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Combine frozen algorithm semantics with runtime facts into one record."""
+    """Combine algorithm semantics with highest-confidence runtime evidence."""
     implementation = algorithm.get("execution_implementation", {})
     if not isinstance(implementation, dict):
         implementation = {}
     contract = algorithm.get("trajectory_contract", {})
     frame_result = classify_frame_audit(contract, frame_audit)
-    source_state = source_state or {}
-
     expected_repository = implementation.get("repository")
-    remote_origin = source_state.get("remote_origin")
-    classification = classify_runtime_provenance(
-        expected_repository=str(expected_repository) if expected_repository else None,
-        actual_repository=str(remote_origin) if remote_origin else None,
-        frame_status=frame_result.status.value,
-        ros_package_prefix=ros_package_prefix,
+
+    frozen = (
+        runtime_identity
+        if isinstance(runtime_identity, dict)
+        and str(runtime_identity.get("identity_status", "")) == "FROZEN"
+        else None
     )
+    if frozen is not None:
+        identity_source = frozen.get("source", {})
+        identity_source = identity_source if isinstance(identity_source, dict) else {}
+        remote_origin = identity_source.get("remote_origin")
+        relationship = str(frozen.get("source_relationship", "")).strip() or source_relationship(
+            str(expected_repository) if expected_repository else None,
+            str(remote_origin) if remote_origin else None,
+        )
+        runtime_prefix = (
+            frozen.get("runtime_package_prefix")
+            or frozen.get("ros_package_prefix")
+            or ros_package_prefix
+        )
+        classification = _frozen_identity_classification(
+            identity=frozen,
+            frame_status=frame_result.status.value,
+            relationship=relationship,
+        )
+        effective_source = identity_source
+        evidence_source = "RUNTIME_IDENTITY"
+        resolution_method = frozen.get("resolution_method")
+        resolved_executable = frozen.get("resolved_executable")
+        executable_sha256 = frozen.get("executable_sha256")
+        runtime_package = frozen.get("runtime_package") or frozen.get("ros_package")
+    else:
+        effective_source = source_state or {}
+        remote_origin = effective_source.get("remote_origin")
+        relationship = source_relationship(
+            str(expected_repository) if expected_repository else None,
+            str(remote_origin) if remote_origin else None,
+        )
+        runtime_prefix = ros_package_prefix
+        classification = classify_runtime_provenance(
+            expected_repository=str(expected_repository) if expected_repository else None,
+            actual_repository=str(remote_origin) if remote_origin else None,
+            frame_status=frame_result.status.value,
+            ros_package_prefix=runtime_prefix,
+        )
+        evidence_source = "LEGACY_RECONSTRUCTED"
+        resolution_method = None
+        resolved_executable = None
+        executable_sha256 = None
+        runtime_package = implementation.get("package")
 
     return {
         "algorithm_id": str(algorithm.get("algorithm_id", "")),
         "status": classification.status.value,
         "reasons": list(classification.reasons),
+        "identity_evidence_source": evidence_source,
+        "runtime_identity_status": frozen.get("identity_status") if frozen else None,
+        "resolution_method": resolution_method,
+        "resolved_executable": resolved_executable,
+        "executable_sha256": executable_sha256,
+        "source_relationship": relationship,
         "frame_contract_status": frame_result.status.value,
         "frame_contract_reasons": list(frame_result.reasons),
         "tracked_frame_physical": contract.get("tracked_frame_physical", "UNKNOWN"),
@@ -153,11 +255,12 @@ def build_runtime_provenance_record(
             str(remote_origin) if remote_origin else None
         ),
         "execution_package": implementation.get("package"),
+        "runtime_package": runtime_package,
         "execution_executable": implementation.get("executable"),
-        "ros_package_prefix": ros_package_prefix,
-        "source_path": source_state.get("path"),
+        "ros_package_prefix": runtime_prefix,
+        "source_path": effective_source.get("path"),
         "source_remote_origin": remote_origin,
-        "source_commit": source_state.get("commit"),
-        "source_branch": source_state.get("branch"),
-        "source_dirty": source_state.get("dirty"),
+        "source_commit": effective_source.get("commit"),
+        "source_branch": effective_source.get("branch"),
+        "source_dirty": effective_source.get("dirty"),
     }
