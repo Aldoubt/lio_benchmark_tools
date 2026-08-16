@@ -4,6 +4,7 @@ import unittest
 
 from benchmark_base.lib.trajectory_semantics import (
     FrameAuditStatus,
+    audit_semantic_labels,
     classify_frame_audit,
 )
 
@@ -57,6 +58,17 @@ class TrajectorySemanticsContractTest(unittest.TestCase):
         }
         result = classify_frame_audit(contract, audit)
         self.assertEqual(FrameAuditStatus.MATCH, result.status)
+
+    def test_audit_labels_use_physical_tracked_frame_and_world_gauge(self) -> None:
+        self.assertEqual(
+            ("IMU_BODY", "GRAVITY_ALIGNED"),
+            audit_semantic_labels(
+                {
+                    "tracked_frame_physical": "IMU_BODY",
+                    "world_gauge": "GRAVITY_ALIGNED",
+                }
+            ),
+        )
 
     def test_unavailable_audit_remains_unavailable(self) -> None:
         result = classify_frame_audit(
