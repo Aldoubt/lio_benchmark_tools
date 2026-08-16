@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Runtime implementation provenance classification for benchmark baselines.
 
-The helpers here do not discover a local workspace themselves. They classify
-facts collected by an evaluator so a formal run cannot silently mix a declared
-implementation with a different package/source tree or frame contract.
+The helpers here classify facts collected by an evaluator so a formal run
+cannot silently mix a declared implementation with a different package/source
+tree or frame contract.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -52,6 +53,17 @@ def normalize_github_repository(remote: str | None) -> str | None:
     if len(parts) != 2:
         return None
     return f"{parts[0]}/{parts[1]}"
+
+
+def workspace_from_package_prefix(prefix: str | None) -> Path | None:
+    """Recover a colcon workspace root from an install-space package prefix."""
+    if not prefix:
+        return None
+    path = Path(prefix).expanduser()
+    for candidate in (path, *path.parents):
+        if candidate.name == "install":
+            return candidate.parent
+    return None
 
 
 def _normalize_expected_repository(value: str | None) -> str | None:
