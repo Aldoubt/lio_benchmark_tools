@@ -19,8 +19,19 @@ if str(MODULE_ROOT) not in sys.path:
 
 from benchmark_base.lib.adapters import collect_algorithm, preflight_algorithm, prepare_algorithm  # noqa: E402
 from benchmark_base.lib.diagnostic_bundle import create_diagnostic_bundle  # noqa: E402
+from benchmark_base.lib.execution_contract import (  # noqa: E402
+    ExecutionContractError,
+    build_blocked_runtime_identity,
+    runtime_identity_path,
+    write_runtime_identity,
+)
 from benchmark_base.lib.live_debug import append_marker, prepare_session  # noqa: E402
-from benchmark_base.lib.manifest import load_json, resolve_manifest, validate_manifest  # noqa: E402
+from benchmark_base.lib.manifest import (  # noqa: E402
+    load_json,
+    normalized_replay,
+    resolve_manifest,
+    validate_manifest,
+)
 from benchmark_base.lib.registry import Registry, RegistryError  # noqa: E402
 from benchmark_base.lib.ros_workspace import build_sourced_python_command  # noqa: E402
 
@@ -272,6 +283,12 @@ def cmd_preflight(args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
 
+def _write_run_status(run: Path, algorithm_id: str, payload: dict[str, Any]) -> Path:
+    path = run / "metadata" / f"run_{algorithm_id}.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def execute_algorithm(
     run: Path,
     manifest: dict[str, Any],
@@ -279,6 +296,31 @@ def execute_algorithm(
     *,
     allow_diagnostic_calibration: bool = False,
 ) -> int:
+    existing_identity = runtime_identity_path(run, algorithm_id)
+    if existing_identity.exists():
+        reason = (
+            "BLOCKED_EXECUTION: runtime identity already exists; "
+            f"create a new run id: {existing_identity}"
+        )
+        _write_run_status(
+            run,
+            algorithm_id,
+            {
+                "algorithm_id": algorithm_id,
+                "started_at": None,
+                "finished_at": now_iso(),
+                "command": None,
+                "returncode": None,
+                "status": "BLOCKED_EXECUTION",
+                "diagnostic_only": False,
+                "reasons": [reason],
+                "log": None,
+                "raw_output": str(run / "raw" / algorithm_id),
+            },
+        )
+        print(f"{algorithm_id}: {reason}", file=sys.stderr)
+        return 2
+
     preflight = preflight_algorithm(
         manifest,
         algorithm_id,
@@ -286,9 +328,19 @@ def execute_algorithm(
         allow_diagnostic_calibration=allow_diagnostic_calibration,
     )
     _write_preflight(run, algorithm_id, preflight.to_dict())
-    status_path = run / "metadata" / f"run_{algorithm_id}.json"
     log_path = run / "logs" / f"run_{algorithm_id}.log"
     if not preflight.runnable:
+        if preflight.status == "BLOCKED_EXECUTION":
+            reason = "; ".join(preflight.reasons) or "BLOCKED_EXECUTION"
+            blocked_identity = build_blocked_runtime_identity(
+                manifest=manifest,
+                algorithm_id=algorithm_id,
+                reason=reason,
+            )
+            try:
+                write_runtime_identity(run, algorithm_id, blocked_identity)
+            except ExecutionContractError as exc:
+                reason = f"{reason}; {exc}"
         payload = {
             "algorithm_id": algorithm_id,
             "started_at": None,
@@ -301,7 +353,7 @@ def execute_algorithm(
             "log": None,
             "raw_output": str(run / "raw" / algorithm_id),
         }
-        status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _write_run_status(run, algorithm_id, payload)
         print(f"{algorithm_id}: {preflight.status}: {'; '.join(preflight.reasons)}", file=sys.stderr)
         return 2
 
@@ -315,16 +367,23 @@ def execute_algorithm(
     command = algorithm_command(run, manifest, algorithm_id)
     started = now_iso()
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    replay = normalized_replay(manifest)
+    duration = "" if replay["duration_s"] is None else str(replay["duration_s"])
     env = os.environ.copy()
     env.update(
         {
             "WORKSPACE": str(Path(manifest["workspace"]).expanduser()),
-            "BAG_PLAY_RATE": env.get("BAG_PLAY_RATE", "1.0"),
             "BENCHMARK_ROOT": str(MODULE_ROOT),
             "BENCHMARK_RUN_DIR": str(run),
             "BENCHMARK_DATASET_ID": str(manifest["dataset"].get("dataset_id", "legacy_v1_dataset")),
             "BENCHMARK_ALGORITHM_ID": algorithm_id,
             "BENCHMARK_GENERATED_CONFIG_DIR": str(prepared.generated_config_dir),
+            "BENCHMARK_REPLAY_RATE": str(replay["rate"]),
+            "BENCHMARK_REPLAY_START_OFFSET_S": str(replay["start_offset_s"]),
+            "BENCHMARK_REPLAY_DURATION_S": duration,
+            "BAG_PLAY_RATE": str(replay["rate"]),
+            "BAG_START_OFFSET": str(replay["start_offset_s"]),
+            "BAG_DURATION": duration,
         }
     )
     with log_path.open("w", encoding="utf-8") as stream:
@@ -351,7 +410,7 @@ def execute_algorithm(
         "raw_output": str(run / "raw" / algorithm_id),
         "collection": collection.to_dict(),
     }
-    status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_run_status(run, algorithm_id, payload)
     print(f"{algorithm_id}: {payload['status']} returncode={result.returncode} diagnostic_only={preflight.diagnostic_only}")
     return result.returncode
 
