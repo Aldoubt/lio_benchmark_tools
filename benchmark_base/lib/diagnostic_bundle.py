@@ -64,8 +64,7 @@ def _algorithm_ids(manifest: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _safe_relative_file(run: Path, relative: str) -> bool:
-    path = run / relative
-    return path.is_file()
+    return (run / relative).is_file()
 
 
 def _existing_glob(run: Path, pattern: str) -> tuple[str, ...]:
@@ -117,8 +116,6 @@ def collect_bundle_files(
         else:
             missing.add(relative)
 
-    # Historical diagnostics remain useful when present, but a modern
-    # Relative SE(3) acceptance run does not require them.
     for relative in LEGACY_OPTIONAL_ARTIFACTS:
         if _safe_relative_file(run, relative):
             included.add(relative)
@@ -128,9 +125,6 @@ def collect_bundle_files(
     ):
         included.update(_existing_glob(run, pattern))
 
-    # Relative SE(3) is an optional derived diagnostic. Include its complete
-    # small evidence set when present, but do not mark it missing for legacy
-    # runs that predate the comparison stage.
     for relative in RELATIVE_SE3_ARTIFACTS:
         if _safe_relative_file(run, relative):
             included.add(relative)
@@ -222,6 +216,9 @@ def _summary_text(run: Path, manifest: dict[str, Any], selection: BundleSelectio
     algorithms = _algorithm_ids(manifest)
     provenance_path = run / "metrics/runtime_provenance.csv"
     provenance = _read_csv_field(provenance_path, "status")
+    source_reproducibility = _read_csv_field(
+        provenance_path, "source_reproducibility_status"
+    )
     frame_contract = _read_csv_field(provenance_path, "frame_contract_status")
     frame_evidence = _read_csv_field(run / "metrics/trajectory_frame_audit.csv", "status")
     lines = [
@@ -245,6 +242,7 @@ def _summary_text(run: Path, manifest: dict[str, Any], selection: BundleSelectio
         lines.append(
             f"{algorithm_id}: runtime identity: {identity_status}; "
             f"runtime provenance: {provenance.get(algorithm_id, 'UNAVAILABLE')}; "
+            f"source reproducibility: {source_reproducibility.get(algorithm_id, 'UNAVAILABLE')}; "
             f"frame evidence: {frame_evidence.get(algorithm_id, 'UNAVAILABLE')}; "
             f"frame contract: {frame_contract.get(algorithm_id, 'UNAVAILABLE')}"
         )
@@ -297,8 +295,6 @@ def create_diagnostic_bundle(
     if not isinstance(manifest, dict):
         raise ValueError("run manifest root must be an object")
 
-    # The archived status must reflect the evidence that is actually being
-    # packaged, not the initialization template left behind by `init`.
     refresh_run_status(run, manifest, bundle_will_exist=True)
     selection = collect_bundle_files(run, manifest, include_reports)
     repository_root = Path(repository_root).resolve()
