@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 from benchmark_base.lib.manifest import resolve_manifest, validate_manifest
 from benchmark_base.lib.registry import Registry
@@ -75,6 +78,17 @@ class ManifestTest(unittest.TestCase):
         }
         self.assertEqual([], validate_manifest(manifest, check_paths=False))
         self.assertEqual(manifest, resolve_manifest(manifest))
+
+    def test_report_cli_exposes_warmup_option(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            [sys.executable, str(root / "benchmark_base/bin/lio-benchmark"), "report", "--help"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("--warmup-s", result.stdout)
 
 
 if __name__ == "__main__":
