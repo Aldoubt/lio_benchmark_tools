@@ -5,7 +5,7 @@
 This note follows the real three-algorithm smoke run:
 
 ```text
-/tmp/lio_benchmark_runs/green_house_three_smoke_004
+/home/yangxuan/lio_benchmark_runs/green_house/green_house_three_smoke_004
 ```
 
 The dataset is a handheld MID360 recording and the sensor had a non-level initial attitude. Therefore a physically meaningful gravity-aligned estimator is expected to preserve a non-zero initial roll/pitch rather than necessarily starting at identity.
@@ -149,7 +149,7 @@ cd /home/yangxuan/lio_benchmark_tools
 git checkout feat/lio-baseline-suite
 git pull --ff-only
 
-RUN=/tmp/lio_benchmark_runs/green_house_three_smoke_004
+RUN=/home/yangxuan/lio_benchmark_runs/green_house/green_house_three_smoke_004
 
 benchmark_base/bin/lio-benchmark audit trajectory-frames \
   --run "$RUN" \
@@ -158,6 +158,16 @@ benchmark_base/bin/lio-benchmark audit trajectory-frames \
 benchmark_base/bin/lio-benchmark audit runtime-provenance \
   --run "$RUN" \
   --algorithms fast_livo2 fast_lio2 kiss_icp
+```
+
+For a 15 s smoke, rebuild the Common Scan Manifest for the actual replay window before regenerating maps:
+
+```bash
+benchmark_base/bin/lio-benchmark standardize scan-manifest \
+  --run "$RUN" \
+  --start-offset-s 0 \
+  --duration-s 15 \
+  --overwrite
 ```
 
 Then regenerate Unified Maps with tracked-frame-aware reconstruction:
@@ -170,7 +180,7 @@ for ALG in fast_livo2 fast_lio2 kiss_icp; do
 done
 ```
 
-Finally regenerate the diagnostic report:
+Finally regenerate the diagnostic report when visual review is needed:
 
 ```bash
 benchmark_base/bin/lio-benchmark report \
@@ -179,7 +189,33 @@ benchmark_base/bin/lio-benchmark report \
   --warmup-s 0
 ```
 
-## 8. Gate before relative-SE3 or gravity-normalized comparison
+## 8. Package one diagnostic bundle for review
+
+After the audit/standardization steps, package the small evidence required for review into one archive:
+
+```bash
+benchmark_base/bin/lio-benchmark bundle --run "$RUN"
+```
+
+Default output:
+
+```text
+$RUN/reports/bundles/green_house_three_smoke_004_diagnostic_bundle.tar.gz
+```
+
+The default bundle includes the frozen manifest, audit CSV/JSON files, scan-manifest metadata, per-algorithm Unified Map metadata, and archive-local Git HEAD/status/diff evidence. It deliberately excludes `raw/`, rosbag databases, `.ply`/`.pcd` maps, report files, and PNG figures.
+
+When report HTML/Markdown and diagnostic PNGs are also needed:
+
+```bash
+benchmark_base/bin/lio-benchmark bundle \
+  --run "$RUN" \
+  --include-reports
+```
+
+Bundling does not rerun algorithms, standardization, or reporting. It does not modify existing run artifacts or local source changes; the only filesystem output is the requested `.tar.gz` archive.
+
+## 9. Gate before relative-SE3 or gravity-normalized comparison
 
 Do not add a full `START_SE3` alignment yet.
 
