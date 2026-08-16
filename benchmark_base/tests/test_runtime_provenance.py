@@ -4,6 +4,7 @@ import unittest
 
 from benchmark_base.lib.runtime_provenance import (
     ProvenanceStatus,
+    build_runtime_provenance_record,
     classify_runtime_provenance,
     normalize_github_repository,
 )
@@ -60,6 +61,47 @@ class RuntimeProvenanceTest(unittest.TestCase):
         )
         self.assertEqual(ProvenanceStatus.UNRESOLVED, result.status)
         self.assertIn("declared execution repository", result.reasons[0])
+
+    def test_record_uses_execution_implementation_not_algorithm_paper_source(self) -> None:
+        algorithm = {
+            "algorithm_id": "fast_lio2",
+            "source": {"repository": "hku-mars/FAST_LIO"},
+            "execution_implementation": {
+                "repository": "Franklif1/Fast_LIO2_ROS2",
+                "package": "fast_lio",
+                "executable": "fastlio_mapping",
+            },
+            "trajectory_contract": {
+                "pose_semantics": "T_PARENT_TRACKED",
+                "tracked_frame_physical": "IMU_BODY",
+                "world_gauge": "INITIAL_BODY_ALIGNED",
+                "expected_parent_frames": ["camera_init"],
+                "expected_child_frames": ["body"],
+            },
+        }
+        frame_audit = {
+            "status": "AVAILABLE",
+            "parent_frame_ids": ["odom"],
+            "child_frame_ids": ["sensor"],
+        }
+        source_state = {
+            "remote_origin": "https://github.com/Franklif1/Fast_LIO2_ROS2.git",
+            "commit": "abc123",
+            "branch": "ros2",
+            "dirty": False,
+            "path": "/workspace/src/Fast_LIO2_ROS2",
+        }
+        record = build_runtime_provenance_record(
+            algorithm=algorithm,
+            frame_audit=frame_audit,
+            ros_package_prefix="/workspace/install/fast_lio",
+            source_state=source_state,
+        )
+        self.assertEqual("Franklif1/Fast_LIO2_ROS2", record["expected_execution_repository"])
+        self.assertEqual("Franklif1/Fast_LIO2_ROS2", record["actual_execution_repository"])
+        self.assertEqual("FRAME_LABEL_MISMATCH", record["frame_contract_status"])
+        self.assertEqual("FRAME_CONTRACT_MISMATCH", record["status"])
+        self.assertEqual("abc123", record["source_commit"])
 
 
 if __name__ == "__main__":
