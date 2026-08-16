@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 
@@ -37,6 +38,55 @@ class TrajectoryCoverageCliTest(unittest.TestCase):
         self.assertEqual("trajectory-coverage", args.audit_command)
         self.assertEqual(["fast_livo2", "fast_lio2", "kiss_icp"], args.algorithms)
         self.assertEqual("cmd_audit_trajectory_coverage", args.func.__name__)
+
+    def test_coverage_handler_uses_ros_workspace_runner(self) -> None:
+        module = self._load_cli()
+        run = Path("/persistent/run")
+        manifest = {"workspace": "/persistent/workspace", "algorithms": {"kiss_icp": {}}}
+        calls: dict[str, object] = {}
+
+        original_resolve_run = module._core.resolve_run
+        original_run_python_ros = module._core.run_python_ros
+        original_subprocess_run = module.subprocess.run
+
+        def fake_resolve_run(path: Path):
+            calls["resolved"] = path
+            return run, manifest
+
+        def fake_run_python_ros(
+            resolved_run: Path,
+            resolved_manifest: dict,
+            script: str,
+            arguments: list[str],
+        ) -> None:
+            calls["ros"] = (resolved_run, resolved_manifest, script, arguments)
+
+        def forbidden_subprocess_run(*args, **kwargs):
+            raise AssertionError("trajectory coverage must use the shared ROS workspace runner")
+
+        module._core.resolve_run = fake_resolve_run
+        module._core.run_python_ros = fake_run_python_ros
+        module.subprocess.run = forbidden_subprocess_run
+        try:
+            code = module.cmd_audit_trajectory_coverage(
+                SimpleNamespace(run=run, algorithms=["kiss_icp"])
+            )
+        finally:
+            module._core.resolve_run = original_resolve_run
+            module._core.run_python_ros = original_run_python_ros
+            module.subprocess.run = original_subprocess_run
+
+        self.assertEqual(0, code)
+        self.assertEqual(run, calls["resolved"])
+        self.assertEqual(
+            (
+                run,
+                manifest,
+                "evaluators/audit_trajectory_coverage.py",
+                ["--run", str(run), "--algorithms", "kiss_icp"],
+            ),
+            calls["ros"],
+        )
 
     def test_kiss_runner_records_converter_boundary_for_diagnostics(self) -> None:
         root = Path(__file__).resolve().parents[2]
