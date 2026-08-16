@@ -32,15 +32,17 @@ _core = _load_core()
 
 
 def cmd_audit_trajectory_coverage(args: argparse.Namespace) -> int:
-    command = [
-        sys.executable,
-        str(MODULE_ROOT / "evaluators/audit_trajectory_coverage.py"),
-        "--run",
-        str(args.run),
-    ]
+    run, manifest = _core.resolve_run(args.run)
+    arguments = ["--run", str(run)]
     if args.algorithms:
-        command.extend(["--algorithms", *args.algorithms])
-    return subprocess.run(command, cwd=MODULE_ROOT, check=False).returncode
+        arguments.extend(["--algorithms", *args.algorithms])
+    _core.run_python_ros(
+        run,
+        manifest,
+        "evaluators/audit_trajectory_coverage.py",
+        arguments,
+    )
+    return 0
 
 
 def _subparser_action(parser: argparse.ArgumentParser, dest: str):
