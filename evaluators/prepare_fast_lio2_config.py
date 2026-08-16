@@ -7,8 +7,15 @@ import json
 from pathlib import Path
 
 
+def float_scalar(value: float) -> str:
+    text = f"{float(value):.17g}"
+    if "." not in text and "e" not in text.lower():
+        text += ".0"
+    return text
+
+
 def fmt(values: list[float]) -> str:
-    return "[" + ", ".join(f"{float(v):.17g}" for v in values) + "]"
+    return "[" + ", ".join(float_scalar(v) for v in values) + "]"
 
 
 def main() -> int:
