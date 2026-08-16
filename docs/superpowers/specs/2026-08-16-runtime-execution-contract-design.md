@@ -16,7 +16,7 @@ The immediate motivating case is FAST-LIO2, whose green-house smoke used a local
 4. Make runtime provenance consume run-time frozen facts first and use post-run reconstruction only for legacy runs.
 5. Preserve existing manifests and registry-default execution behavior when no override is configured.
 6. Fail closed when an explicit override cannot be executed.
-7. Keep algorithm identity, runtime implementation identity, and scientific evaluation status as separate concepts.
+7. Keep algorithm identity, execution resolution, source provenance, frame semantics, and scientific evaluation status as separate concepts.
 
 ## 3. Non-goals
 
@@ -97,6 +97,8 @@ Contract:
 
 The replay block becomes part of the frozen run manifest during `lio-benchmark init`.
 
+For a schema-v2 frozen run, this block is authoritative. Ad-hoc shell variables such as `BAG_PLAY_RATE`, `BAG_START_OFFSET`, or `BAG_DURATION` MUST NOT override it. Compatibility environment variables may still be exported to existing runners, but their values are derived from the frozen run manifest.
+
 ## 5. Execution Resolution
 
 Runtime executable resolution has exactly two allowed paths:
@@ -140,7 +142,11 @@ Immediately before starting the estimator process, the benchmark writes:
 metadata/algorithms/<algorithm_id>/runtime_identity.json
 ```
 
-The file represents run-time facts and is immutable evidence for that run. Re-running an already completed algorithm must not silently overwrite a prior runtime identity without the existing run-overwrite policy explicitly permitting it.
+The artifact is run-time evidence for that run.
+
+If a `FROZEN` runtime identity already exists for the same algorithm in the run, `lio-benchmark run` MUST refuse to execute that algorithm again and instruct the user to create a new run ID. This phase deliberately chooses reproducibility over in-place rerun convenience.
+
+If execution resolution fails during an actual `run` attempt, the benchmark writes the same artifact with `identity_status = BLOCKED_EXECUTION` and a machine-readable reason, then does not start the estimator. A standalone `preflight` reports the blocker in preflight metadata but does not create a runtime identity because no execution attempt occurred.
 
 Minimum schema:
 
@@ -150,14 +156,16 @@ Minimum schema:
   "algorithm_id": "fast_lio2",
   "captured_at": "...",
   "identity_status": "FROZEN",
+  "blocking_reason": null,
   "resolution_method": "EXPLICIT_EXECUTABLE_OVERRIDE",
   "requested_executable": "/home/yangxuan/RM-NAV/build/fast_lio/fastlio_mapping",
   "resolved_executable": "/home/yangxuan/RM-NAV/build/fast_lio/fastlio_mapping",
   "executable_sha256": "...",
   "executable_size_bytes": 0,
   "executable_mtime_ns": 0,
-  "ros_package": "fast_lio",
-  "ros_package_prefix": null,
+  "registry_package": "fast_lio",
+  "runtime_package": null,
+  "runtime_package_prefix": null,
   "source": {
     "path": null,
     "git_root": null,
@@ -167,7 +175,7 @@ Minimum schema:
     "dirty": null
   },
   "registry_execution_implementation": {},
-  "provenance_relationship": "EXPLICIT_OVERRIDE",
+  "source_relationship": "UNKNOWN_SOURCE",
   "launch_mode": "DIRECT_EXECUTABLE",
   "effective_command": [],
   "effective_config": {
@@ -191,9 +199,9 @@ Minimum schema:
 
 Optional values remain null when they cannot be proven. Unknown values are never guessed.
 
-## 7. Identity and Provenance Status
+## 7. Status Dimensions
 
-Two separate status dimensions are required.
+Execution method and source provenance are separate dimensions.
 
 ### 7.1. `identity_status`
 
@@ -208,19 +216,40 @@ BLOCKED_EXECUTION
 
 `BLOCKED_EXECUTION` means the requested execution contract cannot be satisfied; the estimator must not start.
 
-### 7.2. `provenance_relationship`
+### 7.2. `resolution_method`
+
+Allowed values:
+
+```text
+EXPLICIT_EXECUTABLE_OVERRIDE
+REGISTRY_DEFAULT_EXECUTION
+```
+
+This records how the executable/launch identity was selected.
+
+An explicit override is valid by design. It is not itself an error or a scientific accuracy grade.
+
+### 7.3. `source_relationship`
 
 Allowed initial values:
 
 ```text
 REGISTRY_MATCH
-EXPLICIT_OVERRIDE
+REGISTRY_MISMATCH
 UNKNOWN_SOURCE
 ```
 
-These are descriptive, not accuracy grades.
+This records whether the actual runtime source can be proven to correspond to the registry-declared execution implementation.
 
-`EXPLICIT_OVERRIDE` is valid by design. It does not mean the run is scientifically invalid; it means the run did not use the registry-default implementation identity and therefore the exact runtime binary must be cited from `runtime_identity.json`.
+For a standalone override whose binary is fully fingerprinted but whose source repository cannot be proven:
+
+```text
+identity_status = FROZEN
+resolution_method = EXPLICIT_EXECUTABLE_OVERRIDE
+source_relationship = UNKNOWN_SOURCE
+```
+
+This is a valid diagnostic execution identity.
 
 ## 8. Binary Fingerprint
 
@@ -245,21 +274,16 @@ Source discovery is best-effort metadata after the executable itself has been id
 
 Possible evidence sources include:
 
-1. ROS package prefix when available;
+1. ROS package prefix when provable;
 2. colcon workspace package source mapping;
 3. a known registry local source hint;
 4. a git repository containing a resolved source candidate.
 
+The registry package name and a runtime-proven package name are stored separately. A package value copied from the registry MUST NOT be presented as an observed runtime fact.
+
 The benchmark may record git root, remote, commit, branch, and dirty state when provable.
 
-Failure to map an executable back to source code does not erase the binary fingerprint. Such a run can remain:
-
-```text
-identity_status = FROZEN
-provenance_relationship = UNKNOWN_SOURCE or EXPLICIT_OVERRIDE
-```
-
-This distinction is important for standalone locally built executables.
+Failure to map an executable back to source code does not erase the binary fingerprint.
 
 ## 10. FAST-LIO2 Direct Override Contract
 
@@ -300,6 +324,8 @@ BENCHMARK_REPLAY_DURATION_S            # empty/unset for full remaining bag
 
 Existing variables such as `WORKSPACE`, `BENCHMARK_RUN_DIR`, and `BENCHMARK_GENERATED_CONFIG_DIR` remain supported.
 
+For compatibility, existing variables such as `BAG_PLAY_RATE` may continue to be exported, but they are assigned from the frozen replay contract rather than read as higher-priority user overrides.
+
 Runners consume these values; they do not independently reinterpret the source manifest.
 
 ## 12. Replay Contract
@@ -309,8 +335,8 @@ All benchmark runners use the same frozen replay configuration.
 Equivalent ROS2 bag play semantics:
 
 ```text
-rate            -> ros2 bag play --rate
-start_offset_s  -> ros2 bag play --start-offset
+rate             -> ros2 bag play --rate
+start_offset_s   -> ros2 bag play --start-offset
 optional duration -> stop playback after the configured replay interval
 ```
 
@@ -364,9 +390,10 @@ Runtime executable identity and frame semantics remain separate gates.
 Example:
 
 ```text
-binary identity = FROZEN / EXPLICIT_OVERRIDE
-frame audit      = odom -> sensor
-registry frame   = camera_init -> body
+identity_status      = FROZEN
+resolution_method    = EXPLICIT_EXECUTABLE_OVERRIDE
+frame audit          = odom -> sensor
+registry frame       = camera_init -> body
 ```
 
 This remains a frame-contract mismatch even though the executable itself is now known exactly.
@@ -377,7 +404,7 @@ Freezing the binary lets the mismatch be investigated against the correct implem
 
 A failed explicit execution contract must not be reported as an algorithm failure.
 
-Recommended execution blocker:
+The preflight/run blocker is:
 
 ```text
 BLOCKED_EXECUTION
@@ -400,9 +427,11 @@ BLOCKED_INPUT
 BLOCKED_DEPENDENCY
 ```
 
+The adapter/preflight status contract is extended to recognize `BLOCKED_EXECUTION` as a first-class blocking status.
+
 ## 17. Diagnostic Bundle Integration
 
-`lio-benchmark bundle` should include any existing:
+`lio-benchmark bundle` includes any existing:
 
 ```text
 metadata/algorithms/<algorithm>/runtime_identity.json
@@ -441,7 +470,7 @@ Algorithms other than those explicitly adapted for direct executable override re
 
 The executable override is an explicit local execution request. The benchmark does not download executables or discover arbitrary files.
 
-The implementation should avoid shell-string execution for the override itself. Construct argv explicitly and preserve the resolved executable as one argument.
+The implementation must avoid shell-string execution for the override itself. Construct argv explicitly and preserve the resolved executable as one argument.
 
 Runtime identity capture is read-only with respect to the executable and source tree.
 
@@ -461,16 +490,19 @@ Runtime identity capture is read-only with respect to the executable and source 
 - missing explicit executable returns `BLOCKED_EXECUTION`;
 - non-executable override returns `BLOCKED_EXECUTION`;
 - explicit override never falls back silently;
-- no-override path preserves registry-default execution.
+- no-override path preserves registry-default execution;
+- a pre-existing `FROZEN` runtime identity blocks in-place re-execution.
 
 ### Runtime identity tests
 
 - realpath is frozen;
 - SHA256 is deterministic;
 - file size/mtime are recorded;
+- registry package and runtime-observed package are not conflated;
 - generated config hash is recorded when present;
 - unknown source provenance stays unknown rather than guessed;
-- artifact is written before estimator process execution.
+- artifact is written before estimator process execution;
+- a failed run attempt writes `BLOCKED_EXECUTION` identity evidence while standalone preflight does not.
 
 ### FAST-LIO2 runner tests
 
@@ -484,6 +516,8 @@ Runtime identity capture is read-only with respect to the executable and source 
 - replay rate reaches runner;
 - start offset reaches runner;
 - optional duration reaches runner;
+- frozen manifest replay wins over ad-hoc legacy environment overrides;
+- compatibility environment variables are derived from the frozen replay block;
 - full-bag default remains backward compatible;
 - common scan manifest defaults to the same frozen replay interval.
 
@@ -512,7 +546,8 @@ The phase is complete when all of the following are demonstrated:
 8. The observed FAST-LIO2 frame labels remain independently auditable.
 9. Legacy runs remain readable and explicitly use reconstructed provenance.
 10. `lio-benchmark bundle` includes runtime identity evidence.
-11. Full unit/contract CI remains green.
+11. A frozen algorithm identity cannot be silently overwritten inside the same run.
+12. Full unit/contract CI remains green.
 
 ## 22. Follow-on Phase
 
