@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import datetime as dt
-import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any
 
 from benchmark_base.lib.manifest import normalized_replay, sha256_file
+from benchmark_base.lib.runtime_provenance import source_relationship as classify_source_relationship
 
 
 EXPLICIT_EXECUTABLE_OVERRIDE = "EXPLICIT_EXECUTABLE_OVERRIDE"
@@ -129,6 +129,19 @@ def _config_identity(path: Path | None) -> dict[str, Any]:
     return {"path": str(resolved), "sha256": digest}
 
 
+def _source_state(value: dict[str, Any] | None) -> dict[str, Any]:
+    source = dict(value or {})
+    for key in ("path", "git_root", "remote_origin", "commit", "branch", "dirty"):
+        source.setdefault(key, None)
+    return source
+
+
+def _implementation(manifest: dict[str, Any], algorithm_id: str) -> dict[str, Any]:
+    algorithm = _selected_algorithm(manifest, algorithm_id)
+    implementation = algorithm.get("execution_implementation", {})
+    return implementation if isinstance(implementation, dict) else {}
+
+
 def build_runtime_identity(
     *,
     manifest: dict[str, Any],
@@ -138,29 +151,27 @@ def build_runtime_identity(
     effective_config: Path | None,
     ros_distro: str | None,
     source_state: dict[str, Any] | None,
-    ros_package_prefix: str | None,
+    runtime_package: str | None,
+    runtime_package_prefix: str | None,
 ) -> dict[str, Any]:
     """Build the immutable run-time identity payload before estimator startup."""
-    algorithm = _selected_algorithm(manifest, algorithm_id)
-    implementation = algorithm.get("execution_implementation", {})
-    implementation = implementation if isinstance(implementation, dict) else {}
-    package = str(implementation.get("package", "")) or None
+    implementation = _implementation(manifest, algorithm_id)
+    registry_package = str(implementation.get("package", "")) or None
+    expected_repository = str(implementation.get("repository", "")) or None
     executable_identity = None
     if resolution.resolved_executable is not None:
         executable_identity = fingerprint_executable(resolution.resolved_executable)
-    replay = normalized_replay(manifest)
-    source = dict(source_state or {})
-    source.setdefault("path", None)
-    source.setdefault("git_root", None)
-    source.setdefault("remote_origin", None)
-    source.setdefault("commit", None)
-    source.setdefault("branch", None)
-    source.setdefault("dirty", None)
+    source = _source_state(source_state)
+    relationship = classify_source_relationship(
+        expected_repository,
+        str(source.get("remote_origin")) if source.get("remote_origin") else None,
+    )
     return {
         "schema_version": 1,
         "algorithm_id": algorithm_id,
         "captured_at": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
         "identity_status": "FROZEN",
+        "blocking_reason": None,
         "resolution_method": resolution.resolution_method,
         "requested_executable": resolution.requested_executable,
         "resolved_executable": (
@@ -175,11 +186,12 @@ def build_runtime_identity(
         "executable_mtime_ns": (
             executable_identity["mtime_ns"] if executable_identity is not None else None
         ),
-        "ros_package": package,
-        "ros_package_prefix": ros_package_prefix,
+        "registry_package": registry_package,
+        "runtime_package": runtime_package,
+        "runtime_package_prefix": runtime_package_prefix,
         "source": source,
         "registry_execution_implementation": implementation,
-        "source_relationship": "UNKNOWN_SOURCE",
+        "source_relationship": relationship,
         "launch_mode": (
             "DIRECT_EXECUTABLE"
             if resolution.resolution_method == EXPLICIT_EXECUTABLE_OVERRIDE
@@ -196,8 +208,62 @@ def build_runtime_identity(
             if isinstance(manifest.get("dataset"), dict)
             else None,
         },
-        "replay": replay,
+        "replay": normalized_replay(manifest),
     }
+
+
+def build_blocked_runtime_identity(
+    *,
+    manifest: dict[str, Any],
+    algorithm_id: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Record a real run attempt that was blocked before estimator startup."""
+    implementation = _implementation(manifest, algorithm_id)
+    overrides = manifest.get("execution_overrides", {})
+    override = overrides.get(algorithm_id) if isinstance(overrides, dict) else None
+    requested = override.get("executable") if isinstance(override, dict) else None
+    method = (
+        EXPLICIT_EXECUTABLE_OVERRIDE
+        if isinstance(requested, str) and requested.strip()
+        else REGISTRY_DEFAULT_EXECUTION
+    )
+    return {
+        "schema_version": 1,
+        "algorithm_id": algorithm_id,
+        "captured_at": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
+        "identity_status": "BLOCKED_EXECUTION",
+        "blocking_reason": str(reason),
+        "resolution_method": method,
+        "requested_executable": requested.strip() if isinstance(requested, str) else None,
+        "resolved_executable": None,
+        "executable_sha256": None,
+        "executable_size_bytes": None,
+        "executable_mtime_ns": None,
+        "registry_package": implementation.get("package"),
+        "runtime_package": None,
+        "runtime_package_prefix": None,
+        "source": _source_state(None),
+        "registry_execution_implementation": implementation,
+        "source_relationship": "UNKNOWN_SOURCE",
+        "launch_mode": None,
+        "effective_command": [],
+        "effective_config": {"path": None, "sha256": None},
+        "environment": {
+            "ros_distro": None,
+            "workspace": str(Path(str(manifest.get("workspace", "."))).expanduser().resolve()),
+        },
+        "dataset": {
+            "bag_dir": str(manifest.get("dataset", {}).get("bag_dir", ""))
+            if isinstance(manifest.get("dataset"), dict)
+            else None,
+        },
+        "replay": normalized_replay(manifest),
+    }
+
+
+def runtime_identity_path(run_dir: str | Path, algorithm_id: str) -> Path:
+    return Path(run_dir) / "metadata" / "algorithms" / algorithm_id / "runtime_identity.json"
 
 
 def write_runtime_identity(
@@ -205,9 +271,8 @@ def write_runtime_identity(
     algorithm_id: str,
     payload: dict[str, Any],
 ) -> Path:
-    """Write runtime identity once; never silently overwrite frozen evidence."""
-    run = Path(run_dir)
-    target = run / "metadata" / "algorithms" / algorithm_id / "runtime_identity.json"
+    """Write runtime identity once; never silently overwrite execution evidence."""
+    target = runtime_identity_path(run_dir, algorithm_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         raise ExecutionContractError(
