@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """LIO Benchmark Tools command dispatcher.
 
-The established V2 CLI remains byte-for-byte available in
-``lio-benchmark-core``. This dispatcher preserves its importable parser
-contract while adding comparison commands incrementally.
+The established V2 CLI remains available in ``lio-benchmark-core``. This
+dispatcher preserves its importable parser contract while adding focused new
+commands incrementally.
 """
 from __future__ import annotations
 
@@ -29,9 +29,41 @@ def _load_core():
 
 
 _core = _load_core()
-# Preserve the historical importable CLI contract used by repository tests and
-# by callers that inspect the parser programmatically.
-build_parser = _core.build_parser
+
+
+def cmd_audit_trajectory_coverage(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(MODULE_ROOT / "evaluators/audit_trajectory_coverage.py"),
+        "--run",
+        str(args.run),
+    ]
+    if args.algorithms:
+        command.extend(["--algorithms", *args.algorithms])
+    return subprocess.run(command, cwd=MODULE_ROOT, check=False).returncode
+
+
+def _subparser_action(parser: argparse.ArgumentParser, dest: str):
+    for action in parser._actions:  # argparse exposes no public lookup API
+        if isinstance(action, argparse._SubParsersAction) and action.dest == dest:
+            return action
+    raise RuntimeError(f"unable to find subparser destination: {dest}")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Return the historical parser plus additive audit commands."""
+    parser = _core.build_parser()
+    root_sub = _subparser_action(parser, "command")
+    audit_parser = root_sub.choices["audit"]
+    audit_sub = _subparser_action(audit_parser, "audit_command")
+    coverage = audit_sub.add_parser(
+        "trajectory-coverage",
+        help="describe LiDAR input, adapter, and trajectory cadence coverage",
+    )
+    coverage.add_argument("--run", type=Path, required=True)
+    coverage.add_argument("--algorithms", nargs="+")
+    coverage.set_defaults(func=cmd_audit_trajectory_coverage)
+    return parser
 
 
 def _compare(argv: list[str]) -> int:
@@ -58,18 +90,10 @@ def _compare(argv: list[str]) -> int:
 
 
 def _combined_help() -> int:
-    result = subprocess.run(
-        [sys.executable, str(CORE), "--help"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.stdout:
-        print(result.stdout.rstrip())
-    if result.stderr:
-        print(result.stderr.rstrip(), file=sys.stderr)
+    parser = build_parser()
+    parser.print_help()
     print("\nAdditional comparison command:\n  compare relative-se3")
-    return result.returncode
+    return 0
 
 
 def main() -> int:
@@ -77,6 +101,9 @@ def main() -> int:
         return _compare(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] in {"-h", "--help"}:
         return _combined_help()
+    if len(sys.argv) > 2 and sys.argv[1:3] == ["audit", "trajectory-coverage"]:
+        args = build_parser().parse_args(sys.argv[1:])
+        return int(args.func(args) or 0)
     return _core.main()
 
 
