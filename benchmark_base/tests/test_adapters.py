@@ -21,6 +21,40 @@ class AdapterLifecycleTest(unittest.TestCase):
             self.assertEqual("BLOCKED_ENVIRONMENT", result.status)
             self.assertFalse(result.runnable)
 
+    def test_explicit_executable_override_bypasses_missing_registry_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runner = root / "evaluators/run_lio.sh"
+            runner.parent.mkdir(parents=True)
+            runner.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            binary = root / "standalone_lio"
+            binary.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o755)
+            manifest = self._manifest(root)
+            manifest["execution_overrides"] = {
+                "lio": {"executable": str(binary)}
+            }
+            result = preflight_algorithm(manifest, "lio", benchmark_root=root)
+            self.assertEqual("PASS", result.status)
+            self.assertTrue(result.runnable)
+            self.assertEqual(
+                "EXPLICIT_EXECUTABLE_OVERRIDE",
+                result.checks["execution_resolution_method"],
+            )
+
+    def test_invalid_explicit_executable_is_blocked_execution_without_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self._create_source_and_runner(root)
+            manifest = self._manifest(root)
+            manifest["execution_overrides"] = {
+                "lio": {"executable": str(root / "missing_binary")}
+            }
+            result = preflight_algorithm(manifest, "lio", benchmark_root=root)
+            self.assertEqual("BLOCKED_EXECUTION", result.status)
+            self.assertFalse(result.runnable)
+            self.assertIn("missing_binary", " ".join(result.reasons))
+
     def test_missing_runner_is_implementation_failure_after_source_exists(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -176,6 +210,8 @@ class AdapterLifecycleTest(unittest.TestCase):
                     },
                 }
             },
+            "execution_overrides": {},
+            "replay": {"rate": 1.0, "start_offset_s": 0.0, "duration_s": None},
         }
 
 
