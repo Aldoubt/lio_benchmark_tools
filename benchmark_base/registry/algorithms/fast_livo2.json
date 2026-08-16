@@ -19,11 +19,24 @@
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu", "camera": null},
     "outputs": {"trajectory": "/aft_mapped_to_init", "registered_cloud": "/cloud_registered"}
   },
+  "trajectory_contract": {
+    "pose_semantics": "T_PARENT_TRACKED",
+    "tracked_frame_physical": "IMU_BODY",
+    "world_gauge": "GRAVITY_ALIGNED",
+    "expected_parent_frames": ["camera_init"],
+    "expected_child_frames": ["aft_mapped"],
+    "world_gauge_condition": "The benchmark FAST-LIVO2 launch uses agt_mapping mid360_lio_only.yaml with uav.gravity_align_en=true.",
+    "evidence": [
+      "FAST-LIVO2 publish_odometry writes _state.pos_end/_state.rot_end to camera_init->aft_mapped.",
+      "LiDAR points are transformed by LiDAR-to-IMU extrinsics before _state.rot_end/_state.pos_end, so the published state is the IMU/body state.",
+      "FAST-LIVO2 IMU initialization starts rot_end at identity and estimates gravity; gravityAlignment rotates the state so gravity points along global -Z when enabled."
+    ]
+  },
   "live_debug": {
     "namespace_capable": false,
     "setup": ["source /opt/ros/humble/setup.bash", "source \"$WORKSPACE/install/setup.bash\""],
     "processes": [{"name": "estimator", "command": "ros2 launch fast_livo mapping_mid360_lio.launch.py use_rviz:=false", "background": false}],
     "diagnostic_topics": ["/aft_mapped_to_init", "/cloud_registered"]
   },
-  "benchmark_notes": "Primary reference. FAST-LIVO2 names its configured transform Lid_*_to_IMU, so the benchmark adapter declares LIDAR_TO_IMU. Record the effective modality set per run; LiDAR-IMU-only runs are not labeled visual. Adapter PASS reflects the recorded green-house full-bag verification, not universal dataset compatibility."
+  "benchmark_notes": "Primary reference. FAST-LIVO2 names its configured transform Lid_*_to_IMU, so the benchmark adapter declares LIDAR_TO_IMU. Record the effective modality set per run; LiDAR-IMU-only runs are not labeled visual. Adapter PASS reflects the recorded green-house full-bag verification, not universal dataset compatibility. For the current green-house benchmark launch, the world gauge is gravity-aligned; a non-level handheld start is therefore expected to appear as non-zero initial roll/pitch."
 }
