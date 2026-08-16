@@ -23,7 +23,12 @@ if str(MODULE_ROOT) not in sys.path:
     sys.path.insert(0, str(MODULE_ROOT))
 
 from benchmark_base.lib.frame_audit import RawPoseObservation, build_frame_audit  # noqa: E402
+from benchmark_base.lib.registry import Registry  # noqa: E402
 from benchmark_base.lib.trajectory import Trajectory  # noqa: E402
+from benchmark_base.lib.trajectory_semantics import audit_semantic_labels  # noqa: E402
+
+
+REGISTRY = Registry()
 
 
 def normalize_topic(value: str) -> str:
@@ -137,14 +142,17 @@ def read_observations(bag: Path, topic: str, message_type: str) -> tuple[RawPose
     return tuple(rows)
 
 
-def declared_semantics(algorithm: dict[str, Any]) -> tuple[str, str]:
-    value = algorithm.get("trajectory_semantics", {})
-    if not isinstance(value, dict):
-        return "UNKNOWN", "UNKNOWN"
-    return (
-        str(value.get("pose_represents", "UNKNOWN")) or "UNKNOWN",
-        str(value.get("world_frame_semantics", "UNKNOWN")) or "UNKNOWN",
-    )
+def declared_semantics(algorithm_id: str, algorithm: dict[str, Any]) -> tuple[str, str, str]:
+    contract = algorithm.get("trajectory_contract")
+    if isinstance(contract, dict):
+        tracked, world = audit_semantic_labels(contract)
+        return tracked, world, "FROZEN_MANIFEST"
+    try:
+        current = REGISTRY.load_algorithm(algorithm_id)
+    except Exception:
+        current = {}
+    tracked, world = audit_semantic_labels(current.get("trajectory_contract"))
+    return tracked, world, "CURRENT_REGISTRY_FALLBACK"
 
 
 def trajectory_topic(algorithm: dict[str, Any]) -> str:
@@ -175,7 +183,7 @@ def audit_algorithm(run: Path, manifest: dict[str, Any], algorithm_id: str) -> d
     raw_dir = run / "raw" / algorithm_id
     bag, actual_topic, message_type = find_bag_for_topic(raw_dir, source_topic)
     observations = read_observations(bag, actual_topic, message_type)
-    pose_represents, world_semantics = declared_semantics(algorithm)
+    pose_represents, world_semantics, semantics_source = declared_semantics(algorithm_id, algorithm)
     audit = build_frame_audit(
         algorithm_id=algorithm_id,
         source_topic=normalize_topic(actual_topic),
@@ -186,7 +194,9 @@ def audit_algorithm(run: Path, manifest: dict[str, Any], algorithm_id: str) -> d
         declared_pose_represents=pose_represents,
         declared_world_frame_semantics=world_semantics,
     )
-    return audit.to_dict()
+    payload = audit.to_dict()
+    payload["trajectory_semantics_source"] = semantics_source
+    return payload
 
 
 def write_outputs(run: Path, rows: list[dict[str, Any]]) -> Path:
