@@ -33,6 +33,13 @@ EXCLUDED_LARGE_ARTIFACTS = (
     "**/*.ply",
     "**/*.pcd",
 )
+RELATIVE_SE3_ARTIFACTS = (
+    "metrics/relative_se3/metadata.json",
+    "metrics/relative_se3/normalized_motion.csv",
+    "metrics/relative_se3/pairwise_samples.csv",
+    "metrics/relative_se3/pairwise_summary.csv",
+    "metrics/relative_se3/onset_thresholds.csv",
+)
 
 
 @dataclass(frozen=True)
@@ -111,6 +118,13 @@ def collect_bundle_files(
         "metrics/pairwise_disagreement_warmup_*.csv",
     ):
         included.update(_existing_glob(run, pattern))
+
+    # Relative SE(3) is an optional derived diagnostic. Include its complete
+    # small evidence set when present, but do not mark it missing for legacy
+    # runs that predate the comparison stage.
+    for relative in RELATIVE_SE3_ARTIFACTS:
+        if _safe_relative_file(run, relative):
+            included.add(relative)
 
     for algorithm_id in _algorithm_ids(manifest):
         for relative in (

@@ -1,0 +1,839 @@
+#!/usr/bin/env python3
+"""LIO Benchmark Tools V2 command-line entry point."""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+MODULE_ROOT = Path(__file__).resolve().parents[2]
+if str(MODULE_ROOT) not in sys.path:
+    sys.path.insert(0, str(MODULE_ROOT))
+
+from benchmark_base.lib.adapters import collect_algorithm, preflight_algorithm, prepare_algorithm  # noqa: E402
+from benchmark_base.lib.diagnostic_bundle import create_diagnostic_bundle  # noqa: E402
+from benchmark_base.lib.execution_contract import (  # noqa: E402
+    ExecutionContractError,
+    build_blocked_runtime_identity,
+    runtime_identity_path,
+    write_runtime_identity,
+)
+from benchmark_base.lib.live_debug import append_marker, prepare_session  # noqa: E402
+from benchmark_base.lib.manifest import (  # noqa: E402
+    load_json,
+    normalized_replay,
+    resolve_manifest,
+    validate_manifest,
+)
+from benchmark_base.lib.registry import Registry, RegistryError  # noqa: E402
+from benchmark_base.lib.ros_workspace import build_sourced_python_command  # noqa: E402
+from benchmark_base.lib.run_outcome import classify_runner_status  # noqa: E402
+
+BASE_RUN_DIRS = (
+    "input",
+    "configs",
+    "standardized/trajectories",
+    "standardized/maps",
+    "metrics",
+    "figures",
+    "reports",
+    "logs",
+    "metadata",
+)
+REGISTRY = Registry()
+
+
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).astimezone().isoformat()
+
+
+def resolved_runner(config: dict[str, Any]) -> Path:
+    runner = config.get("runner", "")
+    value = runner.get("adapter", "") if isinstance(runner, dict) else runner
+    path = Path(str(value))
+    return path if path.is_absolute() else MODULE_ROOT / path
+
+
+def resolved_source_hint(config: dict[str, Any]) -> str:
+    source = config.get("source", "")
+    return str(source.get("local_path_hint", "")) if isinstance(source, dict) else str(source)
+
+
+def resolve_config(path: Path, verify_hash: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+    manifest = load_json(path)
+    errors = validate_manifest(
+        manifest, registry=REGISTRY, verify_hash=verify_hash, module_root=MODULE_ROOT
+    )
+    if errors:
+        raise SystemExit("manifest validation failed:\n- " + "\n- ".join(errors))
+    try:
+        return manifest, resolve_manifest(manifest, REGISTRY)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def resolve_run(path: Path) -> tuple[Path, dict[str, Any]]:
+    run = path.resolve()
+    manifest_path = run / "manifest.json"
+    if not manifest_path.is_file():
+        raise SystemExit(f"not a standard run directory; missing {manifest_path}")
+    try:
+        return run, load_json(manifest_path)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def run_command(command: list[str], cwd: Path, output: Path | None = None) -> None:
+    if output is None:
+        result = subprocess.run(command, cwd=cwd, check=False)
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("w", encoding="utf-8") as stream:
+            result = subprocess.run(
+                command,
+                cwd=cwd,
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+    if result.returncode:
+        raise SystemExit(result.returncode)
+
+
+def run_python(script: str, arguments: list[str], cwd: Path | None = None) -> None:
+    command = [sys.executable, str(MODULE_ROOT / script), *arguments]
+    run_command(command, cwd or MODULE_ROOT)
+
+
+def resolve_ros_distro(run: Path) -> str:
+    value = os.environ.get("ROS_DISTRO", "").strip()
+    if value:
+        return value
+    snapshot = run / "metadata" / "environment_snapshot.json"
+    if snapshot.is_file():
+        try:
+            payload = json.loads(snapshot.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        value = str(payload.get("ros_distro", "")).strip() if isinstance(payload, dict) else ""
+        if value:
+            return value
+    ros_root = Path("/opt/ros")
+    candidates = (
+        sorted(
+            path.name
+            for path in ros_root.iterdir()
+            if path.is_dir() and (path / "setup.bash").is_file()
+        )
+        if ros_root.is_dir()
+        else []
+    )
+    if len(candidates) == 1:
+        return candidates[0]
+    raise SystemExit(
+        "unable to resolve ROS distro for run; source ROS first or capture metadata/environment_snapshot.json"
+    )
+
+
+def run_python_ros(run: Path, manifest: dict[str, Any], script: str, arguments: list[str]) -> None:
+    workspace = Path(str(manifest.get("workspace", "."))).expanduser().resolve()
+    command = build_sourced_python_command(
+        python_executable=sys.executable,
+        script=MODULE_ROOT / script,
+        arguments=arguments,
+        workspace=workspace,
+        ros_distro=resolve_ros_distro(run),
+    )
+    run_command(command, workspace)
+
+
+def cmd_validate(args: argparse.Namespace) -> None:
+    source, resolved = resolve_config(args.config.resolve(), args.verify_hash)
+    dataset = resolved["dataset"]
+    print("validation passed")
+    print(f"schema_version={source['schema_version']}")
+    print(f"experiment={source['name']}")
+    print(f"dataset={dataset.get('dataset_id', dataset.get('bag_dir'))}")
+    print(f"bag={dataset['bag_dir']}")
+    print(f"algorithms={','.join(resolved['algorithms'])}")
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    config = args.config.resolve()
+    source, resolved = resolve_config(config)
+    run_id = args.run_id or f"{source['name']}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    if not run_id.replace("-", "").replace("_", "").isalnum():
+        raise SystemExit("run-id may contain only letters, numbers, underscore and hyphen")
+    run = Path(source["output_root"]).expanduser() / run_id
+    if run.exists():
+        raise SystemExit(f"refusing to overwrite existing run: {run}")
+    for relative in list(BASE_RUN_DIRS) + [f"raw/{name}" for name in resolved["algorithms"]]:
+        (run / relative).mkdir(parents=True, exist_ok=False)
+    frozen = dict(resolved)
+    frozen.update(
+        run_id=run_id,
+        created_at=now_iso(),
+        source_manifest=str(config),
+        source_manifest_schema_version=source["schema_version"],
+    )
+    (run / "manifest.json").write_text(
+        json.dumps(frozen, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    dataset = frozen["dataset"]
+    (run / "input" / "DATASET.txt").write_text(
+        f"dataset_id={dataset.get('dataset_id', '')}\n"
+        f"bag_dir={dataset['bag_dir']}\n"
+        f"sha256={dataset.get('sha256', '')}\n",
+        encoding="utf-8",
+    )
+    (run / "RUN_STATUS.md").write_text(
+        f"# Run {run_id}\n\n- status: initialized\n- created: {frozen['created_at']}\n"
+        "- bag analysis: pending\n- frontend runs: pending\n"
+        "- standardization: pending\n- report: pending\n",
+        encoding="utf-8",
+    )
+    print(run)
+
+
+def cmd_analyze_bag(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    run_python_ros(
+        run,
+        manifest,
+        "evaluators/analyze_bag.py",
+        [manifest["dataset"]["bag_dir"], "--output", str(run / "metrics/bag_analysis.json")],
+    )
+
+
+def git_state(path: Path) -> dict[str, Any]:
+    if not (path / ".git").exists():
+        return {"path": str(path), "git": False}
+
+    def capture(*parts: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(path), *parts],
+            text=True,
+            capture_output=True,
+            check=False,
+        ).stdout.strip()
+
+    return {
+        "path": str(path),
+        "git": True,
+        "commit": capture("rev-parse", "HEAD"),
+        "branch": capture("rev-parse", "--abbrev-ref", "HEAD"),
+        "dirty": bool(capture("status", "--porcelain")),
+    }
+
+
+def cmd_snapshot(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    workspace = Path(manifest["workspace"]).expanduser()
+    sources = [workspace]
+    for config in manifest["algorithms"].values():
+        hint = resolved_source_hint(config)
+        if not hint:
+            continue
+        source = Path(hint).expanduser()
+        if not source.is_absolute():
+            source = workspace / source
+        if source.is_dir() and source not in sources:
+            sources.append(source)
+    payload = {
+        "captured_at": now_iso(),
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+        "ros_distro": os.environ.get("ROS_DISTRO", ""),
+        "git_sources": [git_state(path) for path in sources],
+        "executables": {
+            name: shutil.which(name)
+            for name in ("ros2", "colcon", "cmake", "git", "ffmpeg")
+        },
+    }
+    path = run / "metadata/environment_snapshot.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(path)
+
+
+def algorithm_command(run: Path, manifest: dict[str, Any], algorithm_id: str) -> list[str]:
+    if algorithm_id not in manifest["algorithms"]:
+        raise SystemExit(f"algorithm is not selected in this run: {algorithm_id}")
+    runner = resolved_runner(manifest["algorithms"][algorithm_id])
+    if not runner.is_file():
+        raise SystemExit(f"runner does not exist: {runner}")
+    return [
+        "bash",
+        str(runner),
+        str(manifest["dataset"]["bag_dir"]),
+        str(run / "raw" / algorithm_id),
+    ]
+
+
+def _write_preflight(run: Path, algorithm_id: str, payload: dict[str, Any]) -> Path:
+    path = run / "metadata" / "algorithms" / algorithm_id / "preflight.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def cmd_preflight(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    selected = [args.algorithm] if args.algorithm else list(manifest["algorithms"])
+    blocked = False
+    for algorithm_id in selected:
+        result = preflight_algorithm(
+            manifest,
+            algorithm_id,
+            benchmark_root=MODULE_ROOT,
+            allow_diagnostic_calibration=args.allow_diagnostic_calibration,
+        )
+        _write_preflight(run, algorithm_id, result.to_dict())
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        blocked = blocked or not result.runnable
+    if blocked:
+        raise SystemExit(2)
+
+
+def _write_run_status(run: Path, algorithm_id: str, payload: dict[str, Any]) -> Path:
+    path = run / "metadata" / f"run_{algorithm_id}.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def execute_algorithm(
+    run: Path,
+    manifest: dict[str, Any],
+    algorithm_id: str,
+    *,
+    allow_diagnostic_calibration: bool = False,
+) -> int:
+    existing_identity = runtime_identity_path(run, algorithm_id)
+    if existing_identity.exists():
+        reason = (
+            "BLOCKED_EXECUTION: runtime identity already exists; "
+            f"create a new run id: {existing_identity}"
+        )
+        _write_run_status(
+            run,
+            algorithm_id,
+            {
+                "algorithm_id": algorithm_id,
+                "started_at": None,
+                "finished_at": now_iso(),
+                "command": None,
+                "returncode": None,
+                "status": "BLOCKED_EXECUTION",
+                "diagnostic_only": False,
+                "reasons": [reason],
+                "log": None,
+                "raw_output": str(run / "raw" / algorithm_id),
+            },
+        )
+        print(f"{algorithm_id}: {reason}", file=sys.stderr)
+        return 2
+
+    preflight = preflight_algorithm(
+        manifest,
+        algorithm_id,
+        benchmark_root=MODULE_ROOT,
+        allow_diagnostic_calibration=allow_diagnostic_calibration,
+    )
+    _write_preflight(run, algorithm_id, preflight.to_dict())
+    log_path = run / "logs" / f"run_{algorithm_id}.log"
+    if not preflight.runnable:
+        if preflight.status == "BLOCKED_EXECUTION":
+            reason = "; ".join(preflight.reasons) or "BLOCKED_EXECUTION"
+            blocked_identity = build_blocked_runtime_identity(
+                manifest=manifest,
+                algorithm_id=algorithm_id,
+                reason=reason,
+            )
+            try:
+                write_runtime_identity(run, algorithm_id, blocked_identity)
+            except ExecutionContractError as exc:
+                reason = f"{reason}; {exc}"
+        payload = {
+            "algorithm_id": algorithm_id,
+            "started_at": None,
+            "finished_at": now_iso(),
+            "command": None,
+            "returncode": None,
+            "status": preflight.status,
+            "diagnostic_only": preflight.diagnostic_only,
+            "reasons": list(preflight.reasons),
+            "log": None,
+            "raw_output": str(run / "raw" / algorithm_id),
+        }
+        _write_run_status(run, algorithm_id, payload)
+        print(f"{algorithm_id}: {preflight.status}: {'; '.join(preflight.reasons)}", file=sys.stderr)
+        return 2
+
+    prepared = prepare_algorithm(
+        run,
+        manifest,
+        algorithm_id,
+        benchmark_root=MODULE_ROOT,
+        allow_diagnostic_calibration=allow_diagnostic_calibration,
+    )
+    command = algorithm_command(run, manifest, algorithm_id)
+    started = now_iso()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    replay = normalized_replay(manifest)
+    duration = "" if replay["duration_s"] is None else str(replay["duration_s"])
+    env = os.environ.copy()
+    env.update(
+        {
+            "WORKSPACE": str(Path(manifest["workspace"]).expanduser()),
+            "BENCHMARK_ROOT": str(MODULE_ROOT),
+            "BENCHMARK_RUN_DIR": str(run),
+            "BENCHMARK_DATASET_ID": str(
+                manifest["dataset"].get("dataset_id", "legacy_v1_dataset")
+            ),
+            "BENCHMARK_ALGORITHM_ID": algorithm_id,
+            "BENCHMARK_GENERATED_CONFIG_DIR": str(prepared.generated_config_dir),
+            "BENCHMARK_REPLAY_RATE": str(replay["rate"]),
+            "BENCHMARK_REPLAY_START_OFFSET_S": str(replay["start_offset_s"]),
+            "BENCHMARK_REPLAY_DURATION_S": duration,
+            "BAG_PLAY_RATE": str(replay["rate"]),
+            "BAG_START_OFFSET": str(replay["start_offset_s"]),
+            "BAG_DURATION": duration,
+        }
+    )
+    with log_path.open("w", encoding="utf-8") as stream:
+        result = subprocess.run(
+            command,
+            cwd=Path(manifest["workspace"]).expanduser(),
+            env=env,
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    collection = collect_algorithm(run, manifest, algorithm_id)
+    payload = {
+        "algorithm_id": algorithm_id,
+        "started_at": started,
+        "finished_at": now_iso(),
+        "command": command,
+        "returncode": result.returncode,
+        "status": classify_runner_status(result.returncode),
+        "diagnostic_only": preflight.diagnostic_only,
+        "preflight_status": preflight.status,
+        "log": str(log_path),
+        "raw_output": str(run / "raw" / algorithm_id),
+        "collection": collection.to_dict(),
+    }
+    _write_run_status(run, algorithm_id, payload)
+    print(
+        f"{algorithm_id}: {payload['status']} returncode={result.returncode} "
+        f"diagnostic_only={preflight.diagnostic_only}"
+    )
+    return result.returncode
+
+
+def cmd_run(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    code = execute_algorithm(
+        run,
+        manifest,
+        args.algorithm,
+        allow_diagnostic_calibration=args.allow_diagnostic_calibration,
+    )
+    if code:
+        raise SystemExit(code)
+
+
+def cmd_run_all(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    failures: list[tuple[str, int]] = []
+    for algorithm_id in manifest["algorithms"]:
+        code = execute_algorithm(
+            run,
+            manifest,
+            algorithm_id,
+            allow_diagnostic_calibration=args.allow_diagnostic_calibration,
+        )
+        if code:
+            failures.append((algorithm_id, code))
+            if args.stop_on_failure:
+                break
+    if failures:
+        for algorithm_id, code in failures:
+            print(f"BLOCKED/FAIL {algorithm_id}: {code}", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def cmd_commands(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    for name in manifest["algorithms"]:
+        print(f"# {name} ({manifest['algorithms'][name]['mode']})")
+        print(" ".join(json.dumps(part) for part in algorithm_command(run, manifest, name)))
+
+
+def cmd_list_registry(args: argparse.Namespace) -> None:
+    values = REGISTRY.list_algorithms() if args.kind == "algorithms" else REGISTRY.list_datasets()
+    print("\n".join(values))
+
+
+def cmd_show_registry(args: argparse.Namespace) -> None:
+    try:
+        record = (
+            REGISTRY.load_algorithm(args.id)
+            if args.kind == "algorithm"
+            else REGISTRY.load_dataset(args.id)
+        )
+    except RegistryError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(json.dumps(record, ensure_ascii=False, indent=2))
+
+
+def cmd_live_prepare(args: argparse.Namespace) -> None:
+    try:
+        session = prepare_session(
+            registry=REGISTRY,
+            dataset_id=args.dataset,
+            algorithm_ids=args.algorithms,
+            workspace=args.workspace,
+            session_root=args.session_root,
+            benchmark_root=MODULE_ROOT,
+            rate=args.rate,
+            session_id=args.session_id,
+            check_paths=not args.allow_missing_paths,
+        )
+    except (ValueError, RegistryError) as exc:
+        raise SystemExit(str(exc)) from exc
+    print(session)
+    print(f"open {session / 'commands.md'}")
+
+
+def cmd_mark(args: argparse.Namespace) -> None:
+    try:
+        record = append_marker(
+            session=args.session,
+            algorithm_id=args.algorithm,
+            event=args.event,
+            bag_time_s=args.bag_time,
+            note=args.note,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(json.dumps(record, ensure_ascii=False, indent=2))
+
+
+def cmd_standardize_trajectory(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    if args.algorithm not in manifest["algorithms"]:
+        raise SystemExit(f"algorithm is not selected in run: {args.algorithm}")
+    command = [
+        str(args.input),
+        "--output",
+        str(run / "standardized/trajectories" / f"{args.algorithm}.csv"),
+        "--source-topic",
+        args.source_topic,
+    ]
+    if args.column_map:
+        command.extend(("--column-map", args.column_map))
+    run_python("evaluators/standardize_trajectory.py", command)
+
+
+def cmd_standardize_trajectory_from_run(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    if args.algorithm not in manifest["algorithms"]:
+        raise SystemExit(f"algorithm is not selected in run: {args.algorithm}")
+    run_python_ros(
+        run,
+        manifest,
+        "evaluators/standardize_trajectory_from_run.py",
+        ["--run", str(run), "--algorithm", args.algorithm],
+    )
+
+
+def cmd_standardize_scan_manifest(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    command = ["--run", str(run)]
+    if args.overwrite:
+        command.append("--overwrite")
+    if args.start_offset_s is not None:
+        command.extend(("--start-offset-s", str(args.start_offset_s)))
+    if args.duration_s is not None:
+        command.extend(("--duration-s", str(args.duration_s)))
+    run_python_ros(run, manifest, "evaluators/build_scan_manifest.py", command)
+
+
+def cmd_standardize_map(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    if args.algorithm not in manifest["algorithms"]:
+        raise SystemExit(f"algorithm is not selected in run: {args.algorithm}")
+    run_python_ros(
+        run,
+        manifest,
+        "evaluators/standardize_map.py",
+        ["--run", str(run), "--algorithm", args.algorithm],
+    )
+
+
+def cmd_audit_trajectory_frames(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    command = ["--run", str(run)]
+    if args.algorithms:
+        command.extend(["--algorithms", *args.algorithms])
+    run_python_ros(run, manifest, "evaluators/audit_trajectory_frames.py", command)
+
+
+def cmd_audit_runtime_provenance(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    command = ["--run", str(run)]
+    if args.algorithms:
+        command.extend(["--algorithms", *args.algorithms])
+    run_python_ros(run, manifest, "evaluators/audit_runtime_provenance.py", command)
+
+
+def cmd_bundle(args: argparse.Namespace) -> None:
+    run, _ = resolve_run(args.run)
+    try:
+        archive = create_diagnostic_bundle(
+            run=run,
+            repository_root=MODULE_ROOT,
+            include_reports=args.include_reports,
+            output=args.output,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(archive)
+
+
+def cmd_inspect(args: argparse.Namespace) -> None:
+    command = [
+        "--run",
+        str(args.run),
+        "--map-kind",
+        args.map_kind,
+        "--color-mode",
+        args.color_mode,
+        "--point-size",
+        str(args.point_size),
+        "--display-alignment",
+        args.display_alignment,
+    ]
+    if args.algorithms:
+        command.extend(["--algorithms", *args.algorithms])
+    if args.roi:
+        command.extend(("--roi", str(args.roi)))
+    if args.camera:
+        command.extend(("--camera", str(args.camera)))
+    run_python("visualization/map_inspector.py", command)
+
+
+def cmd_report(args: argparse.Namespace) -> None:
+    command = [
+        "--run",
+        str(args.run),
+        "--display-alignment",
+        args.display_alignment,
+        "--warmup-s",
+        str(args.warmup_s),
+    ]
+    if args.roi:
+        command.extend(("--roi", str(args.roi)))
+    run_python("reporting/generate_report.py", command)
+
+
+def cmd_demo(args: argparse.Namespace) -> None:
+    command = [
+        "--run",
+        str(args.run),
+        "--frames-per-algorithm",
+        str(args.frames_per_algorithm),
+        "--fps",
+        str(args.fps),
+        "--display-alignment",
+        args.display_alignment,
+    ]
+    if args.algorithms:
+        command.extend(["--algorithms", *args.algorithms])
+    if args.roi:
+        command.extend(("--roi", str(args.roi)))
+    if args.camera:
+        command.extend(("--camera", str(args.camera)))
+    if args.output:
+        command.extend(("--output", str(args.output)))
+    run_python("reporting/generate_demo.py", command)
+
+
+def _add_alignment_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--display-alignment",
+        choices=("START_XY_YAW", "NONE", "start_yaw", "raw"),
+        default="START_XY_YAW",
+        help="display-only alignment; start_yaw/raw are deprecated aliases",
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="lio-benchmark")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    validate = sub.add_parser("validate")
+    validate.add_argument("--config", type=Path, required=True)
+    validate.add_argument("--verify-hash", action="store_true")
+    validate.set_defaults(func=cmd_validate)
+
+    init = sub.add_parser("init")
+    init.add_argument("--config", type=Path, required=True)
+    init.add_argument("--run-id")
+    init.set_defaults(func=cmd_init)
+
+    analyze = sub.add_parser("analyze-bag")
+    analyze.add_argument("--run", type=Path, required=True)
+    analyze.set_defaults(func=cmd_analyze_bag)
+
+    snapshot = sub.add_parser("snapshot")
+    snapshot.add_argument("--run", type=Path, required=True)
+    snapshot.set_defaults(func=cmd_snapshot)
+
+    preflight = sub.add_parser("preflight")
+    preflight.add_argument("--run", type=Path, required=True)
+    preflight.add_argument("--algorithm")
+    preflight.add_argument("--allow-diagnostic-calibration", action="store_true")
+    preflight.set_defaults(func=cmd_preflight)
+
+    run = sub.add_parser("run")
+    run.add_argument("--run", type=Path, required=True)
+    run.add_argument("--algorithm", required=True)
+    run.add_argument("--allow-diagnostic-calibration", action="store_true")
+    run.set_defaults(func=cmd_run)
+
+    run_all = sub.add_parser("run-all")
+    run_all.add_argument("--run", type=Path, required=True)
+    run_all.add_argument("--stop-on-failure", action="store_true")
+    run_all.add_argument("--allow-diagnostic-calibration", action="store_true")
+    run_all.set_defaults(func=cmd_run_all)
+
+    commands = sub.add_parser("commands")
+    commands.add_argument("--run", type=Path, required=True)
+    commands.set_defaults(func=cmd_commands)
+
+    listing = sub.add_parser("list")
+    listing.add_argument("kind", choices=("algorithms", "datasets"))
+    listing.set_defaults(func=cmd_list_registry)
+
+    show = sub.add_parser("show")
+    show.add_argument("kind", choices=("algorithm", "dataset"))
+    show.add_argument("id")
+    show.set_defaults(func=cmd_show_registry)
+
+    standardize = sub.add_parser("standardize")
+    standardize_sub = standardize.add_subparsers(dest="standardize_command", required=True)
+
+    st = standardize_sub.add_parser("trajectory")
+    st.add_argument("--run", type=Path, required=True)
+    st.add_argument("--algorithm", required=True)
+    st.add_argument("--input", type=Path, required=True)
+    st.add_argument("--source-topic", default="")
+    st.add_argument("--column-map")
+    st.set_defaults(func=cmd_standardize_trajectory)
+
+    sfr = standardize_sub.add_parser("trajectory-from-run")
+    sfr.add_argument("--run", type=Path, required=True)
+    sfr.add_argument("--algorithm", required=True)
+    sfr.set_defaults(func=cmd_standardize_trajectory_from_run)
+
+    ss = standardize_sub.add_parser("scan-manifest")
+    ss.add_argument("--run", type=Path, required=True)
+    ss.add_argument("--start-offset-s", type=float)
+    ss.add_argument("--duration-s", type=float)
+    ss.add_argument("--overwrite", action="store_true")
+    ss.set_defaults(func=cmd_standardize_scan_manifest)
+
+    sm = standardize_sub.add_parser("map")
+    sm.add_argument("--run", type=Path, required=True)
+    sm.add_argument("--algorithm", required=True)
+    sm.set_defaults(func=cmd_standardize_map)
+
+    audit = sub.add_parser("audit")
+    audit_sub = audit.add_subparsers(dest="audit_command", required=True)
+
+    trajectory_frames = audit_sub.add_parser("trajectory-frames")
+    trajectory_frames.add_argument("--run", type=Path, required=True)
+    trajectory_frames.add_argument("--algorithms", nargs="+")
+    trajectory_frames.set_defaults(func=cmd_audit_trajectory_frames)
+
+    runtime_provenance = audit_sub.add_parser("runtime-provenance")
+    runtime_provenance.add_argument("--run", type=Path, required=True)
+    runtime_provenance.add_argument("--algorithms", nargs="+")
+    runtime_provenance.set_defaults(func=cmd_audit_runtime_provenance)
+
+    bundle = sub.add_parser("bundle")
+    bundle.add_argument("--run", type=Path, required=True)
+    bundle.add_argument("--include-reports", action="store_true")
+    bundle.add_argument("--output", type=Path)
+    bundle.set_defaults(func=cmd_bundle)
+
+    inspect = sub.add_parser("inspect")
+    inspect.add_argument("--run", type=Path, required=True)
+    inspect.add_argument("--algorithms", nargs="+")
+    inspect.add_argument("--map-kind", choices=("unified", "native"), default="unified")
+    inspect.add_argument("--color-mode", choices=("height", "intensity", "algorithm"), default="height")
+    inspect.add_argument("--roi", type=Path)
+    inspect.add_argument("--camera", type=Path)
+    inspect.add_argument("--point-size", type=int, default=2)
+    _add_alignment_option(inspect)
+    inspect.set_defaults(func=cmd_inspect)
+
+    report = sub.add_parser("report")
+    report.add_argument("--run", type=Path, required=True)
+    report.add_argument("--roi", type=Path)
+    report.add_argument("--warmup-s", type=float, default=0.0)
+    _add_alignment_option(report)
+    report.set_defaults(func=cmd_report)
+
+    demo = sub.add_parser("demo")
+    demo.add_argument("--run", type=Path, required=True)
+    demo.add_argument("--algorithms", nargs="+")
+    demo.add_argument("--roi", type=Path)
+    demo.add_argument("--camera", type=Path)
+    demo.add_argument("--output", type=Path)
+    demo.add_argument("--frames-per-algorithm", type=int, default=24)
+    demo.add_argument("--fps", type=int, default=12)
+    _add_alignment_option(demo)
+    demo.set_defaults(func=cmd_demo)
+
+    live = sub.add_parser("live")
+    live_sub = live.add_subparsers(dest="live_command", required=True)
+
+    lp = live_sub.add_parser("prepare")
+    lp.add_argument("--dataset", required=True)
+    lp.add_argument("--algorithms", nargs="+", required=True)
+    lp.add_argument("--workspace", type=Path, required=True)
+    lp.add_argument("--session-root", type=Path, default=MODULE_ROOT / "live_sessions")
+    lp.add_argument("--session-id")
+    lp.add_argument("--rate", type=float, default=1.0)
+    lp.add_argument("--allow-missing-paths", action="store_true", help=argparse.SUPPRESS)
+    lp.set_defaults(func=cmd_live_prepare)
+
+    mark = sub.add_parser("mark")
+    mark.add_argument("--session", type=Path, required=True)
+    mark.add_argument("--algorithm", required=True)
+    mark.add_argument("--event", required=True)
+    mark.add_argument("--bag-time", type=float, required=True)
+    mark.add_argument("--note", default="")
+    mark.set_defaults(func=cmd_mark)
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    args.func(args)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
