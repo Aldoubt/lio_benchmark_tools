@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
-import runpy
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from benchmark_base.lib.adapters import AdapterStatus, prepare_algorithm
+from benchmark_base.lib.adapters import preflight_algorithm, prepare_algorithm
 from benchmark_base.lib.ros_workspace import (
     RuntimeEnvironmentError,
     capture_sourced_environment,
@@ -32,6 +32,37 @@ class RuntimeOverlayEnvironmentTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
         return path
+
+    def _runtime_manifest(self, prefix: Path) -> dict:
+        runner = self.root / "evaluators/run_algo.sh"
+        runner.parent.mkdir(parents=True, exist_ok=True)
+        runner.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        return {
+            "workspace": str(self.workspace),
+            "dataset": {
+                "topics": {"lidar": "/lidar", "imu": None, "camera": None},
+                "capabilities": {},
+                "calibration": {"status": "BLOCKED_CALIBRATION"},
+            },
+            "algorithms": {
+                "algo": {
+                    "required_modalities": ["lidar"],
+                    "sensor_profile": {"lidar": True, "imu": False},
+                    "execution_implementation": {
+                        "package": "algo_pkg",
+                        "executable": "algo_node",
+                    },
+                    "runner": {"adapter": "evaluators/run_algo.sh"},
+                    "extrinsic_convention": "NONE",
+                    "topics": {"outputs": {}},
+                }
+            },
+            "execution_overrides": {},
+            "runtime_overlays": {
+                "algo": [str(self.root / "declared_overlay/setup.bash")]
+            },
+            "replay": {"rate": 1.0, "start_offset_s": 0.0, "duration_s": 15.0},
+        }
 
     def test_runtime_overlays_for_algorithm_preserves_frozen_order(self) -> None:
         manifest = {
@@ -121,38 +152,42 @@ class RuntimeOverlayEnvironmentTest(unittest.TestCase):
                 base_env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
             )
 
-    def test_prepare_algorithm_reuses_the_same_formal_runtime_environment(self) -> None:
-        runner = self.root / "evaluators/run_algo.sh"
-        runner.parent.mkdir(parents=True)
-        runner.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    def test_preflight_rebuilds_formal_environment_for_new_frozen_runs(self) -> None:
         prefix = self.root / "formal/install/algo"
         marker = prefix / "share/ament_index/resource_index/packages/algo_pkg"
         marker.parent.mkdir(parents=True)
         marker.write_text("", encoding="utf-8")
-        manifest = {
-            "workspace": str(self.workspace),
-            "dataset": {
-                "topics": {"lidar": "/lidar", "imu": None, "camera": None},
-                "capabilities": {},
-                "calibration": {"status": "BLOCKED_CALIBRATION"},
-            },
-            "algorithms": {
-                "algo": {
-                    "required_modalities": ["lidar"],
-                    "sensor_profile": {"lidar": True, "imu": False},
-                    "execution_implementation": {
-                        "package": "algo_pkg",
-                        "executable": "algo_node",
-                    },
-                    "runner": {"adapter": "evaluators/run_algo.sh"},
-                    "extrinsic_convention": "NONE",
-                    "topics": {"outputs": {}},
-                }
-            },
-            "execution_overrides": {},
-            "runtime_overlays": {},
-            "replay": {"rate": 1.0, "start_offset_s": 0.0, "duration_s": 15.0},
+        manifest = self._runtime_manifest(prefix)
+        overlay = Path(manifest["runtime_overlays"]["algo"][0])
+        formal_env = {
+            "ROS_DISTRO": "humble",
+            "AMENT_PREFIX_PATH": str(prefix),
         }
+        with patch.dict(os.environ, {"ROS_DISTRO": "humble", "AMENT_PREFIX_PATH": "/ambient/wrong"}), patch(
+            "benchmark_base.lib.adapters.capture_sourced_environment",
+            return_value=formal_env,
+        ) as capture:
+            result = preflight_algorithm(
+                manifest,
+                "algo",
+                benchmark_root=self.root,
+            )
+        self.assertEqual("PASS", result.status)
+        self.assertEqual(str(prefix.resolve()), result.checks["runtime_package_prefix"])
+        self.assertEqual([str(overlay)], result.checks["runtime_overlays"])
+        capture.assert_called_once_with(
+            workspace=self.workspace.resolve(),
+            ros_distro="humble",
+            overlays=(overlay,),
+            base_env=os.environ,
+        )
+
+    def test_prepare_algorithm_reuses_explicit_formal_runtime_environment(self) -> None:
+        prefix = self.root / "formal/install/algo"
+        marker = prefix / "share/ament_index/resource_index/packages/algo_pkg"
+        marker.parent.mkdir(parents=True)
+        marker.write_text("", encoding="utf-8")
+        manifest = self._runtime_manifest(prefix)
         formal_env = {
             "ROS_DISTRO": "humble",
             "AMENT_PREFIX_PATH": str(prefix),
@@ -166,59 +201,6 @@ class RuntimeOverlayEnvironmentTest(unittest.TestCase):
         )
         self.assertEqual("PASS", prepared.preflight.status)
         self.assertEqual(str(prefix.resolve()), prepared.preflight.checks["runtime_package_prefix"])
-
-    def test_cli_runtime_preflight_passes_constructed_environment_to_adapter(self) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
-        namespace = runpy.run_path(str(repo_root / "benchmark_base/bin/lio-benchmark"))
-        helper = namespace["runtime_preflight"]
-        calls: dict[str, object] = {}
-        formal_env = {
-            "ROS_DISTRO": "humble",
-            "AMENT_PREFIX_PATH": "/formal/install",
-        }
-
-        namespace["runtime_overlays_for_algorithm"] = lambda manifest, algorithm_id: (
-            Path("/declared/kiss/setup.bash"),
-        )
-        namespace["resolve_ros_distro"] = lambda run: "humble"
-
-        def fake_capture(**kwargs):
-            calls["capture"] = kwargs
-            return formal_env
-
-        def fake_preflight(manifest, algorithm_id, **kwargs):
-            calls["runtime_env"] = kwargs.get("runtime_env")
-            return AdapterStatus(
-                algorithm_id=algorithm_id,
-                status="PASS",
-                runnable=True,
-                diagnostic_only=False,
-                reasons=(),
-                checks={"runtime_package_prefix": "/formal/install/kiss_icp"},
-            )
-
-        namespace["capture_sourced_environment"] = fake_capture
-        namespace["preflight_algorithm"] = fake_preflight
-        manifest = {
-            "workspace": "/workspace",
-            "algorithms": {"kiss_icp": {}},
-            "runtime_overlays": {
-                "kiss_icp": ["/declared/kiss/setup.bash"]
-            },
-        }
-        result, captured_env = helper(
-            Path("/run"),
-            manifest,
-            "kiss_icp",
-            allow_diagnostic_calibration=False,
-        )
-        self.assertEqual("PASS", result.status)
-        self.assertIs(formal_env, captured_env)
-        self.assertIs(formal_env, calls["runtime_env"])
-        self.assertEqual(
-            ["/declared/kiss/setup.bash"],
-            result.checks["runtime_overlays"],
-        )
 
 
 if __name__ == "__main__":
