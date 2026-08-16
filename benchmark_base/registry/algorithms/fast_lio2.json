@@ -35,10 +35,22 @@
       "native_map_topic": "/Laser_map"
     }
   },
+  "trajectory_contract": {
+    "pose_semantics": "T_PARENT_TRACKED",
+    "tracked_frame_physical": "IMU_BODY",
+    "world_gauge": "INITIAL_BODY_ALIGNED",
+    "expected_parent_frames": ["camera_init"],
+    "expected_child_frames": ["body"],
+    "evidence": [
+      "The declared Franklif1/Fast_LIO2_ROS2 execution source publishes state_point.pos/state_point.rot as camera_init->body.",
+      "Its IMU initialization estimates the gravity vector but does not rotate the estimator state to a gravity-aligned world, leaving the initial body attitude gauge near identity."
+    ],
+    "runtime_warning": "The first green-house smoke observed odom->sensor instead of the declared execution source's camera_init->body. Treat this as a runtime provenance/frame-label mismatch until the installed package commit is identified."
+  },
   "native_map": {
     "default_status": "NOT_PROVIDED",
     "optional_collection_env": "BENCHMARK_COLLECT_NATIVE_MAP",
     "note": "The selected ROS2 port accumulates/publishes its native map when publish.map_en is enabled; this adds runtime overhead and is therefore opt-in and must be recorded."
   },
-  "benchmark_notes": "Classical direct IESKF scan-to-map baseline. The ROS2 port names its extrinsic state Lidar_*_wrt_IMU, matching benchmark LIDAR_TO_IMU."
+  "benchmark_notes": "Classical direct IESKF scan-to-map baseline. The ROS2 port names its extrinsic state Lidar_*_wrt_IMU, matching benchmark LIDAR_TO_IMU. The declared port keeps the estimator world initially body-aligned rather than applying FAST-LIVO2's explicit gravity-alignment step. Runtime frame labels must match the frozen execution provenance before formal comparison."
 }
