@@ -104,7 +104,23 @@ The last implementation-only HEAD before documentation was:
 
 GitHub Actions `Core Contracts` run `31933933560` completed successfully for that exact SHA, including Unit Contracts, Python compile, shell adapter syntax, and registry smoke.
 
-Final documentation HEAD verification must be checked again after this note and the user-facing docs are committed. Earlier successful runs are not sufficient evidence for the final repository state.
+The user-facing documentation HEAD immediately before this verification note was updated was:
+
+```text
+1549f074fd6ac6ae509c8de23cfe283e115782a0
+```
+
+GitHub Actions `Core Contracts` run `31934101690` also completed successfully for that exact SHA, with all of the following successful:
+
+```text
+Baseline suite registry contract
+Unit Contracts
+Compile Python sources
+Shell adapter syntax
+Registry smoke
+```
+
+Because this verification note update creates one final documentation commit after `1549f074...`, the exact final repository HEAD must still receive one last successful `Core Contracts` run before repository-side completion is claimed.
 
 ## Target-machine acceptance — PENDING
 
