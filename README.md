@@ -231,14 +231,36 @@ kiss_icp
 
 ### 2. Standardize + Inspector
 
+外部/upstream 已经提供 CSV 时继续使用原入口：
+
 ```bash
 lio-benchmark standardize trajectory \
   --run runs/greenhouse_001 \
   --algorithm point_lio \
   --input /path/to/trajectory.csv \
   --source-topic /odom
+```
 
-lio-benchmark standardize map --run runs/greenhouse_001 --algorithm point_lio
+如果算法是由 benchmark runner 运行，并把轨迹记录成 `raw/<algorithm>/` 下的 ROS 2 bag，则直接从 frozen run 标准化：
+
+```bash
+lio-benchmark standardize trajectory-from-run \
+  --run runs/greenhouse_001 \
+  --algorithm fast_livo2
+```
+
+该入口只做 raw pose message → standardized CSV 的表示转换，不做 tracked-frame 变换、world-gauge/gravity 对齐、外参变换、显示对齐、插值重采样或 warm-up 裁剪。它同时写入：
+
+```text
+metadata/algorithms/<algorithm>/trajectory_standardization.json
+```
+
+已有 `standardized/trajectories/<algorithm>.csv` 时直接拒绝覆盖。
+
+随后继续：
+
+```bash
+lio-benchmark standardize map --run runs/greenhouse_001 --algorithm fast_livo2
 
 lio-benchmark inspect \
   --run runs/greenhouse_001 \
@@ -332,7 +354,7 @@ benchmark_base/bin/lio-benchmark bundle --run /path/to/frozen/run
 <run>/reports/bundles/<run_id>_diagnostic_bundle.tar.gz
 ```
 
-默认包只包含 manifest、runtime identity、audit/diagnostic CSV/JSON、Common Scan Manifest、各算法 Unified Map metadata，以及打包时的 benchmark Git HEAD / status / local diff。它不会包含 `raw/`、rosbag 数据库、`.ply` / `.pcd` 地图、报告或 PNG 图。
+默认包包含 manifest、runtime identity、trajectory standardization metadata、audit/diagnostic CSV/JSON、Common Scan Manifest、各算法 Unified Map metadata，以及打包时的 benchmark Git HEAD / status / local diff。它不会包含 `raw/`、rosbag 数据库、`.ply` / `.pcd` 地图、报告或 PNG 图。
 
 需要把现有 report 和诊断图一并交给 reviewer 时：
 
@@ -368,6 +390,7 @@ runs/<run_id>/
 ├─ logs/
 └─ metadata/
    ├─ algorithms/<algorithm>/runtime_identity.json
+   ├─ algorithms/<algorithm>/trajectory_standardization.json
    ├─ frame_audit/
    └─ runtime_provenance/
 ```
@@ -422,13 +445,13 @@ unified map                 772,631 points
 
 该数据集当时的 LiDAR–IMU 外参数值尚未完成正式确认，因此地图仍按 `DIAGNOSTIC_ONLY / BLOCKED_CALIBRATION` 对待，不把诊断结果包装成正式算法排名
 
-三算法 Runtime Execution Contract 的目标机验证使用独立配置：
+三算法 Runtime Execution Contract + trajectory-from-run 的目标机验证使用独立配置：
 
 ```text
 benchmark_base/config/green_house_three_runtime_smoke.json
 ```
 
-该验证必须创建新的 run ID，不覆盖历史 smoke。目标机验证完成前，README 不声明这项 runtime contract 已通过真实机器回放。
+该验证必须创建新的 run ID，不覆盖历史 smoke。目标机验证完成前，README 不声明这条新 runtime/trajectory standardization 链路已通过真实机器回放。
 
 ## Repository boundary
 
@@ -455,6 +478,8 @@ benchmark_base/config/green_house_three_runtime_smoke.json
 - [`docs/superpowers/specs/2026-08-15-lio-baseline-suite-design.md`](docs/superpowers/specs/2026-08-15-lio-baseline-suite-design.md) — baseline suite / two-map / Display Alignment contract
 - [`docs/superpowers/specs/2026-08-16-diagnostic-bundle-design.md`](docs/superpowers/specs/2026-08-16-diagnostic-bundle-design.md) — diagnostic bundle contract
 - [`docs/superpowers/specs/2026-08-16-runtime-execution-contract-design.md`](docs/superpowers/specs/2026-08-16-runtime-execution-contract-design.md) — explicit executable / replay / runtime identity contract
+- [`docs/superpowers/specs/2026-08-16-trajectory-from-run-design.md`](docs/superpowers/specs/2026-08-16-trajectory-from-run-design.md) — run-local ROS 2 trajectory bag standardization contract
+- [`docs/verification/trajectory_from_run_verification.md`](docs/verification/trajectory_from_run_verification.md) — repository verification and target-machine acceptance gate
 
 ## License
 
