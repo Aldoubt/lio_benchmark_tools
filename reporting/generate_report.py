@@ -31,6 +31,7 @@ from reporting.contracts import AlgorithmSummary, collect_summary, write_summary
 from reporting.diagnostics import (  # noqa: E402
     PairwiseDisagreement,
     collect_run_diagnostics,
+    warmup_suffix,
     write_run_diagnostics,
 )
 from visualization.alignment import StartYawAlignment, load_start_yaw_alignment  # noqa: E402
@@ -178,8 +179,19 @@ def plot_trajectory(run: Path, manifest: dict[str, Any], algorithms: list[str], 
 
 
 def _trajectory_series(trajectory: Trajectory, warmup_s: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    start = trajectory.timestamps[0] + warmup_s
-    selected = [sample for sample in trajectory.samples if sample.timestamp_s >= start]
+    if warmup_s < 0.0 or not math.isfinite(warmup_s):
+        raise ValueError("warmup_s must be a finite non-negative value")
+    if warmup_s == 0.0:
+        selected = list(trajectory.samples)
+        start = trajectory.timestamps[0]
+    else:
+        start = trajectory.timestamps[0] + warmup_s
+        if start >= trajectory.timestamps[-1]:
+            return tuple(np.asarray([], dtype=np.float64) for _ in range(5))  # type: ignore[return-value]
+        max_gap = max(b - a for a, b in zip(trajectory.timestamps, trajectory.timestamps[1:]))
+        boundary = trajectory.interpolate_pose(start, tolerance_s=max_gap + 1e-12).pose
+        selected = [boundary]
+        selected.extend(sample for sample in trajectory.samples if sample.timestamp_s > start + 1e-12)
     if len(selected) < 2:
         return tuple(np.asarray([], dtype=np.float64) for _ in range(5))  # type: ignore[return-value]
     time = np.asarray([sample.timestamp_s - start for sample in selected], dtype=np.float64)
@@ -318,9 +330,10 @@ def scoreboard_markdown(manifest: dict[str, Any], summaries: list[AlgorithmSumma
     return "\n\n".join(sections)
 
 
-def write_report(run: Path, manifest: dict[str, Any], summaries: list[AlgorithmSummary], figures: list[Path], display_alignment: str, warmup_s: float) -> None:
+def write_report(run: Path, manifest: dict[str, Any], summaries: list[AlgorithmSummary], figures: list[Path], display_alignment: str, warmup_s: float) -> Path:
     dataset = manifest.get("dataset", {})
     canonical = normalize_display_alignment_mode(display_alignment)
+    suffix = warmup_suffix(warmup_s)
     table = markdown_table(summaries, manifest)
     scoreboards = scoreboard_markdown(manifest, summaries)
     figure_lines = "\n".join(f"![{path.stem}](../figures/{path.name})" for path in figures if path.is_file())
@@ -331,6 +344,8 @@ def write_report(run: Path, manifest: dict[str, Any], summaries: list[AlgorithmS
         if canonical == "START_XY_YAW"
         else "`NONE` displays/compares standardized artifacts without a display transform."
     )
+    smoke_name = f"smoke_diagnostics{suffix}.csv"
+    pair_name = f"pairwise_disagreement{suffix}.csv"
     markdown = f"""# LIO Benchmark Report — {manifest.get('run_id', run.name)}
 
 - Dataset: `{dataset.get('dataset_id', 'legacy_v1_dataset')}`
@@ -350,9 +365,9 @@ Missing, blocked, failed, and invalid artifacts remain visible and are never con
 
 ## Descriptive divergence diagnostics
 
-`metrics/smoke_diagnostics.csv` describes each standardized trajectory. `metrics/pairwise_disagreement.csv` compares estimator pairs only over their common timestamp interval using trajectory interpolation. Pairwise values are **disagreement**, not localization error or accuracy, because no ground-truth trajectory is assumed.
+`metrics/{smoke_name}` describes each standardized trajectory. `metrics/{pair_name}` compares estimator pairs only over their common timestamp interval using trajectory interpolation. Pairwise values are **disagreement**, not localization error or accuracy, because no ground-truth trajectory is assumed.
 
-A non-zero warmup produces an additional post-initialization view; it does not delete or rewrite source trajectory samples.
+A non-zero warmup produces an additional post-initialization view with suffixed filenames; it does not delete, overwrite or rewrite the full-run diagnostic artifacts or source trajectory samples.
 
 ## Scoreboards
 
@@ -364,13 +379,15 @@ A non-zero warmup produces an additional post-initialization view; it does not d
 """
     reports = run / "reports"
     reports.mkdir(parents=True, exist_ok=True)
-    (reports / "report.md").write_text(markdown, encoding="utf-8")
+    md_path = reports / f"report{suffix}.md"
+    html_path = reports / f"report{suffix}.html"
+    md_path.write_text(markdown, encoding="utf-8")
     image_tags = "".join(
         f'<h3>{html.escape(path.stem)}</h3><img src="../figures/{html.escape(path.name)}" style="max-width:100%;">'
         for path in figures
         if path.is_file()
     )
-    (reports / "report.html").write_text(
+    html_path.write_text(
         "<!doctype html><meta charset='utf-8'><title>LIO Benchmark Report</title>"
         "<style>body{font-family:system-ui,sans-serif;max-width:1200px;margin:2rem auto;padding:0 1rem;}"
         "pre{white-space:pre-wrap;}img{border:1px solid #ddd;}</style><pre>"
@@ -379,6 +396,7 @@ A non-zero warmup produces an additional post-initialization view; it does not d
         + image_tags,
         encoding="utf-8",
     )
+    return md_path
 
 
 def generate(
@@ -388,8 +406,7 @@ def generate(
     warmup_s: float = 0.0,
 ) -> None:
     canonical = normalize_display_alignment_mode(display_alignment)
-    if warmup_s < 0.0 or not math.isfinite(warmup_s):
-        raise ValueError("warmup_s must be a finite non-negative value")
+    suffix = warmup_suffix(warmup_s)
     manifest = load_json(run / "manifest.json")
     algorithms = list(manifest.get("algorithms", {}))
     summaries = [collect_summary(run, algorithm_id) for algorithm_id in algorithms]
@@ -401,7 +418,7 @@ def generate(
         alignment_mode=canonical,
         sample_period_s=0.1,
     )
-    write_run_diagnostics(run, diagnostic_rows, pair_rows)
+    write_run_diagnostics(run, diagnostic_rows, pair_rows, warmup_s=warmup_s)
     roi = load_roi(roi_path) if roi_path else None
     clouds = load_maps(run, algorithms, roi, canonical)
     figures = [
@@ -410,12 +427,12 @@ def generate(
         run / "figures/map_xz_comparison.png",
         run / "figures/map_yz_comparison.png",
         run / "figures/runtime_comparison.png",
-        run / "figures/trajectory_z_vs_time.png",
-        run / "figures/trajectory_roll_vs_time.png",
-        run / "figures/trajectory_pitch_vs_time.png",
-        run / "figures/trajectory_yaw_relative_vs_time.png",
-        run / "figures/pairwise_xy_disagreement.png",
-        run / "figures/pairwise_z_disagreement.png",
+        run / f"figures/trajectory_z_vs_time{suffix}.png",
+        run / f"figures/trajectory_roll_vs_time{suffix}.png",
+        run / f"figures/trajectory_pitch_vs_time{suffix}.png",
+        run / f"figures/trajectory_yaw_relative_vs_time{suffix}.png",
+        run / f"figures/pairwise_xy_disagreement{suffix}.png",
+        run / f"figures/pairwise_z_disagreement{suffix}.png",
     ]
     plot_trajectory(run, manifest, algorithms, figures[0], canonical)
     plot_map_grid(manifest, clouds, "xy", figures[1], canonical)
@@ -428,15 +445,15 @@ def generate(
     plot_state_series(run, manifest, algorithms, figures[8], "yaw", warmup_s)
     plot_pairwise_disagreement(manifest, pair_details, figures[9], "xy")
     plot_pairwise_disagreement(manifest, pair_details, figures[10], "z")
-    write_report(run, manifest, summaries, figures, canonical, warmup_s)
-    print(run / "reports/report.md")
+    report_path = write_report(run, manifest, summaries, figures, canonical, warmup_s)
+    print(report_path)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--roi", type=Path)
-    parser.add_argument("--warmup-s", type=float, default=0.0, help="Optional post-initialization diagnostic warmup; source artifacts remain unchanged.")
+    parser.add_argument("--warmup-s", type=float, default=0.0, help="Optional post-initialization diagnostic warmup; source/full-run artifacts remain unchanged.")
     parser.add_argument(
         "--display-alignment",
         choices=("START_XY_YAW", "NONE", "start_yaw", "raw"),
