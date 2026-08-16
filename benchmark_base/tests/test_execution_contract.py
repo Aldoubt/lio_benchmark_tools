@@ -13,6 +13,7 @@ from benchmark_base.lib.execution_contract import (
     build_blocked_runtime_identity,
     build_runtime_identity,
     fingerprint_executable,
+    fingerprint_runtime_overlays,
     resolve_execution,
     write_runtime_identity,
 )
@@ -91,10 +92,40 @@ class RuntimeExecutionContractTest(unittest.TestCase):
         self.assertEqual(3, value["size_bytes"])
         self.assertIsInstance(value["mtime_ns"], int)
 
+    def test_runtime_overlay_fingerprints_preserve_order_sha_and_size(self) -> None:
+        setup_a = self.root / "overlay_a/setup.bash"
+        setup_b = self.root / "overlay_b/setup.bash"
+        setup_a.parent.mkdir(parents=True)
+        setup_b.parent.mkdir(parents=True)
+        setup_a.write_bytes(b"export A=1\n")
+        setup_b.write_bytes(b"export B=2\n")
+        evidence = fingerprint_runtime_overlays([setup_a, setup_b])
+        self.assertEqual(
+            [str(setup_a.resolve()), str(setup_b.resolve())],
+            [row["setup_path"] for row in evidence],
+        )
+        self.assertEqual(
+            hashlib.sha256(setup_a.read_bytes()).hexdigest(),
+            evidence[0]["setup_sha256"],
+        )
+        self.assertEqual(setup_a.stat().st_size, evidence[0]["setup_size_bytes"])
+        self.assertEqual(
+            hashlib.sha256(setup_b.read_bytes()).hexdigest(),
+            evidence[1]["setup_sha256"],
+        )
+
+    def test_runtime_overlay_fingerprint_missing_path_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ExecutionContractError, "BLOCKED_EXECUTION"):
+            fingerprint_runtime_overlays([self.root / "missing/setup.bash"])
+
     def test_runtime_identity_records_binary_replay_config_and_package_dimensions(self) -> None:
         binary = self._make_executable("fastlio_mapping", b"binary-v2")
         config = self.root / "benchmark.yaml"
         config.write_text("publish:\n  path_en: true\n", encoding="utf-8")
+        setup = self.root / "overlay/setup.bash"
+        setup.parent.mkdir(parents=True)
+        setup.write_text("export OVERLAY=1\n", encoding="utf-8")
+        overlay_evidence = fingerprint_runtime_overlays([setup])
         resolution = resolve_execution(self._manifest(binary), "fast_lio2")
         payload = build_runtime_identity(
             manifest=self._manifest(binary),
@@ -108,7 +139,8 @@ class RuntimeExecutionContractTest(unittest.TestCase):
                 "remote_origin": "https://github.com/local/custom-fastlio.git",
             },
             runtime_package=None,
-            runtime_package_prefix=None,
+            runtime_package_prefix="/runtime/package/prefix",
+            runtime_overlays=overlay_evidence,
         )
         self.assertEqual("FROZEN", payload["identity_status"])
         self.assertIsNone(payload["blocking_reason"])
@@ -118,7 +150,8 @@ class RuntimeExecutionContractTest(unittest.TestCase):
         self.assertEqual(hashlib.sha256(config.read_bytes()).hexdigest(), payload["effective_config"]["sha256"])
         self.assertEqual("fast_lio", payload["registry_package"])
         self.assertIsNone(payload["runtime_package"])
-        self.assertIsNone(payload["runtime_package_prefix"])
+        self.assertEqual("/runtime/package/prefix", payload["runtime_package_prefix"])
+        self.assertEqual(overlay_evidence, payload["runtime_overlays"])
         self.assertEqual("REGISTRY_MISMATCH", payload["source_relationship"])
 
     def test_blocked_execution_identity_preserves_attempt_without_inventing_binary(self) -> None:
