@@ -75,6 +75,8 @@ def classify_runtime_provenance(
     actual = normalize_github_repository(actual_repository)
 
     unresolved: list[str] = []
+    if expected is None:
+        unresolved.append("declared execution repository is unavailable")
     if not ros_package_prefix:
         unresolved.append("ROS package prefix is unavailable")
     if expected is not None and actual is None:
@@ -82,7 +84,7 @@ def classify_runtime_provenance(
     if unresolved:
         return ProvenanceClassification(ProvenanceStatus.UNRESOLVED, tuple(unresolved))
 
-    if expected is not None and actual != expected:
+    if actual != expected:
         return ProvenanceClassification(
             ProvenanceStatus.SOURCE_MISMATCH,
             (f"source repository mismatch: expected={expected} actual={actual}",),
