@@ -81,6 +81,56 @@ class ManifestTest(unittest.TestCase):
             errors,
         )
 
+    def test_v2_runtime_overlays_are_validated_and_frozen_in_order(self) -> None:
+        manifest = self._v2_manifest()
+        manifest["runtime_overlays"] = {
+            "fast_livo2": [
+                "/opt/vendor/a/setup.bash",
+                "/opt/vendor/b/setup.bash",
+            ]
+        }
+        errors = validate_manifest(manifest, registry=Registry(), check_paths=False)
+        self.assertEqual([], errors)
+        resolved = resolve_manifest(manifest, Registry())
+        self.assertEqual(
+            ["/opt/vendor/a/setup.bash", "/opt/vendor/b/setup.bash"],
+            resolved["runtime_overlays"]["fast_livo2"],
+        )
+
+    def test_v2_rejects_invalid_runtime_overlays(self) -> None:
+        cases = (
+            (
+                {"kiss_icp": ["/opt/kiss/setup.bash"]},
+                "runtime_overlays.kiss_icp references an unselected algorithm",
+            ),
+            (
+                {"fast_livo2": []},
+                "runtime_overlays.fast_livo2 must be a non-empty list",
+            ),
+            (
+                {"fast_livo2": ["relative/setup.bash"]},
+                "runtime_overlays.fast_livo2[0] must be absolute",
+            ),
+            (
+                {"fast_livo2": ["/opt/a/setup.bash", "/opt/a/setup.bash"]},
+                "runtime_overlays.fast_livo2 contains duplicate overlay path: /opt/a/setup.bash",
+            ),
+            (
+                {"fast_livo2": [""]},
+                "runtime_overlays.fast_livo2[0] must be a non-empty string",
+            ),
+            (
+                {"fast_livo2": "not-a-list"},
+                "runtime_overlays.fast_livo2 must be a non-empty list",
+            ),
+        )
+        for runtime_overlays, expected in cases:
+            with self.subTest(runtime_overlays=runtime_overlays):
+                manifest = self._v2_manifest()
+                manifest["runtime_overlays"] = runtime_overlays
+                errors = validate_manifest(manifest, registry=Registry(), check_paths=False)
+                self.assertIn(expected, errors)
+
     def test_v2_rejects_invalid_replay_values(self) -> None:
         cases = (
             ({"rate": 0.0}, "replay.rate must be finite and > 0"),
@@ -108,6 +158,13 @@ class ManifestTest(unittest.TestCase):
         self.assertEqual(
             "/home/yangxuan/RM-NAV/build/fast_lio/fastlio_mapping",
             resolved["execution_overrides"]["fast_lio2"]["executable"],
+        )
+        self.assertEqual(
+            [
+                "/home/yangxuan/lio_benchmark_dependencies/"
+                "kiss_icp_ws/install/setup.bash"
+            ],
+            resolved["runtime_overlays"]["kiss_icp"],
         )
 
     def test_v2_unknown_algorithm_fails_closed(self) -> None:
