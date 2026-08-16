@@ -1,20 +1,37 @@
 #!/usr/bin/env python3
 """LIO Benchmark Tools command dispatcher.
 
-The existing V2 CLI remains byte-for-byte available in ``lio-benchmark-core``.
-This dispatcher adds new comparison commands without changing established
-command behavior while the CLI is incrementally modularized.
+The established V2 CLI remains byte-for-byte available in
+``lio-benchmark-core``. This dispatcher preserves its importable parser
+contract while adding comparison commands incrementally.
 """
 from __future__ import annotations
 
 import argparse
-import os
+import importlib.machinery
+import importlib.util
 from pathlib import Path
 import subprocess
 import sys
 
 MODULE_ROOT = Path(__file__).resolve().parents[2]
 CORE = Path(__file__).with_name("lio-benchmark-core")
+
+
+def _load_core():
+    loader = importlib.machinery.SourceFileLoader("lio_benchmark_core", str(CORE))
+    spec = importlib.util.spec_from_loader("lio_benchmark_core", loader)
+    if spec is None:
+        raise RuntimeError(f"unable to load CLI core: {CORE}")
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+_core = _load_core()
+# Preserve the historical importable CLI contract used by repository tests and
+# by callers that inspect the parser programmatically.
+build_parser = _core.build_parser
 
 
 def _compare(argv: list[str]) -> int:
@@ -60,8 +77,7 @@ def main() -> int:
         return _compare(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] in {"-h", "--help"}:
         return _combined_help()
-    os.execv(sys.executable, [sys.executable, str(CORE), *sys.argv[1:]])
-    raise AssertionError("os.execv returned unexpectedly")
+    return _core.main()
 
 
 if __name__ == "__main__":

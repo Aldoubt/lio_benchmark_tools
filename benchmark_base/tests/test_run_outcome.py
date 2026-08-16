@@ -20,7 +20,11 @@ class RunOutcomeTest(unittest.TestCase):
 
     def test_main_cli_uses_shared_runner_status_classifier(self) -> None:
         root = Path(__file__).resolve().parents[2]
-        text = (root / "benchmark_base/bin/lio-benchmark").read_text(encoding="utf-8")
+        paths = (
+            root / "benchmark_base/bin/lio-benchmark",
+            root / "benchmark_base/bin/lio-benchmark-core",
+        )
+        text = "\n".join(path.read_text(encoding="utf-8") for path in paths if path.is_file())
         self.assertIn(
             "from benchmark_base.lib.run_outcome import classify_runner_status",
             text,
