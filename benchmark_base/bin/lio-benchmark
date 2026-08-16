@@ -96,8 +96,12 @@ def run_command(command: list[str], cwd: Path, output: Path | None = None) -> No
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8") as stream:
             result = subprocess.run(
-                command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT,
-                text=True, check=False,
+                command,
+                cwd=cwd,
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
             )
     if result.returncode:
         raise SystemExit(result.returncode)
@@ -122,10 +126,15 @@ def resolve_ros_distro(run: Path) -> str:
         if value:
             return value
     ros_root = Path("/opt/ros")
-    candidates = sorted(
-        path.name for path in ros_root.iterdir()
-        if path.is_dir() and (path / "setup.bash").is_file()
-    ) if ros_root.is_dir() else []
+    candidates = (
+        sorted(
+            path.name
+            for path in ros_root.iterdir()
+            if path.is_dir() and (path / "setup.bash").is_file()
+        )
+        if ros_root.is_dir()
+        else []
+    )
     if len(candidates) == 1:
         return candidates[0]
     raise SystemExit(
@@ -209,12 +218,16 @@ def git_state(path: Path) -> dict[str, Any]:
 
     def capture(*parts: str) -> str:
         return subprocess.run(
-            ["git", "-C", str(path), *parts], text=True,
-            capture_output=True, check=False,
+            ["git", "-C", str(path), *parts],
+            text=True,
+            capture_output=True,
+            check=False,
         ).stdout.strip()
 
     return {
-        "path": str(path), "git": True, "commit": capture("rev-parse", "HEAD"),
+        "path": str(path),
+        "git": True,
+        "commit": capture("rev-parse", "HEAD"),
         "branch": capture("rev-parse", "--abbrev-ref", "HEAD"),
         "dirty": bool(capture("status", "--porcelain")),
     }
@@ -255,7 +268,12 @@ def algorithm_command(run: Path, manifest: dict[str, Any], algorithm_id: str) ->
     runner = resolved_runner(manifest["algorithms"][algorithm_id])
     if not runner.is_file():
         raise SystemExit(f"runner does not exist: {runner}")
-    return ["bash", str(runner), str(manifest["dataset"]["bag_dir"]), str(run / "raw" / algorithm_id)]
+    return [
+        "bash",
+        str(runner),
+        str(manifest["dataset"]["bag_dir"]),
+        str(run / "raw" / algorithm_id),
+    ]
 
 
 def _write_preflight(run: Path, algorithm_id: str, payload: dict[str, Any]) -> Path:
@@ -375,7 +393,9 @@ def execute_algorithm(
             "WORKSPACE": str(Path(manifest["workspace"]).expanduser()),
             "BENCHMARK_ROOT": str(MODULE_ROOT),
             "BENCHMARK_RUN_DIR": str(run),
-            "BENCHMARK_DATASET_ID": str(manifest["dataset"].get("dataset_id", "legacy_v1_dataset")),
+            "BENCHMARK_DATASET_ID": str(
+                manifest["dataset"].get("dataset_id", "legacy_v1_dataset")
+            ),
             "BENCHMARK_ALGORITHM_ID": algorithm_id,
             "BENCHMARK_GENERATED_CONFIG_DIR": str(prepared.generated_config_dir),
             "BENCHMARK_REPLAY_RATE": str(replay["rate"]),
@@ -411,7 +431,10 @@ def execute_algorithm(
         "collection": collection.to_dict(),
     }
     _write_run_status(run, algorithm_id, payload)
-    print(f"{algorithm_id}: {payload['status']} returncode={result.returncode} diagnostic_only={preflight.diagnostic_only}")
+    print(
+        f"{algorithm_id}: {payload['status']} returncode={result.returncode} "
+        f"diagnostic_only={preflight.diagnostic_only}"
+    )
     return result.returncode
 
 
@@ -461,7 +484,11 @@ def cmd_list_registry(args: argparse.Namespace) -> None:
 
 def cmd_show_registry(args: argparse.Namespace) -> None:
     try:
-        record = REGISTRY.load_algorithm(args.id) if args.kind == "algorithm" else REGISTRY.load_dataset(args.id)
+        record = (
+            REGISTRY.load_algorithm(args.id)
+            if args.kind == "algorithm"
+            else REGISTRY.load_dataset(args.id)
+        )
     except RegistryError as exc:
         raise SystemExit(str(exc)) from exc
     print(json.dumps(record, ensure_ascii=False, indent=2))
@@ -489,8 +516,11 @@ def cmd_live_prepare(args: argparse.Namespace) -> None:
 def cmd_mark(args: argparse.Namespace) -> None:
     try:
         record = append_marker(
-            session=args.session, algorithm_id=args.algorithm, event=args.event,
-            bag_time_s=args.bag_time, note=args.note,
+            session=args.session,
+            algorithm_id=args.algorithm,
+            event=args.event,
+            bag_time_s=args.bag_time,
+            note=args.note,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
@@ -502,13 +532,27 @@ def cmd_standardize_trajectory(args: argparse.Namespace) -> None:
     if args.algorithm not in manifest["algorithms"]:
         raise SystemExit(f"algorithm is not selected in run: {args.algorithm}")
     command = [
-        str(args.input), "--output",
+        str(args.input),
+        "--output",
         str(run / "standardized/trajectories" / f"{args.algorithm}.csv"),
-        "--source-topic", args.source_topic,
+        "--source-topic",
+        args.source_topic,
     ]
     if args.column_map:
         command.extend(("--column-map", args.column_map))
     run_python("evaluators/standardize_trajectory.py", command)
+
+
+def cmd_standardize_trajectory_from_run(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    if args.algorithm not in manifest["algorithms"]:
+        raise SystemExit(f"algorithm is not selected in run: {args.algorithm}")
+    run_python_ros(
+        run,
+        manifest,
+        "evaluators/standardize_trajectory_from_run.py",
+        ["--run", str(run), "--algorithm", args.algorithm],
+    )
 
 
 def cmd_standardize_scan_manifest(args: argparse.Namespace) -> None:
@@ -567,11 +611,16 @@ def cmd_bundle(args: argparse.Namespace) -> None:
 
 def cmd_inspect(args: argparse.Namespace) -> None:
     command = [
-        "--run", str(args.run),
-        "--map-kind", args.map_kind,
-        "--color-mode", args.color_mode,
-        "--point-size", str(args.point_size),
-        "--display-alignment", args.display_alignment,
+        "--run",
+        str(args.run),
+        "--map-kind",
+        args.map_kind,
+        "--color-mode",
+        args.color_mode,
+        "--point-size",
+        str(args.point_size),
+        "--display-alignment",
+        args.display_alignment,
     ]
     if args.algorithms:
         command.extend(["--algorithms", *args.algorithms])
@@ -584,9 +633,12 @@ def cmd_inspect(args: argparse.Namespace) -> None:
 
 def cmd_report(args: argparse.Namespace) -> None:
     command = [
-        "--run", str(args.run),
-        "--display-alignment", args.display_alignment,
-        "--warmup-s", str(args.warmup_s),
+        "--run",
+        str(args.run),
+        "--display-alignment",
+        args.display_alignment,
+        "--warmup-s",
+        str(args.warmup_s),
     ]
     if args.roi:
         command.extend(("--roi", str(args.roi)))
@@ -595,10 +647,14 @@ def cmd_report(args: argparse.Namespace) -> None:
 
 def cmd_demo(args: argparse.Namespace) -> None:
     command = [
-        "--run", str(args.run),
-        "--frames-per-algorithm", str(args.frames_per_algorithm),
-        "--fps", str(args.fps),
-        "--display-alignment", args.display_alignment,
+        "--run",
+        str(args.run),
+        "--frames-per-algorithm",
+        str(args.frames_per_algorithm),
+        "--fps",
+        str(args.fps),
+        "--display-alignment",
+        args.display_alignment,
     ]
     if args.algorithms:
         command.extend(["--algorithms", *args.algorithms])
@@ -624,37 +680,151 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lio-benchmark")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    validate = sub.add_parser("validate"); validate.add_argument("--config", type=Path, required=True); validate.add_argument("--verify-hash", action="store_true"); validate.set_defaults(func=cmd_validate)
-    init = sub.add_parser("init"); init.add_argument("--config", type=Path, required=True); init.add_argument("--run-id"); init.set_defaults(func=cmd_init)
-    analyze = sub.add_parser("analyze-bag"); analyze.add_argument("--run", type=Path, required=True); analyze.set_defaults(func=cmd_analyze_bag)
-    snapshot = sub.add_parser("snapshot"); snapshot.add_argument("--run", type=Path, required=True); snapshot.set_defaults(func=cmd_snapshot)
-    preflight = sub.add_parser("preflight"); preflight.add_argument("--run", type=Path, required=True); preflight.add_argument("--algorithm"); preflight.add_argument("--allow-diagnostic-calibration", action="store_true"); preflight.set_defaults(func=cmd_preflight)
-    run = sub.add_parser("run"); run.add_argument("--run", type=Path, required=True); run.add_argument("--algorithm", required=True); run.add_argument("--allow-diagnostic-calibration", action="store_true"); run.set_defaults(func=cmd_run)
-    run_all = sub.add_parser("run-all"); run_all.add_argument("--run", type=Path, required=True); run_all.add_argument("--stop-on-failure", action="store_true"); run_all.add_argument("--allow-diagnostic-calibration", action="store_true"); run_all.set_defaults(func=cmd_run_all)
-    commands = sub.add_parser("commands"); commands.add_argument("--run", type=Path, required=True); commands.set_defaults(func=cmd_commands)
-    listing = sub.add_parser("list"); listing.add_argument("kind", choices=("algorithms", "datasets")); listing.set_defaults(func=cmd_list_registry)
-    show = sub.add_parser("show"); show.add_argument("kind", choices=("algorithm", "dataset")); show.add_argument("id"); show.set_defaults(func=cmd_show_registry)
+    validate = sub.add_parser("validate")
+    validate.add_argument("--config", type=Path, required=True)
+    validate.add_argument("--verify-hash", action="store_true")
+    validate.set_defaults(func=cmd_validate)
+
+    init = sub.add_parser("init")
+    init.add_argument("--config", type=Path, required=True)
+    init.add_argument("--run-id")
+    init.set_defaults(func=cmd_init)
+
+    analyze = sub.add_parser("analyze-bag")
+    analyze.add_argument("--run", type=Path, required=True)
+    analyze.set_defaults(func=cmd_analyze_bag)
+
+    snapshot = sub.add_parser("snapshot")
+    snapshot.add_argument("--run", type=Path, required=True)
+    snapshot.set_defaults(func=cmd_snapshot)
+
+    preflight = sub.add_parser("preflight")
+    preflight.add_argument("--run", type=Path, required=True)
+    preflight.add_argument("--algorithm")
+    preflight.add_argument("--allow-diagnostic-calibration", action="store_true")
+    preflight.set_defaults(func=cmd_preflight)
+
+    run = sub.add_parser("run")
+    run.add_argument("--run", type=Path, required=True)
+    run.add_argument("--algorithm", required=True)
+    run.add_argument("--allow-diagnostic-calibration", action="store_true")
+    run.set_defaults(func=cmd_run)
+
+    run_all = sub.add_parser("run-all")
+    run_all.add_argument("--run", type=Path, required=True)
+    run_all.add_argument("--stop-on-failure", action="store_true")
+    run_all.add_argument("--allow-diagnostic-calibration", action="store_true")
+    run_all.set_defaults(func=cmd_run_all)
+
+    commands = sub.add_parser("commands")
+    commands.add_argument("--run", type=Path, required=True)
+    commands.set_defaults(func=cmd_commands)
+
+    listing = sub.add_parser("list")
+    listing.add_argument("kind", choices=("algorithms", "datasets"))
+    listing.set_defaults(func=cmd_list_registry)
+
+    show = sub.add_parser("show")
+    show.add_argument("kind", choices=("algorithm", "dataset"))
+    show.add_argument("id")
+    show.set_defaults(func=cmd_show_registry)
 
     standardize = sub.add_parser("standardize")
     standardize_sub = standardize.add_subparsers(dest="standardize_command", required=True)
-    st = standardize_sub.add_parser("trajectory"); st.add_argument("--run", type=Path, required=True); st.add_argument("--algorithm", required=True); st.add_argument("--input", type=Path, required=True); st.add_argument("--source-topic", default=""); st.add_argument("--column-map"); st.set_defaults(func=cmd_standardize_trajectory)
-    ss = standardize_sub.add_parser("scan-manifest"); ss.add_argument("--run", type=Path, required=True); ss.add_argument("--start-offset-s", type=float); ss.add_argument("--duration-s", type=float); ss.add_argument("--overwrite", action="store_true"); ss.set_defaults(func=cmd_standardize_scan_manifest)
-    sm = standardize_sub.add_parser("map"); sm.add_argument("--run", type=Path, required=True); sm.add_argument("--algorithm", required=True); sm.set_defaults(func=cmd_standardize_map)
+
+    st = standardize_sub.add_parser("trajectory")
+    st.add_argument("--run", type=Path, required=True)
+    st.add_argument("--algorithm", required=True)
+    st.add_argument("--input", type=Path, required=True)
+    st.add_argument("--source-topic", default="")
+    st.add_argument("--column-map")
+    st.set_defaults(func=cmd_standardize_trajectory)
+
+    sfr = standardize_sub.add_parser("trajectory-from-run")
+    sfr.add_argument("--run", type=Path, required=True)
+    sfr.add_argument("--algorithm", required=True)
+    sfr.set_defaults(func=cmd_standardize_trajectory_from_run)
+
+    ss = standardize_sub.add_parser("scan-manifest")
+    ss.add_argument("--run", type=Path, required=True)
+    ss.add_argument("--start-offset-s", type=float)
+    ss.add_argument("--duration-s", type=float)
+    ss.add_argument("--overwrite", action="store_true")
+    ss.set_defaults(func=cmd_standardize_scan_manifest)
+
+    sm = standardize_sub.add_parser("map")
+    sm.add_argument("--run", type=Path, required=True)
+    sm.add_argument("--algorithm", required=True)
+    sm.set_defaults(func=cmd_standardize_map)
 
     audit = sub.add_parser("audit")
     audit_sub = audit.add_subparsers(dest="audit_command", required=True)
-    trajectory_frames = audit_sub.add_parser("trajectory-frames"); trajectory_frames.add_argument("--run", type=Path, required=True); trajectory_frames.add_argument("--algorithms", nargs="+"); trajectory_frames.set_defaults(func=cmd_audit_trajectory_frames)
-    runtime_provenance = audit_sub.add_parser("runtime-provenance"); runtime_provenance.add_argument("--run", type=Path, required=True); runtime_provenance.add_argument("--algorithms", nargs="+"); runtime_provenance.set_defaults(func=cmd_audit_runtime_provenance)
 
-    bundle = sub.add_parser("bundle"); bundle.add_argument("--run", type=Path, required=True); bundle.add_argument("--include-reports", action="store_true"); bundle.add_argument("--output", type=Path); bundle.set_defaults(func=cmd_bundle)
-    inspect = sub.add_parser("inspect"); inspect.add_argument("--run", type=Path, required=True); inspect.add_argument("--algorithms", nargs="+"); inspect.add_argument("--map-kind", choices=("unified", "native"), default="unified"); inspect.add_argument("--color-mode", choices=("height", "intensity", "algorithm"), default="height"); inspect.add_argument("--roi", type=Path); inspect.add_argument("--camera", type=Path); inspect.add_argument("--point-size", type=int, default=2); _add_alignment_option(inspect); inspect.set_defaults(func=cmd_inspect)
-    report = sub.add_parser("report"); report.add_argument("--run", type=Path, required=True); report.add_argument("--roi", type=Path); report.add_argument("--warmup-s", type=float, default=0.0); _add_alignment_option(report); report.set_defaults(func=cmd_report)
-    demo = sub.add_parser("demo"); demo.add_argument("--run", type=Path, required=True); demo.add_argument("--algorithms", nargs="+"); demo.add_argument("--roi", type=Path); demo.add_argument("--camera", type=Path); demo.add_argument("--output", type=Path); demo.add_argument("--frames-per-algorithm", type=int, default=24); demo.add_argument("--fps", type=int, default=12); _add_alignment_option(demo); demo.set_defaults(func=cmd_demo)
+    trajectory_frames = audit_sub.add_parser("trajectory-frames")
+    trajectory_frames.add_argument("--run", type=Path, required=True)
+    trajectory_frames.add_argument("--algorithms", nargs="+")
+    trajectory_frames.set_defaults(func=cmd_audit_trajectory_frames)
+
+    runtime_provenance = audit_sub.add_parser("runtime-provenance")
+    runtime_provenance.add_argument("--run", type=Path, required=True)
+    runtime_provenance.add_argument("--algorithms", nargs="+")
+    runtime_provenance.set_defaults(func=cmd_audit_runtime_provenance)
+
+    bundle = sub.add_parser("bundle")
+    bundle.add_argument("--run", type=Path, required=True)
+    bundle.add_argument("--include-reports", action="store_true")
+    bundle.add_argument("--output", type=Path)
+    bundle.set_defaults(func=cmd_bundle)
+
+    inspect = sub.add_parser("inspect")
+    inspect.add_argument("--run", type=Path, required=True)
+    inspect.add_argument("--algorithms", nargs="+")
+    inspect.add_argument("--map-kind", choices=("unified", "native"), default="unified")
+    inspect.add_argument("--color-mode", choices=("height", "intensity", "algorithm"), default="height")
+    inspect.add_argument("--roi", type=Path)
+    inspect.add_argument("--camera", type=Path)
+    inspect.add_argument("--point-size", type=int, default=2)
+    _add_alignment_option(inspect)
+    inspect.set_defaults(func=cmd_inspect)
+
+    report = sub.add_parser("report")
+    report.add_argument("--run", type=Path, required=True)
+    report.add_argument("--roi", type=Path)
+    report.add_argument("--warmup-s", type=float, default=0.0)
+    _add_alignment_option(report)
+    report.set_defaults(func=cmd_report)
+
+    demo = sub.add_parser("demo")
+    demo.add_argument("--run", type=Path, required=True)
+    demo.add_argument("--algorithms", nargs="+")
+    demo.add_argument("--roi", type=Path)
+    demo.add_argument("--camera", type=Path)
+    demo.add_argument("--output", type=Path)
+    demo.add_argument("--frames-per-algorithm", type=int, default=24)
+    demo.add_argument("--fps", type=int, default=12)
+    _add_alignment_option(demo)
+    demo.set_defaults(func=cmd_demo)
 
     live = sub.add_parser("live")
     live_sub = live.add_subparsers(dest="live_command", required=True)
-    lp = live_sub.add_parser("prepare"); lp.add_argument("--dataset", required=True); lp.add_argument("--algorithms", nargs="+", required=True); lp.add_argument("--workspace", type=Path, required=True); lp.add_argument("--session-root", type=Path, default=MODULE_ROOT / "live_sessions"); lp.add_argument("--session-id"); lp.add_argument("--rate", type=float, default=1.0); lp.add_argument("--allow-missing-paths", action="store_true", help=argparse.SUPPRESS); lp.set_defaults(func=cmd_live_prepare)
-    mark = sub.add_parser("mark"); mark.add_argument("--session", type=Path, required=True); mark.add_argument("--algorithm", required=True); mark.add_argument("--event", required=True); mark.add_argument("--bag-time", type=float, required=True); mark.add_argument("--note", default=""); mark.set_defaults(func=cmd_mark)
+
+    lp = live_sub.add_parser("prepare")
+    lp.add_argument("--dataset", required=True)
+    lp.add_argument("--algorithms", nargs="+", required=True)
+    lp.add_argument("--workspace", type=Path, required=True)
+    lp.add_argument("--session-root", type=Path, default=MODULE_ROOT / "live_sessions")
+    lp.add_argument("--session-id")
+    lp.add_argument("--rate", type=float, default=1.0)
+    lp.add_argument("--allow-missing-paths", action="store_true", help=argparse.SUPPRESS)
+    lp.set_defaults(func=cmd_live_prepare)
+
+    mark = sub.add_parser("mark")
+    mark.add_argument("--session", type=Path, required=True)
+    mark.add_argument("--algorithm", required=True)
+    mark.add_argument("--event", required=True)
+    mark.add_argument("--bag-time", type=float, required=True)
+    mark.add_argument("--note", default="")
+    mark.set_defaults(func=cmd_mark)
     return parser
 
 
