@@ -20,7 +20,10 @@ if str(MODULE_ROOT) not in sys.path:
     sys.path.insert(0, str(MODULE_ROOT))
 
 from benchmark_base.lib.registry import Registry, RegistryError  # noqa: E402
-from benchmark_base.lib.runtime_provenance import build_runtime_provenance_record  # noqa: E402
+from benchmark_base.lib.runtime_provenance import (  # noqa: E402
+    build_runtime_provenance_record,
+    workspace_from_package_prefix,
+)
 
 
 REGISTRY = Registry()
@@ -49,7 +52,9 @@ def package_prefix(package: str | None) -> str | None:
     return capture(["ros2", "pkg", "prefix", package])
 
 
-def colcon_package_sources(workspace: Path) -> dict[str, Path]:
+def colcon_package_sources(workspace: Path | None) -> dict[str, Path]:
+    if workspace is None or not workspace.is_dir():
+        return {}
     text = capture(["colcon", "list"], cwd=workspace)
     if not text:
         return {}
@@ -70,10 +75,13 @@ def source_candidate(
     workspace: Path,
     algorithm: dict[str, Any],
     package_sources: dict[str, Path],
+    runtime_package_sources: dict[str, Path],
 ) -> Path | None:
     implementation = algorithm.get("execution_implementation", {})
     implementation = implementation if isinstance(implementation, dict) else {}
     package = str(implementation.get("package", ""))
+    if package and package in runtime_package_sources:
+        return runtime_package_sources[package]
     if package and package in package_sources:
         return package_sources[package]
 
@@ -132,13 +140,22 @@ def audit_algorithm(
     implementation = algorithm.get("execution_implementation", {})
     implementation = implementation if isinstance(implementation, dict) else {}
     package = str(implementation.get("package", "")) or None
-    source = source_candidate(workspace, algorithm, package_sources)
+    prefix = package_prefix(package)
+    runtime_workspace = workspace_from_package_prefix(prefix)
+    runtime_package_sources = colcon_package_sources(runtime_workspace)
+    source = source_candidate(
+        workspace,
+        algorithm,
+        package_sources,
+        runtime_package_sources,
+    )
     row = build_runtime_provenance_record(
         algorithm=algorithm,
         frame_audit=load_frame_audit(run, algorithm_id),
-        ros_package_prefix=package_prefix(package),
+        ros_package_prefix=prefix,
         source_state=git_state(source),
     )
+    row["runtime_workspace"] = str(runtime_workspace) if runtime_workspace else None
     row["contract_source"] = "CURRENT_REGISTRY"
     row["registry_algorithm_generation"] = algorithm.get("algorithm_generation")
     return row
@@ -205,8 +222,6 @@ def main() -> int:
     print(path)
     for row in rows:
         print(json.dumps(row, ensure_ascii=False))
-    # This audit is diagnostic. Non-MATCH rows are surfaced in artifacts rather
-    # than making the command unusable for collecting evidence on old runs.
     return 0
 
 
