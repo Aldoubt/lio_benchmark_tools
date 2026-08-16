@@ -115,6 +115,7 @@ def collect_bundle_files(
     for algorithm_id in _algorithm_ids(manifest):
         for relative in (
             f"metadata/algorithms/{algorithm_id}/runtime_identity.json",
+            f"metadata/algorithms/{algorithm_id}/trajectory_standardization.json",
             f"metadata/frame_audit/{algorithm_id}.json",
             f"metadata/runtime_provenance/{algorithm_id}.json",
             f"standardized/maps/{algorithm_id}/unified/metadata.json",
