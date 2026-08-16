@@ -98,6 +98,8 @@ def _source_lidar_timestamps(manifest: dict[str, Any]) -> tuple[float, ...]:
     window, _ = resolve_scan_window(
         replay=replay if isinstance(replay, dict) else None,
         legacy_replay_window=legacy_replay if isinstance(legacy_replay, dict) else None,
+        start_offset_override=None,
+        duration_override=None,
     )
 
     reader = open_reader(bag)
