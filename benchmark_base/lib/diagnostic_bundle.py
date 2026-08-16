@@ -114,6 +114,7 @@ def collect_bundle_files(
 
     for algorithm_id in _algorithm_ids(manifest):
         for relative in (
+            f"metadata/algorithms/{algorithm_id}/runtime_identity.json",
             f"metadata/frame_audit/{algorithm_id}.json",
             f"metadata/runtime_provenance/{algorithm_id}.json",
             f"standardized/maps/{algorithm_id}/unified/metadata.json",
@@ -181,189 +182,126 @@ def _read_csv_statuses(path: Path) -> dict[str, str]:
         return {}
     try:
         with path.open("r", encoding="utf-8", newline="") as stream:
-            rows = csv.DictReader(stream)
-            return {
-                str(row.get("algorithm_id", "")): str(row.get("status", ""))
-                for row in rows
-                if row.get("algorithm_id")
-            }
+            reader = csv.DictReader(stream)
+            rows = list(reader)
     except OSError:
         return {}
+    values: dict[str, str] = {}
+    for row in rows:
+        algorithm_id = row.get("algorithm_id")
+        status = row.get("status")
+        if algorithm_id and status:
+            values[str(algorithm_id)] = str(status)
+    return values
 
 
-def build_summary(
-    run: Path,
-    manifest: dict[str, Any],
-    git_provenance: dict[str, str],
-) -> str:
-    """Build a compact human-readable evidence summary without inventing states."""
-    run_id = str(manifest.get("run_id", run.name))
-    dataset = manifest.get("dataset", {})
-    dataset = dataset if isinstance(dataset, dict) else {}
+def _summary_text(run: Path, manifest: dict[str, Any], selection: BundleSelection) -> str:
     algorithms = _algorithm_ids(manifest)
-    head = git_provenance.get("head", "UNAVAILABLE").strip() or "UNAVAILABLE"
-    status_text = git_provenance.get("status", "UNAVAILABLE")
-    dirty = "UNAVAILABLE" if status_text.strip() == "UNAVAILABLE" else ("yes" if status_text.strip() else "no")
-
+    provenance = _read_csv_statuses(run / "metrics/runtime_provenance.csv")
+    frame_audit = _read_csv_statuses(run / "metrics/trajectory_frame_audit.csv")
     lines = [
-        f"run_id: {run_id}",
-        f"dataset_id: {dataset.get('dataset_id', 'UNAVAILABLE')}",
-        f"bag_path: {dataset.get('bag_dir', 'UNAVAILABLE')}",
-        f"benchmark_git_head: {head}",
-        f"benchmark_git_dirty: {dirty}",
-        f"algorithms: {', '.join(algorithms) if algorithms else 'UNAVAILABLE'}",
+        "LIO Benchmark Diagnostic Bundle",
+        "================================",
+        f"run: {run}",
+        f"run_id: {manifest.get('run_id', run.name)}",
+        f"dataset: {manifest.get('dataset', {}).get('dataset_id', 'UNKNOWN') if isinstance(manifest.get('dataset'), dict) else 'UNKNOWN'}",
+        f"algorithms: {', '.join(algorithms)}",
         "",
+        "Evidence status",
+        "---------------",
     ]
-
-    provenance_statuses = _read_csv_statuses(run / "metrics/runtime_provenance.csv")
-    if provenance_statuses:
-        lines.append("runtime provenance:")
-        for algorithm_id in algorithms:
-            lines.append(f"  {algorithm_id}: {provenance_statuses.get(algorithm_id, 'UNAVAILABLE')}")
-    else:
-        lines.append("runtime provenance: UNAVAILABLE")
-
-    frame_statuses = _read_csv_statuses(run / "metrics/trajectory_frame_audit.csv")
-    if frame_statuses:
-        lines.append("trajectory frame audit:")
-        for algorithm_id in algorithms:
-            lines.append(f"  {algorithm_id}: {frame_statuses.get(algorithm_id, 'UNAVAILABLE')}")
-    else:
-        lines.append("trajectory frame audit: UNAVAILABLE")
-
-    scan_metadata = _load_json_if_available(run / "standardized/map_sampling/metadata.json")
-    if scan_metadata:
-        window = scan_metadata.get("window", {})
-        window = window if isinstance(window, dict) else {}
-        lines.extend(
-            [
-                "common scan manifest:",
-                f"  selected_scan_count: {scan_metadata.get('selected_scan_count', 'UNAVAILABLE')}",
-                f"  scan_step: {scan_metadata.get('scan_step', 'UNAVAILABLE')}",
-                f"  window_duration_s: {window.get('duration_s', 'UNAVAILABLE')}",
-            ]
-        )
-    else:
-        lines.append("common scan manifest: UNAVAILABLE")
-
-    lines.append("unified map contracts:")
     for algorithm_id in algorithms:
-        metadata = _load_json_if_available(
-            run / "standardized/maps" / algorithm_id / "unified" / "metadata.json"
+        identity = _load_json_if_available(
+            run / "metadata" / "algorithms" / algorithm_id / "runtime_identity.json"
         )
-        if metadata is None:
-            lines.append(f"  {algorithm_id}: UNAVAILABLE")
-            continue
+        identity_status = (
+            str(identity.get("identity_status", "UNKNOWN")) if identity is not None else "UNAVAILABLE"
+        )
         lines.append(
-            "  "
-            + algorithm_id
-            + ": tracked_frame="
-            + str(metadata.get("tracked_frame_physical", "UNAVAILABLE"))
-            + " world_gauge="
-            + str(metadata.get("world_gauge", "UNAVAILABLE"))
-            + " scan_transform="
-            + str(metadata.get("scan_frame_transform", "UNAVAILABLE"))
+            f"{algorithm_id}: runtime identity: {identity_status}; "
+            f"runtime provenance: {provenance.get(algorithm_id, 'UNAVAILABLE')}; "
+            f"frame audit: {frame_audit.get(algorithm_id, 'UNAVAILABLE')}"
         )
-
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def build_bundle_manifest(
-    *,
-    run_id: str,
-    archive_name: str,
-    include_reports: bool,
-    selection: BundleSelection,
-    generated_members: Iterable[str] = GENERATED_MEMBERS,
-) -> dict[str, Any]:
-    included = sorted(set(selection.included).union(str(value) for value in generated_members))
-    return {
-        "schema": BUNDLE_SCHEMA,
-        "run_id": run_id,
-        "created_at": dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
-        "include_reports": include_reports,
-        "archive_name": archive_name,
-        "included": included,
-        "missing": list(selection.missing),
-        "excluded_large_artifacts": list(EXCLUDED_LARGE_ARTIFACTS),
-    }
+    lines.extend(
+        [
+            "",
+            "Bundle contents",
+            "---------------",
+            f"included files: {len(selection.included)}",
+            f"missing expected evidence: {len(selection.missing)}",
+        ]
+    )
+    if selection.missing:
+        lines.append("")
+        lines.append("Missing evidence")
+        lines.append("----------------")
+        lines.extend(f"- {value}" for value in selection.missing)
+    return "\n".join(lines) + "\n"
 
 
-def _add_bytes(stream: tarfile.TarFile, arcname: str, payload: bytes) -> None:
-    info = tarfile.TarInfo(name=arcname)
+def _add_bytes(stream: tarfile.TarFile, name: str, content: str, created_at: int) -> None:
+    payload = content.encode("utf-8")
+    info = tarfile.TarInfo(name)
     info.size = len(payload)
-    info.mtime = 0
+    info.mtime = created_at
     info.mode = 0o644
     stream.addfile(info, io.BytesIO(payload))
 
 
+def _default_output(run: Path, manifest: dict[str, Any]) -> Path:
+    run_id = str(manifest.get("run_id", run.name))
+    return run / "reports" / "bundles" / f"{run_id}_diagnostic_bundle.tar.gz"
+
+
 def create_diagnostic_bundle(
-    run: Path,
-    repository_root: Path,
+    run: str | Path,
+    *,
+    repository_root: str | Path,
     include_reports: bool = False,
-    output: Path | None = None,
+    output: str | Path | None = None,
 ) -> Path:
-    """Create a portable `.tar.gz` containing small run diagnostics only."""
-    run = run.expanduser().resolve()
-    if not run.is_dir():
-        raise ValueError(f"run directory does not exist: {run}")
+    run = Path(run).resolve()
     manifest_path = run / "manifest.json"
     if not manifest_path.is_file():
         raise ValueError(f"missing run manifest: {manifest_path}")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"invalid run manifest: {exc}") from exc
+        raise ValueError(f"invalid run manifest: {manifest_path}: {exc}") from exc
     if not isinstance(manifest, dict):
-        raise ValueError("run manifest must be a JSON object")
-
-    run_id = str(manifest.get("run_id") or run.name)
-    if output is None:
-        archive = run / "reports" / "bundles" / f"{run_id}_diagnostic_bundle.tar.gz"
-    else:
-        archive = output.expanduser()
-        if not archive.is_absolute():
-            archive = archive.resolve()
-    archive = archive.resolve()
+        raise ValueError("run manifest root must be an object")
 
     selection = collect_bundle_files(run, manifest, include_reports)
-    physical_members = tuple(
-        relative
-        for relative in selection.included
-        if (run / relative).resolve() != archive
-    )
-    if physical_members != selection.included:
-        selection = BundleSelection(physical_members, selection.missing)
-
-    git_provenance = capture_git_provenance(repository_root)
-    summary = build_summary(run, manifest, git_provenance)
-    bundle_manifest = build_bundle_manifest(
-        run_id=run_id,
-        archive_name=archive.name,
-        include_reports=include_reports,
-        selection=selection,
-    )
-
-    generated = {
-        "metadata/bundle/SUMMARY.txt": summary.encode("utf-8"),
-        "metadata/bundle/bundle_manifest.json": (
-            json.dumps(bundle_manifest, ensure_ascii=False, indent=2) + "\n"
-        ).encode("utf-8"),
-        "metadata/bundle/benchmark_git_head.txt": git_provenance["head"].encode("utf-8"),
-        "metadata/bundle/benchmark_git_status.txt": git_provenance["status"].encode("utf-8"),
-        "metadata/bundle/benchmark_local.patch": git_provenance["patch"].encode("utf-8"),
-    }
-
+    repository_root = Path(repository_root).resolve()
+    git = capture_git_provenance(repository_root)
+    archive = Path(output).expanduser().resolve() if output else _default_output(run, manifest)
     archive.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with tarfile.open(archive, "w:gz") as stream:
-            for relative in selection.included:
-                path = run / relative
-                if path.resolve() == archive:
-                    continue
-                stream.add(path, arcname=relative, recursive=False)
-            for arcname in GENERATED_MEMBERS:
-                _add_bytes(stream, arcname, generated[arcname])
-    except (OSError, tarfile.TarError) as exc:
-        raise ValueError(f"failed to create diagnostic bundle: {exc}") from exc
+
+    generated_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    created_at = int(generated_at.timestamp())
+    generated = {
+        "metadata/bundle/SUMMARY.txt": _summary_text(run, manifest, selection),
+        "metadata/bundle/benchmark_git_head.txt": git["head"],
+        "metadata/bundle/benchmark_git_status.txt": git["status"],
+        "metadata/bundle/benchmark_local.patch": git["patch"],
+    }
+    bundle_manifest = {
+        "schema": BUNDLE_SCHEMA,
+        "generated_at": generated_at.isoformat(),
+        "run": str(run),
+        "output": str(archive),
+        "include_reports": bool(include_reports),
+        "included": list(selection.included) + sorted(generated) + ["metadata/bundle/bundle_manifest.json"],
+        "missing": list(selection.missing),
+        "excluded_large_patterns": list(EXCLUDED_LARGE_ARTIFACTS),
+    }
+    generated["metadata/bundle/bundle_manifest.json"] = (
+        json.dumps(bundle_manifest, ensure_ascii=False, indent=2) + "\n"
+    )
+
+    with tarfile.open(archive, "w:gz") as stream:
+        for relative in selection.included:
+            stream.add(run / relative, arcname=relative, recursive=False)
+        for name in GENERATED_MEMBERS:
+            _add_bytes(stream, name, generated[name], created_at)
     return archive
