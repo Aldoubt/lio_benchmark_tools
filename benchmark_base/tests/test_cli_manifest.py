@@ -90,6 +90,25 @@ class ManifestTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("--warmup-s", result.stdout)
 
+    def test_scan_manifest_cli_exposes_smoke_window_options(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(root / "benchmark_base/bin/lio-benchmark"),
+                "standardize",
+                "scan-manifest",
+                "--help",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("--start-offset-s", result.stdout)
+        self.assertIn("--duration-s", result.stdout)
+        self.assertIn("--overwrite", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
