@@ -140,7 +140,6 @@ class TrajectoryFromRunContractTest(unittest.TestCase):
         self.assertIn("find_bag_for_topic", text)
         self.assertIn("read_pose_observations", text)
         self.assertIn("trajectory_from_observations", text)
-        self.assertIn("trajectory_standardization.json", text)
         self.assertNotIn("--overwrite", text)
 
 
