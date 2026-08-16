@@ -15,9 +15,12 @@
   "extrinsic_convention": "LIDAR_TO_IMU",
   "source": {"repository": "hku-mars/FAST-LIVO2", "local_path_hint": "src/FAST-LIVO2-ROS2"},
   "execution_implementation": {
+    "repository": "Aldoubt/agt_navigation_v2",
+    "branch": "feat/v25-12g-maximum-feasible-coverage",
+    "source_subpath": "third_party/fast_livo2_ros2",
     "package": "fast_livo",
     "executable": "fastlivo_mapping",
-    "provenance_note": "The current benchmark launches this ROS2 package through agt_mapping. The exact execution repository is intentionally not declared until the local ROS2 port git remote/commit is audited; the upstream algorithm source is not silently treated as the runtime implementation."
+    "provenance_note": "The Humble runtime package is vendored in agt_navigation_v2 under third_party/fast_livo2_ros2; the academic FAST-LIVO2 source remains a separate algorithm reference."
   },
   "runner": {"adapter": "evaluators/run_fast_livo_test.sh"},
   "topics": {

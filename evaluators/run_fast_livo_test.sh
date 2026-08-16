@@ -73,7 +73,6 @@ if [[ -n "$BENCHMARK_REPLAY_DURATION_S" ]]; then
 else
   "${play_args[@]}" >"$OUTPUT_DIR/play.log" 2>&1
 fi
-sleep 3
 kill -INT "$record_pid" 2>/dev/null || true
 if ! wait "$record_pid"; then
   echo "trajectory recorder exited with failure; see $OUTPUT_DIR/record.log" >&2

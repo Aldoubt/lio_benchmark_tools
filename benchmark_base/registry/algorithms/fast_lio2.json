@@ -19,11 +19,12 @@
     "local_path_hint": "algorithms/Fast_LIO2_ROS2"
   },
   "execution_implementation": {
-    "repository": "Franklif1/Fast_LIO2_ROS2",
-    "branch": "ros2",
+    "repository": "PolarisXQ/SCURM_SentryNavigation",
+    "branch": "master",
+    "source_subpath": "FAST_LIO",
     "package": "fast_lio",
     "executable": "fastlio_mapping",
-    "provenance_note": "HKU-MARS official FAST_LIO remains ROS1/catkin; Humble execution uses this explicit ROS2 port and must freeze its commit in each run."
+    "provenance_note": "The explicit Humble binary is built from SCURM_SentryNavigation/FAST_LIO; its source defaults publish odom->sensor unless common frame parameters override them."
   },
   "runner": {"adapter": "evaluators/run_fast_lio2_test.sh"},
   "topics": {
@@ -39,13 +40,14 @@
     "pose_semantics": "T_PARENT_TRACKED",
     "tracked_frame_physical": "IMU_BODY",
     "world_gauge": "INITIAL_BODY_ALIGNED",
-    "expected_parent_frames": ["camera_init"],
-    "expected_child_frames": ["body"],
+    "expected_parent_frames": ["odom"],
+    "expected_child_frames": ["sensor"],
     "evidence": [
-      "The declared Franklif1/Fast_LIO2_ROS2 execution source publishes state_point.pos/state_point.rot as camera_init->body.",
+      "SCURM_SentryNavigation/FAST_LIO/src/laserMapping.cpp reads common.odom_frame_id and common.sensor_frame_id and publishes Odometry header.frame_id=odom_frame and child_frame_id=sensor.",
+      "The benchmark generated config leaves those frame parameters at the source defaults odom and sensor.",
       "Its IMU initialization estimates the gravity vector but does not rotate the estimator state to a gravity-aligned world, leaving the initial body attitude gauge near identity."
     ],
-    "runtime_warning": "The first green-house smoke observed odom->sensor instead of the declared execution source's camera_init->body. Treat this as a runtime provenance/frame-label mismatch until the installed package commit is identified."
+    "runtime_warning": "The target binary is an explicit SCURM_SentryNavigation/FAST_LIO build and intentionally records odom->sensor as its audited runtime frame contract."
   },
   "native_map": {
     "default_status": "NOT_PROVIDED",

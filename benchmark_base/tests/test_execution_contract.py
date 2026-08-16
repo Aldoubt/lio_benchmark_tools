@@ -17,6 +17,7 @@ from benchmark_base.lib.execution_contract import (
     resolve_execution,
     write_runtime_identity,
 )
+from evaluators.freeze_runtime_identity import cmake_source_path
 from evaluators.prepare_fast_lio2_config import fmt as fast_lio2_yaml_vector
 
 
@@ -65,6 +66,22 @@ class RuntimeExecutionContractTest(unittest.TestCase):
         self.assertEqual("EXPLICIT_EXECUTABLE_OVERRIDE", result.resolution_method)
         self.assertEqual(str(binary), result.requested_executable)
         self.assertEqual(binary.resolve(), result.resolved_executable)
+
+    def test_cmake_source_path_recovers_explicit_binary_build_source(self) -> None:
+        source = self.root / "workspace" / "FAST_LIO"
+        build = self.root / "build" / "fast_lio"
+        source.mkdir(parents=True)
+        build.mkdir(parents=True)
+        (build / "CMakeCache.txt").write_text(
+            "CMAKE_HOME_DIRECTORY:INTERNAL=" + str(source) + "\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(source.resolve(), cmake_source_path(build))
+
+    def test_fast_livo_runner_stops_recorder_without_post_replay_delay(self) -> None:
+        runner = Path(__file__).resolve().parents[2] / "evaluators/run_fast_livo_test.sh"
+        text = runner.read_text(encoding="utf-8")
+        self.assertNotIn('fi\nsleep 3\nkill -INT "$record_pid"', text)
 
     def test_no_override_preserves_registry_default_execution(self) -> None:
         result = resolve_execution(self._manifest(), "fast_lio2")

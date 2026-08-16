@@ -68,6 +68,23 @@ def package_source(workspace: Path | None, package: str | None) -> Path | None:
     return None
 
 
+def cmake_source_path(build: Path | None) -> Path | None:
+    """Recover the source directory recorded by a CMake build tree."""
+    if build is None:
+        return None
+    cache = Path(build) / "CMakeCache.txt"
+    try:
+        lines = cache.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    prefix = "CMAKE_HOME_DIRECTORY:INTERNAL="
+    for line in lines:
+        if line.startswith(prefix):
+            value = line[len(prefix):].strip()
+            return Path(value).expanduser().resolve() if value else None
+    return None
+
+
 def git_state(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {"path": None}
@@ -129,7 +146,8 @@ def main() -> int:
     runtime_prefix: str | None = None
     source_candidate: Path | None = None
     if resolution.resolution_method == EXPLICIT_EXECUTABLE_OVERRIDE:
-        source_candidate = resolution.resolved_executable.parent if resolution.resolved_executable else None
+        build_candidate = resolution.resolved_executable.parent if resolution.resolved_executable else None
+        source_candidate = cmake_source_path(build_candidate) or build_candidate
     else:
         runtime_package = registry_package
         runtime_prefix = package_prefix(runtime_package)

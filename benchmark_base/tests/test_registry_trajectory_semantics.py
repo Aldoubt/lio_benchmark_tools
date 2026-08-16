@@ -27,6 +27,21 @@ class RegistryTrajectorySemanticsTest(unittest.TestCase):
         self.assertIn("runtime_warning", contract)
         self.assertIn("odom->sensor", contract["runtime_warning"])
 
+    def test_smoke_execution_sources_match_audited_target_machine(self) -> None:
+        registry = Registry()
+        fast_livo = registry.load_algorithm("fast_livo2")
+        livo_impl = fast_livo["execution_implementation"]
+        self.assertEqual("Aldoubt/agt_navigation_v2", livo_impl["repository"])
+        self.assertEqual("third_party/fast_livo2_ros2", livo_impl["source_subpath"])
+
+        fast_lio = registry.load_algorithm("fast_lio2")
+        lio_impl = fast_lio["execution_implementation"]
+        self.assertEqual("PolarisXQ/SCURM_SentryNavigation", lio_impl["repository"])
+        self.assertEqual("FAST_LIO", lio_impl["source_subpath"])
+        contract = fast_lio["trajectory_contract"]
+        self.assertEqual(["odom"], contract["expected_parent_frames"])
+        self.assertEqual(["sensor"], contract["expected_child_frames"])
+
 
 if __name__ == "__main__":
     unittest.main()
