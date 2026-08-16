@@ -26,11 +26,18 @@ def _algorithm_ids(manifest: dict[str, Any]) -> tuple[str, ...]:
     return ()
 
 
-def refresh_run_status(run: str | Path, manifest: dict[str, Any]) -> Path:
+def refresh_run_status(
+    run: str | Path,
+    manifest: dict[str, Any],
+    *,
+    bundle_will_exist: bool = False,
+) -> Path:
     """Rewrite ``RUN_STATUS.md`` from current run-local evidence.
 
     This is descriptive workflow state only. It never infers estimator accuracy
-    or changes scientific artifacts.
+    or changes scientific artifacts. ``bundle_will_exist`` is used only while a
+    bundle is being assembled so the archived status describes the completed
+    packaging step rather than the instant immediately before tar creation.
     """
     run = Path(run).resolve()
     algorithms = _algorithm_ids(manifest)
@@ -56,7 +63,9 @@ def refresh_run_status(run: str | Path, manifest: dict[str, Any]) -> Path:
     provenance_available = (run / "metrics" / "runtime_provenance.csv").is_file()
     relative_se3_available = (run / "metrics" / "relative_se3" / "metadata.json").is_file()
     bundle_dir = run / "reports" / "bundles"
-    bundle_available = bundle_dir.is_dir() and any(bundle_dir.glob("*.tar.gz"))
+    bundle_available = bundle_will_exist or (
+        bundle_dir.is_dir() and any(bundle_dir.glob("*.tar.gz"))
+    )
 
     primary_complete = bool(selected) and all(
         (
