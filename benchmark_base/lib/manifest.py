@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,69 @@ def schema_version(manifest: dict[str, Any]) -> int:
     return int(value)
 
 
+def normalized_replay(manifest: dict[str, Any]) -> dict[str, float | None]:
+    raw = manifest.get("replay", {})
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("replay must be an object")
+    try:
+        rate = float(raw.get("rate", 1.0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("replay.rate must be finite and > 0") from exc
+    try:
+        start = float(raw.get("start_offset_s", 0.0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("replay.start_offset_s must be finite and >= 0") from exc
+    duration_raw = raw.get("duration_s")
+    if duration_raw is None:
+        duration = None
+    else:
+        try:
+            duration = float(duration_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("replay.duration_s must be null or finite and > 0") from exc
+    if not math.isfinite(rate) or rate <= 0.0:
+        raise ValueError("replay.rate must be finite and > 0")
+    if not math.isfinite(start) or start < 0.0:
+        raise ValueError("replay.start_offset_s must be finite and >= 0")
+    if duration is not None and (not math.isfinite(duration) or duration <= 0.0):
+        raise ValueError("replay.duration_s must be null or finite and > 0")
+    return {"rate": rate, "start_offset_s": start, "duration_s": duration}
+
+
+def normalized_execution_overrides(
+    manifest: dict[str, Any], selected_algorithms: list[str] | tuple[str, ...]
+) -> dict[str, dict[str, str]]:
+    raw = manifest.get("execution_overrides", {})
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("execution_overrides must be an object")
+    selected = set(selected_algorithms)
+    normalized: dict[str, dict[str, str]] = {}
+    for algorithm_id, override in raw.items():
+        algorithm_id = str(algorithm_id)
+        if algorithm_id not in selected:
+            raise ValueError(
+                f"execution_overrides.{algorithm_id} references an unselected algorithm"
+            )
+        if not isinstance(override, dict):
+            raise ValueError(f"execution_overrides.{algorithm_id} must be an object")
+        unknown = sorted(set(override) - {"executable"})
+        if unknown:
+            raise ValueError(
+                f"execution_overrides.{algorithm_id} has unsupported fields: {', '.join(unknown)}"
+            )
+        executable = override.get("executable")
+        if not isinstance(executable, str) or not executable.strip():
+            raise ValueError(
+                f"execution_overrides.{algorithm_id}.executable must be a non-empty string"
+            )
+        normalized[algorithm_id] = {"executable": executable.strip()}
+    return normalized
+
+
 def resolve_manifest(manifest: dict[str, Any], registry: Registry | None = None) -> dict[str, Any]:
     """Resolve schema-v2 references into a frozen v1-like runtime structure."""
     version = schema_version(manifest)
@@ -74,6 +138,8 @@ def resolve_manifest(manifest: dict[str, Any], registry: Registry | None = None)
     resolved["algorithm_refs"] = list(algorithm_refs)
     resolved["dataset"] = dataset
     resolved["algorithms"] = algorithms
+    resolved["execution_overrides"] = normalized_execution_overrides(manifest, algorithm_refs)
+    resolved["replay"] = normalized_replay(manifest)
     return resolved
 
 
