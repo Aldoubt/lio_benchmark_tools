@@ -90,6 +90,30 @@ def source_relationship(
     return "REGISTRY_MATCH" if expected == actual else "REGISTRY_MISMATCH"
 
 
+def source_reproducibility_quality(source: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Describe source-tree cleanliness without redefining runtime identity MATCH.
+
+    A frozen executable hash identifies the exact binary that ran. Source-tree
+    cleanliness is a separate build-reproducibility dimension: a dirty tree does
+    not prove the binary is wrong, but it prevents a clean source checkout from
+    being claimed as sufficient rebuild evidence.
+    """
+    if "dirty" not in source or source.get("dirty") is None:
+        return (
+            "UNKNOWN_SOURCE_CLEANLINESS",
+            ("runtime source cleanliness was not frozen; clean-source rebuild provenance is unproven",),
+        )
+    if bool(source.get("dirty")):
+        return (
+            "DIRTY_SOURCE_WARNING",
+            (
+                "runtime binary hash is frozen, but the associated source tree was dirty; "
+                "clean-source rebuild provenance is not demonstrated",
+            ),
+        )
+    return "CLEAN_SOURCE", ()
+
+
 def classify_runtime_provenance(
     *,
     expected_repository: str | None,
@@ -138,9 +162,6 @@ def _frozen_identity_classification(
             (f"runtime identity status is {identity.get('identity_status', 'UNKNOWN')}",),
         )
     if not identity.get("executable_sha256") and not identity.get("resolved_executable"):
-        # Registry launch identities may not have a hash if no package executable was
-        # resolvable. Exact launch command alone is useful, but not sufficient to call
-        # the implementation identity resolved.
         return ProvenanceClassification(
             ProvenanceStatus.UNRESOLVED,
             ("frozen runtime identity has no resolved executable fingerprint",),
@@ -152,8 +173,6 @@ def _frozen_identity_classification(
         )
     method = str(identity.get("resolution_method", ""))
     if method == "EXPLICIT_EXECUTABLE_OVERRIDE":
-        # A user-selected binary is valid when it is exactly fingerprinted. Its
-        # relationship to the registry remains a separate descriptive dimension.
         return ProvenanceClassification(ProvenanceStatus.MATCH, ())
     if relationship == "REGISTRY_MISMATCH":
         return ProvenanceClassification(
@@ -234,6 +253,8 @@ def build_runtime_provenance_record(
         executable_sha256 = None
         runtime_package = implementation.get("package")
 
+    reproducibility_status, reproducibility_reasons = source_reproducibility_quality(effective_source)
+
     return {
         "algorithm_id": str(algorithm.get("algorithm_id", "")),
         "status": classification.status.value,
@@ -244,6 +265,8 @@ def build_runtime_provenance_record(
         "resolved_executable": resolved_executable,
         "executable_sha256": executable_sha256,
         "source_relationship": relationship,
+        "source_reproducibility_status": reproducibility_status,
+        "source_reproducibility_reasons": list(reproducibility_reasons),
         "frame_contract_status": frame_result.status.value,
         "frame_contract_reasons": list(frame_result.reasons),
         "tracked_frame_physical": contract.get("tracked_frame_physical", "UNKNOWN"),
