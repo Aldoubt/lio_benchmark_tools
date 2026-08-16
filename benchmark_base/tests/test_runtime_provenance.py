@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from benchmark_base.lib.runtime_provenance import (
     ProvenanceStatus,
     build_runtime_provenance_record,
     classify_runtime_provenance,
     normalize_github_repository,
+    workspace_from_package_prefix,
 )
 
 
@@ -61,6 +63,17 @@ class RuntimeProvenanceTest(unittest.TestCase):
         )
         self.assertEqual(ProvenanceStatus.UNRESOLVED, result.status)
         self.assertIn("declared execution repository", result.reasons[0])
+
+    def test_package_prefix_recovers_colcon_workspace(self) -> None:
+        self.assertEqual(
+            Path("/home/user/fastlio_ws"),
+            workspace_from_package_prefix("/home/user/fastlio_ws/install/fast_lio"),
+        )
+        self.assertEqual(
+            Path("/home/user/merged_ws"),
+            workspace_from_package_prefix("/home/user/merged_ws/install"),
+        )
+        self.assertIsNone(workspace_from_package_prefix("/opt/ros/humble"))
 
     def test_record_uses_execution_implementation_not_algorithm_paper_source(self) -> None:
         algorithm = {
