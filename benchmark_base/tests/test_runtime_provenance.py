@@ -13,6 +13,33 @@ from benchmark_base.lib.runtime_provenance import (
 
 
 class RuntimeProvenanceTest(unittest.TestCase):
+    @staticmethod
+    def _algorithm() -> dict:
+        return {
+            "algorithm_id": "fast_lio2",
+            "source": {"repository": "hku-mars/FAST_LIO"},
+            "execution_implementation": {
+                "repository": "Franklif1/Fast_LIO2_ROS2",
+                "package": "fast_lio",
+                "executable": "fastlio_mapping",
+            },
+            "trajectory_contract": {
+                "pose_semantics": "T_PARENT_TRACKED",
+                "tracked_frame_physical": "IMU_BODY",
+                "world_gauge": "INITIAL_BODY_ALIGNED",
+                "expected_parent_frames": ["camera_init"],
+                "expected_child_frames": ["body"],
+            },
+        }
+
+    @staticmethod
+    def _matching_frame_audit() -> dict:
+        return {
+            "status": "AVAILABLE",
+            "parent_frame_ids": ["camera_init"],
+            "child_frame_ids": ["body"],
+        }
+
     def test_normalize_common_github_remote_forms(self) -> None:
         self.assertEqual("Franklif1/Fast_LIO2_ROS2", normalize_github_repository("https://github.com/Franklif1/Fast_LIO2_ROS2.git"))
         self.assertEqual("Franklif1/Fast_LIO2_ROS2", normalize_github_repository("git@github.com:Franklif1/Fast_LIO2_ROS2.git"))
@@ -76,22 +103,7 @@ class RuntimeProvenanceTest(unittest.TestCase):
         self.assertIsNone(workspace_from_package_prefix("/opt/ros/humble"))
 
     def test_record_uses_execution_implementation_not_algorithm_paper_source(self) -> None:
-        algorithm = {
-            "algorithm_id": "fast_lio2",
-            "source": {"repository": "hku-mars/FAST_LIO"},
-            "execution_implementation": {
-                "repository": "Franklif1/Fast_LIO2_ROS2",
-                "package": "fast_lio",
-                "executable": "fastlio_mapping",
-            },
-            "trajectory_contract": {
-                "pose_semantics": "T_PARENT_TRACKED",
-                "tracked_frame_physical": "IMU_BODY",
-                "world_gauge": "INITIAL_BODY_ALIGNED",
-                "expected_parent_frames": ["camera_init"],
-                "expected_child_frames": ["body"],
-            },
-        }
+        algorithm = self._algorithm()
         frame_audit = {
             "status": "AVAILABLE",
             "parent_frame_ids": ["odom"],
@@ -110,11 +122,73 @@ class RuntimeProvenanceTest(unittest.TestCase):
             ros_package_prefix="/workspace/install/fast_lio",
             source_state=source_state,
         )
+        self.assertEqual("LEGACY_RECONSTRUCTED", record["identity_evidence_source"])
         self.assertEqual("Franklif1/Fast_LIO2_ROS2", record["expected_execution_repository"])
         self.assertEqual("Franklif1/Fast_LIO2_ROS2", record["actual_execution_repository"])
         self.assertEqual("FRAME_LABEL_MISMATCH", record["frame_contract_status"])
         self.assertEqual("FRAME_CONTRACT_MISMATCH", record["status"])
         self.assertEqual("abc123", record["source_commit"])
+
+    def test_frozen_runtime_identity_wins_over_post_run_discovery(self) -> None:
+        runtime_identity = {
+            "identity_status": "FROZEN",
+            "resolution_method": "EXPLICIT_EXECUTABLE_OVERRIDE",
+            "requested_executable": "/requested/fastlio_mapping",
+            "resolved_executable": "/actual/fastlio_mapping",
+            "executable_sha256": "deadbeef",
+            "source_relationship": "REGISTRY_MISMATCH",
+            "runtime_package": None,
+            "runtime_package_prefix": None,
+            "source": {
+                "path": "/actual/source",
+                "remote_origin": "https://github.com/local/custom-fastlio.git",
+                "commit": "identity-commit",
+                "branch": "local",
+                "dirty": True,
+            },
+        }
+        record = build_runtime_provenance_record(
+            algorithm=self._algorithm(),
+            frame_audit=self._matching_frame_audit(),
+            ros_package_prefix="/wrong/install/fast_lio",
+            source_state={
+                "path": "/wrong/source",
+                "remote_origin": "https://github.com/wrong/repo.git",
+                "commit": "wrong-commit",
+            },
+            runtime_identity=runtime_identity,
+        )
+        self.assertEqual("RUNTIME_IDENTITY", record["identity_evidence_source"])
+        self.assertEqual("EXPLICIT_EXECUTABLE_OVERRIDE", record["resolution_method"])
+        self.assertEqual("/actual/fastlio_mapping", record["resolved_executable"])
+        self.assertEqual("deadbeef", record["executable_sha256"])
+        self.assertEqual("identity-commit", record["source_commit"])
+        self.assertEqual("REGISTRY_MISMATCH", record["source_relationship"])
+        self.assertEqual("MATCH", record["status"])
+
+    def test_frozen_identity_does_not_hide_frame_mismatch(self) -> None:
+        runtime_identity = {
+            "identity_status": "FROZEN",
+            "resolution_method": "EXPLICIT_EXECUTABLE_OVERRIDE",
+            "resolved_executable": "/actual/fastlio_mapping",
+            "executable_sha256": "deadbeef",
+            "source_relationship": "UNKNOWN_SOURCE",
+            "source": {},
+        }
+        record = build_runtime_provenance_record(
+            algorithm=self._algorithm(),
+            frame_audit={
+                "status": "AVAILABLE",
+                "parent_frame_ids": ["odom"],
+                "child_frame_ids": ["sensor"],
+            },
+            ros_package_prefix=None,
+            source_state=None,
+            runtime_identity=runtime_identity,
+        )
+        self.assertEqual("RUNTIME_IDENTITY", record["identity_evidence_source"])
+        self.assertEqual("FRAME_LABEL_MISMATCH", record["frame_contract_status"])
+        self.assertEqual("FRAME_CONTRACT_MISMATCH", record["status"])
 
 
 if __name__ == "__main__":
