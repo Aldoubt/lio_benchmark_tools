@@ -20,6 +20,11 @@ from benchmark_base.lib.execution_contract import (
     ExecutionContractError,
     resolve_execution,
 )
+from benchmark_base.lib.ros_workspace import (
+    RuntimeEnvironmentError,
+    capture_sourced_environment,
+    runtime_overlays_for_algorithm,
+)
 
 
 BLOCKING_STATUSES = frozenset({
@@ -132,6 +137,54 @@ def _runner_path(algorithm: dict[str, Any], benchmark_root: str | Path) -> Path 
     return path.resolve()
 
 
+def _formal_environment_for_frozen_run(
+    manifest: dict[str, Any],
+    algorithm_id: str,
+) -> tuple[Mapping[str, str] | None, list[str], AdapterStatus | None]:
+    """Rebuild the declared ROS environment for new frozen run manifests.
+
+    Older manifests did not carry ``runtime_overlays`` and retain the historical
+    ambient-environment behavior for compatibility. New frozen manifests always
+    contain the field, even when the selected algorithm has no extra overlays.
+    """
+    if "runtime_overlays" not in manifest:
+        return None, [], None
+
+    overlays = runtime_overlays_for_algorithm(manifest, algorithm_id)
+    overlay_strings = [str(path) for path in overlays]
+    ros_distro = str(os.environ.get("ROS_DISTRO", "")).strip()
+    if not ros_distro:
+        return None, overlay_strings, AdapterStatus(
+            algorithm_id=algorithm_id,
+            status="BLOCKED_ENVIRONMENT",
+            runnable=False,
+            diagnostic_only=False,
+            reasons=(
+                "ROS_DISTRO is unset; source the base ROS distribution before formal preflight",
+            ),
+            checks={"runtime_overlays": overlay_strings, "ros_distro": None},
+        )
+
+    workspace = Path(str(manifest.get("workspace", ""))).expanduser().resolve()
+    try:
+        env = capture_sourced_environment(
+            workspace=workspace,
+            ros_distro=ros_distro,
+            overlays=overlays,
+            base_env=os.environ,
+        )
+    except RuntimeEnvironmentError as exc:
+        return None, overlay_strings, AdapterStatus(
+            algorithm_id=algorithm_id,
+            status="BLOCKED_ENVIRONMENT",
+            runnable=False,
+            diagnostic_only=False,
+            reasons=(str(exc),),
+            checks={"runtime_overlays": overlay_strings, "ros_distro": ros_distro},
+        )
+    return env, overlay_strings, None
+
+
 def preflight_algorithm(
     manifest: dict[str, Any],
     algorithm_id: str,
@@ -145,10 +198,25 @@ def preflight_algorithm(
     dataset = manifest.get("dataset", {})
     if not isinstance(dataset, dict):
         raise ValueError("manifest dataset must be an object")
-    env = os.environ if runtime_env is None else runtime_env
 
     checks: dict[str, Any] = {}
     reasons: list[str] = []
+    if runtime_env is None:
+        formal_env, overlay_strings, blocked = _formal_environment_for_frozen_run(
+            manifest,
+            algorithm_id,
+        )
+        if blocked is not None:
+            return blocked
+        env = os.environ if formal_env is None else formal_env
+    else:
+        env = runtime_env
+        overlay_strings = [
+            str(path) for path in runtime_overlays_for_algorithm(manifest, algorithm_id)
+        ] if "runtime_overlays" in manifest else []
+    if "runtime_overlays" in manifest:
+        checks["runtime_overlays"] = overlay_strings
+
     try:
         execution = resolve_execution(manifest, algorithm_id)
     except ExecutionContractError as exc:
@@ -310,6 +378,7 @@ def prepare_algorithm(
     *,
     benchmark_root: str | Path,
     allow_diagnostic_calibration: bool = False,
+    runtime_env: Mapping[str, str] | None = None,
     runtime_package_prefixes: Mapping[str, str | None] | None = None,
 ) -> PreparedAdapter:
     run = Path(run_dir)
@@ -319,6 +388,7 @@ def prepare_algorithm(
         algorithm_id,
         benchmark_root=benchmark_root,
         allow_diagnostic_calibration=allow_diagnostic_calibration,
+        runtime_env=runtime_env,
         runtime_package_prefixes=runtime_package_prefixes,
     )
     if not preflight.runnable:
