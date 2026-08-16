@@ -50,6 +50,16 @@ class DiagnosticBundleTest(unittest.TestCase):
         )
         self._write(
             run,
+            "metadata/algorithms/algo_a/trajectory_standardization.json",
+            json.dumps({
+                "schema_version": 1,
+                "algorithm_id": "algo_a",
+                "source_kind": "RUN_LOCAL_ROS2_BAG",
+                "sample_count": 100,
+            }),
+        )
+        self._write(
+            run,
             "standardized/map_sampling/metadata.json",
             json.dumps({"selected_scan_count": 30, "window": {"duration_s": 15}}),
         )
@@ -106,6 +116,7 @@ class DiagnosticBundleTest(unittest.TestCase):
             self.assertIn("manifest.json", names)
             self.assertIn("metrics/runtime_provenance.csv", names)
             self.assertIn("metadata/algorithms/algo_a/runtime_identity.json", names)
+            self.assertIn("metadata/algorithms/algo_a/trajectory_standardization.json", names)
             self.assertIn("standardized/maps/algo_a/unified/metadata.json", names)
             self.assertIn("standardized/maps/unexpected_algo_name/unified/metadata.json", names)
             self.assertIn("metadata/bundle/SUMMARY.txt", names)
@@ -127,6 +138,10 @@ class DiagnosticBundleTest(unittest.TestCase):
             self.assertIn("metadata/bundle/SUMMARY.txt", bundle_manifest["included"])
             self.assertIn(
                 "metadata/algorithms/unexpected_algo_name/runtime_identity.json",
+                bundle_manifest["missing"],
+            )
+            self.assertIn(
+                "metadata/algorithms/unexpected_algo_name/trajectory_standardization.json",
                 bundle_manifest["missing"],
             )
             self.assertIn("tracked.txt", local_patch)
@@ -155,6 +170,7 @@ class DiagnosticBundleTest(unittest.TestCase):
             (run / "metrics/runtime_provenance.csv").unlink()
             (run / "metadata/runtime_provenance/algo_a.json").unlink()
             (run / "metadata/algorithms/algo_a/runtime_identity.json").unlink()
+            (run / "metadata/algorithms/algo_a/trajectory_standardization.json").unlink()
 
             archive = create_diagnostic_bundle(run, repository_root=repo)
             with tarfile.open(archive, "r:gz") as stream:
@@ -166,6 +182,10 @@ class DiagnosticBundleTest(unittest.TestCase):
             self.assertIn("metrics/runtime_provenance.csv", bundle_manifest["missing"])
             self.assertIn("metadata/runtime_provenance/algo_a.json", bundle_manifest["missing"])
             self.assertIn("metadata/algorithms/algo_a/runtime_identity.json", bundle_manifest["missing"])
+            self.assertIn(
+                "metadata/algorithms/algo_a/trajectory_standardization.json",
+                bundle_manifest["missing"],
+            )
             self.assertIn("runtime provenance: UNAVAILABLE", summary)
 
     def test_custom_output_never_recursively_includes_previous_archive_or_staging_files(self) -> None:
