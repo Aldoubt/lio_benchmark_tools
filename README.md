@@ -254,6 +254,32 @@ lio-benchmark mark \
 
 后续可围绕 marker 对齐局部点云、轨迹与日志
 
+## Diagnostic bundle
+
+一次诊断结束后，不需要再手工复制一组 CSV / JSON / metadata。默认将小型诊断证据打成一个可上传的压缩包：
+
+```bash
+benchmark_base/bin/lio-benchmark bundle --run /path/to/frozen/run
+```
+
+默认输出：
+
+```text
+<run>/reports/bundles/<run_id>_diagnostic_bundle.tar.gz
+```
+
+默认包只包含 manifest、audit/diagnostic CSV/JSON、Common Scan Manifest、各算法 Unified Map metadata，以及打包时的 benchmark Git HEAD / status / local diff。它不会包含 `raw/`、rosbag 数据库、`.ply` / `.pcd` 地图、报告或 PNG 图。
+
+需要把现有 report 和诊断图一并交给 reviewer 时：
+
+```bash
+benchmark_base/bin/lio-benchmark bundle \
+  --run /path/to/frozen/run \
+  --include-reports
+```
+
+`bundle` 只打包已有 artifact，不会重新运行算法、地图标准化或报告生成，也不会修改现有 run artifact；除最终 `.tar.gz` 外不创建 staging 文件。
+
 ## Standard artifact contract
 
 ```text
@@ -349,6 +375,7 @@ unified map                 772,631 points
 - [`benchmark_base/docs/USER_MANUAL_ZH.md`](benchmark_base/docs/USER_MANUAL_ZH.md) — 原理与历史使用说明
 - [`docs/superpowers/specs/2026-08-15-lio-benchmark-v2-design.md`](docs/superpowers/specs/2026-08-15-lio-benchmark-v2-design.md) — V2 design
 - [`docs/superpowers/specs/2026-08-15-lio-baseline-suite-design.md`](docs/superpowers/specs/2026-08-15-lio-baseline-suite-design.md) — baseline suite / two-map / Display Alignment contract
+- [`docs/superpowers/specs/2026-08-16-diagnostic-bundle-design.md`](docs/superpowers/specs/2026-08-16-diagnostic-bundle-design.md) — diagnostic bundle contract
 
 ## License
 
