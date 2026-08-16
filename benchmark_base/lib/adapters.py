@@ -104,6 +104,23 @@ def _runtime_package(algorithm: dict[str, Any]) -> str | None:
     return value or None
 
 
+def _ament_runtime_package_prefix(
+    package: str,
+    env: Mapping[str, str],
+) -> tuple[bool, str | None]:
+    raw = str(env.get("AMENT_PREFIX_PATH", "")).strip()
+    if not raw:
+        return False, None
+    for value in raw.split(os.pathsep):
+        if not value:
+            continue
+        prefix = Path(value).expanduser()
+        marker = prefix / "share/ament_index/resource_index/packages" / package
+        if marker.is_file():
+            return True, str(prefix.resolve())
+    return True, None
+
+
 def _runner_path(algorithm: dict[str, Any], benchmark_root: str | Path) -> Path | None:
     runner = algorithm.get("runner", {})
     adapter = runner.get("adapter") if isinstance(runner, dict) else None
@@ -128,6 +145,7 @@ def preflight_algorithm(
     dataset = manifest.get("dataset", {})
     if not isinstance(dataset, dict):
         raise ValueError("manifest dataset must be an object")
+    env = os.environ if runtime_env is None else runtime_env
 
     checks: dict[str, Any] = {}
     reasons: list[str] = []
@@ -158,16 +176,19 @@ def preflight_algorithm(
     checks["runtime_package"] = runtime_package
     if execution.resolution_method != EXPLICIT_EXECUTABLE_OVERRIDE:
         if runtime_package is not None:
-            prefix = (
-                runtime_package_prefixes.get(runtime_package)
-                if runtime_package_prefixes is not None
-                else None
-            )
+            if runtime_package_prefixes is not None:
+                package_environment_known = True
+                prefix = runtime_package_prefixes.get(runtime_package)
+            else:
+                package_environment_known, prefix = _ament_runtime_package_prefix(
+                    runtime_package,
+                    env,
+                )
             checks["runtime_package_prefix"] = prefix
             checks["runtime_package_available"] = (
-                bool(prefix) if runtime_package_prefixes is not None else None
+                bool(prefix) if package_environment_known else None
             )
-            if runtime_package_prefixes is not None and not prefix:
+            if package_environment_known and not prefix:
                 reasons.append(
                     f"runtime ROS package is unavailable in the sourced environment: {runtime_package}"
                 )
@@ -204,7 +225,6 @@ def preflight_algorithm(
     supported_ros_distros = [
         str(value) for value in environment_requirements.get("ros_distros", [])
     ]
-    env = os.environ if runtime_env is None else runtime_env
     active_ros_distro = str(env.get("ROS_DISTRO", ""))
     checks["ros_distro"] = active_ros_distro or None
     checks["supported_ros_distros"] = supported_ros_distros
