@@ -177,6 +177,11 @@ NOT_TESTED
       "executable": "/absolute/path/to/fastlio_mapping"
     }
   },
+  "runtime_overlays": {
+    "kiss_icp": [
+      "/absolute/path/to/kiss_icp_ws/install/setup.bash"
+    ]
+  },
   "replay": {
     "rate": 1.0,
     "start_offset_s": 0.0,
@@ -192,7 +197,25 @@ EXPLICIT_EXECUTABLE_OVERRIDE
 REGISTRY_DEFAULT_EXECUTION
 ```
 
-工具不会扫描 `$HOME`、`$WORKSPACE/build` 或其它猜测路径。显式 override 不存在、不可执行或无法 fingerprint 时直接 `BLOCKED_EXECUTION`，不会偷偷回退到另一个 binary。
+`runtime_overlays` 是按算法冻结的有序 ROS overlay 列表。正式 preflight 和正式 runner 都按固定顺序重建环境：
+
+```text
+/opt/ros/<distro>/setup.bash
+        ↓
+<workspace>/install/setup.bash
+        ↓
+runtime_overlays[algorithm][0..N]
+        ↓
+runtime package evidence
+        ↓
+runtime identity freeze
+        ↓
+estimator startup
+```
+
+新 frozen run 不把交互终端里预先存在的 `AMENT_PREFIX_PATH / CMAKE_PREFIX_PATH / LD_LIBRARY_PATH / PYTHONPATH` 当作未声明 algorithm overlay 的执行证据。声明的 overlay 缺失、不是普通文件、source 失败或 source 后目标 runtime package 仍不可见时返回 `BLOCKED_ENVIRONMENT`。runner 在 preflight 后遇到同类环境失效时保留退出码 `65 -> BLOCKED_ENVIRONMENT`，不会误写成 `FAIL_ALGORITHM`。
+
+工具不会扫描 `$HOME`、`$WORKSPACE/build`、`/tmp` 或其它猜测路径。显式 override 不存在、不可执行或无法 fingerprint 时直接 `BLOCKED_EXECUTION`，不会偷偷回退到另一个 binary；runtime overlay 也不会自动 clone/build/install 或寻找替代路径。
 
 算法真正启动前会写入：
 
@@ -207,6 +230,7 @@ resolution method
 requested/resolved executable
 binary SHA256 / size / mtime
 registry package vs runtime package/prefix
+runtime overlay setup path + SHA256 + size
 source git facts when provable
 effective command
 effective config + SHA256
@@ -215,7 +239,7 @@ bag path
 replay rate / start / duration
 ```
 
-`runtime_identity.json` 与 trajectory frame audit 是两个独立 gate：binary 已经精确冻结，并不意味着 `odom -> sensor` 之类的 frame mismatch 可以被忽略。
+`runtime_identity.json` 与 trajectory frame audit 是两个独立 gate：binary / overlay 已经精确冻结，并不意味着 `odom -> sensor` 之类的 frame mismatch 可以被忽略。
 
 同一个 run 已经存在 runtime identity 时禁止静默重跑；需要重新执行算法时创建新的 run ID。
 
@@ -413,6 +437,7 @@ source dirty state
 adapter identity
 runtime executable realpath + SHA256
 execution resolution method
+runtime overlay setup path + SHA256 + size
 effective command + config hash
 frozen replay interval
 algorithm parameters + hash
@@ -445,13 +470,13 @@ unified map                 772,631 points
 
 该数据集当时的 LiDAR–IMU 外参数值尚未完成正式确认，因此地图仍按 `DIAGNOSTIC_ONLY / BLOCKED_CALIBRATION` 对待，不把诊断结果包装成正式算法排名
 
-三算法 Runtime Execution Contract + trajectory-from-run 的目标机验证使用独立配置：
+三算法 Runtime Execution Contract + runtime overlays + trajectory-from-run 的目标机验证使用独立配置：
 
 ```text
 benchmark_base/config/green_house_three_runtime_smoke.json
 ```
 
-该验证必须创建新的 run ID，不覆盖历史 smoke。目标机验证完成前，README 不声明这条新 runtime/trajectory standardization 链路已通过真实机器回放。
+该配置冻结 KISS-ICP 的持久 runtime overlay，而不是依赖交互终端手工 source 或历史 `/tmp` 安装目录。目标机正式验证必须从仅 source 基础 ROS distro 的 fresh shell 创建新的 run ID。目标机验证完成前，README 不声明这条新 runtime/trajectory standardization 链路已通过真实机器回放。
 
 ## Repository boundary
 
@@ -478,7 +503,9 @@ benchmark_base/config/green_house_three_runtime_smoke.json
 - [`docs/superpowers/specs/2026-08-15-lio-baseline-suite-design.md`](docs/superpowers/specs/2026-08-15-lio-baseline-suite-design.md) — baseline suite / two-map / Display Alignment contract
 - [`docs/superpowers/specs/2026-08-16-diagnostic-bundle-design.md`](docs/superpowers/specs/2026-08-16-diagnostic-bundle-design.md) — diagnostic bundle contract
 - [`docs/superpowers/specs/2026-08-16-runtime-execution-contract-design.md`](docs/superpowers/specs/2026-08-16-runtime-execution-contract-design.md) — explicit executable / replay / runtime identity contract
+- [`docs/superpowers/specs/2026-08-16-runtime-overlays-design.md`](docs/superpowers/specs/2026-08-16-runtime-overlays-design.md) — per-algorithm frozen ROS runtime overlay contract
 - [`docs/superpowers/specs/2026-08-16-trajectory-from-run-design.md`](docs/superpowers/specs/2026-08-16-trajectory-from-run-design.md) — run-local ROS 2 trajectory bag standardization contract
+- [`docs/verification/runtime_overlays_verification.md`](docs/verification/runtime_overlays_verification.md) — repository verification and fresh-shell target-machine overlay gate
 - [`docs/verification/trajectory_from_run_verification.md`](docs/verification/trajectory_from_run_verification.md) — repository verification and target-machine acceptance gate
 
 ## License
