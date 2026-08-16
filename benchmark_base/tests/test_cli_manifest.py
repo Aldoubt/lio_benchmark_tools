@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import unittest
@@ -92,6 +93,22 @@ class ManifestTest(unittest.TestCase):
                 manifest["replay"] = replay
                 errors = validate_manifest(manifest, registry=Registry(), check_paths=False)
                 self.assertIn(expected, errors)
+
+    def test_green_house_three_runtime_smoke_config_is_contract_valid(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        path = root / "benchmark_base/config/green_house_three_runtime_smoke.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual([], validate_manifest(manifest, registry=Registry(), check_paths=False))
+        resolved = resolve_manifest(manifest, Registry())
+        self.assertEqual(
+            ["fast_livo2", "fast_lio2", "kiss_icp"],
+            resolved["algorithm_refs"],
+        )
+        self.assertEqual(15.0, resolved["replay"]["duration_s"])
+        self.assertEqual(
+            "/home/yangxuan/RM-NAV/build/fast_lio/fastlio_mapping",
+            resolved["execution_overrides"]["fast_lio2"]["executable"],
+        )
 
     def test_v2_unknown_algorithm_fails_closed(self) -> None:
         manifest = self._v2_manifest()
