@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,6 +49,7 @@ class RuntimeExecutionContractTest(unittest.TestCase):
                 }
             },
             "execution_overrides": {},
+            "runtime_overlays": {},
             "replay": {"rate": 1.0, "start_offset_s": 0.0, "duration_s": 15.0},
         }
         if override is not None:
@@ -147,6 +150,62 @@ class RuntimeExecutionContractTest(unittest.TestCase):
     def test_fast_lio2_yaml_vector_keeps_float_scalars(self) -> None:
         self.assertEqual("[1.0, 0.0, -2.0, 0.125]", fast_lio2_yaml_vector([1, 0, -2, 0.125]))
 
+    def test_runtime_env_emission_preserves_frozen_overlay_order(self) -> None:
+        manifest = self._manifest()
+        manifest["runtime_overlays"] = {
+            "fast_lio2": [
+                "/opt/vendor/first/setup.bash",
+                "/opt/vendor/second/setup.bash",
+            ]
+        }
+        (self.run / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(root / "evaluators/emit_runtime_env.py"),
+                "--run",
+                str(self.run),
+                "--algorithm",
+                "fast_lio2",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertIn("BENCHMARK_RUNTIME_OVERLAY_COUNT=2", lines)
+        first = lines.index("BENCHMARK_RUNTIME_OVERLAY_0=/opt/vendor/first/setup.bash")
+        second = lines.index("BENCHMARK_RUNTIME_OVERLAY_1=/opt/vendor/second/setup.bash")
+        self.assertLess(first, second)
+
+    def test_source_runtime_overlays_helper_applies_indexed_vars_in_order(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        helper = root / "evaluators/source_runtime_overlays.sh"
+        overlay_a = self.root / "overlay_a/setup.bash"
+        overlay_b = self.root / "overlay_b/setup.bash"
+        overlay_a.parent.mkdir(parents=True)
+        overlay_b.parent.mkdir(parents=True)
+        overlay_a.write_text('export ORDER="${ORDER}:a"\n', encoding="utf-8")
+        overlay_b.write_text('export ORDER="${ORDER}:b"\n', encoding="utf-8")
+        shell = f"""
+set -e
+ORDER=base
+BENCHMARK_RUNTIME_OVERLAY_COUNT=2
+BENCHMARK_RUNTIME_OVERLAY_0={str(overlay_a)!r}
+BENCHMARK_RUNTIME_OVERLAY_1={str(overlay_b)!r}
+source {str(helper)!r}
+printf '%s' "$ORDER"
+"""
+        result = subprocess.run(
+            ["bash", "-c", shell], text=True, capture_output=True, check=False
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("base:a:b", result.stdout)
+
     def test_fast_lio2_runner_supports_direct_override_and_registry_default(self) -> None:
         root = Path(__file__).resolve().parents[2]
         text = (root / "evaluators/run_fast_lio2_test.sh").read_text(encoding="utf-8")
@@ -172,6 +231,31 @@ class RuntimeExecutionContractTest(unittest.TestCase):
                 self.assertIn("BENCHMARK_REPLAY_RATE", text)
                 self.assertIn("BENCHMARK_REPLAY_START_OFFSET_S", text)
                 self.assertIn("BENCHMARK_REPLAY_DURATION_S", text)
+
+    def test_three_smoke_runners_rebuild_and_source_frozen_overlay_stack(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        for name in (
+            "run_fast_livo_test.sh",
+            "run_fast_lio2_test.sh",
+            "run_kiss_icp_test.sh",
+        ):
+            with self.subTest(runner=name):
+                text = (root / "evaluators" / name).read_text(encoding="utf-8")
+                self.assertIn("unset AMENT_PREFIX_PATH", text)
+                self.assertIn("source_runtime_overlays.sh", text)
+                self.assertLess(
+                    text.index("unset AMENT_PREFIX_PATH"),
+                    text.index("source /opt/ros/humble/setup.bash"),
+                )
+                self.assertLess(
+                    text.index("source_runtime_overlays.sh"),
+                    text.index("freeze_runtime_identity.py"),
+                )
+        kiss = (root / "evaluators/run_kiss_icp_test.sh").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "/home/yangxuan/lio_benchmark_dependencies/kiss_icp_ws/install/setup.bash",
+            kiss,
+        )
 
 
 if __name__ == "__main__":
