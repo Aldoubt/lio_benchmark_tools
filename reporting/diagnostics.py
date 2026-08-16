@@ -114,6 +114,21 @@ class PairwiseDiagnosticRow:
     xyz_max_m: float
 
 
+def warmup_suffix(warmup_s: float) -> str:
+    """Return a stable filename suffix for derived warmup views.
+
+    The full-run view keeps historical filenames. Non-zero warmups receive a
+    suffix so a later diagnostic pass cannot overwrite the full-run evidence.
+    """
+    value = float(warmup_s)
+    if value < 0.0 or not math.isfinite(value):
+        raise ValueError("warmup_s must be a finite non-negative value")
+    if abs(value) <= 1e-12:
+        return ""
+    token = f"{value:.9f}".rstrip("0").rstrip(".").replace(".", "p")
+    return f"_warmup_{token}s"
+
+
 def _wrapped_delta(current: float, previous: float) -> float:
     return math.atan2(math.sin(current - previous), math.cos(current - previous))
 
@@ -181,8 +196,8 @@ def _sample_times(start: float, end: float, period: float) -> tuple[float, ...]:
     values = [start + index * period for index in range(count + 1)]
     if not values or end - values[-1] > 1e-9:
         values.append(end)
-    else:
-        values[-1] = end if abs(values[-1] - end) <= 1e-9 else values[-1]
+    elif abs(values[-1] - end) <= 1e-9:
+        values[-1] = end
     return tuple(values)
 
 
@@ -310,7 +325,7 @@ def collect_run_diagnostics(
                 diagnostic = trajectory_diagnostics(trajectory, warmup_s=warmup_s)
                 trajectories[algorithm_id] = trajectory
                 trajectory_status = "AVAILABLE"
-            except Exception:
+            except (OSError, ValueError):
                 trajectory_status = "INVALID"
         rows.append(
             AlgorithmDiagnosticRow(
@@ -385,10 +400,13 @@ def write_run_diagnostics(
     run: str | Path,
     algorithm_rows: list[AlgorithmDiagnosticRow],
     pair_rows: list[PairwiseDiagnosticRow],
+    *,
+    warmup_s: float = 0.0,
 ) -> tuple[Path, Path]:
     metrics = Path(run) / "metrics"
-    smoke = metrics / "smoke_diagnostics.csv"
-    pairwise = metrics / "pairwise_disagreement.csv"
+    suffix = warmup_suffix(warmup_s)
+    smoke = metrics / f"smoke_diagnostics{suffix}.csv"
+    pairwise = metrics / f"pairwise_disagreement{suffix}.csv"
     _write_dataclass_csv(smoke, algorithm_rows, list(AlgorithmDiagnosticRow.__dataclass_fields__))
     _write_dataclass_csv(pairwise, pair_rows, list(PairwiseDiagnosticRow.__dataclass_fields__))
     return smoke, pairwise
