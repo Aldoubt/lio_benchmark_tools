@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import tempfile
 import unittest
 
 from benchmark_base.lib.frame_audit import RawPoseObservation
 from benchmark_base.lib.trajectory import TrajectoryError
 from benchmark_base.lib.trajectory_from_run import (
     build_trajectory_standardization_metadata,
+    ensure_standardized_trajectory_absent,
     trajectory_from_observations,
+    trajectory_output_paths,
+    trajectory_topic_from_algorithm,
 )
 
 
@@ -104,6 +108,40 @@ class TrajectoryFromRunContractTest(unittest.TestCase):
         self.assertNotIn("def open_reader(", text)
         self.assertNotIn("def find_bag_for_topic(", text)
         self.assertNotIn("def read_observations(", text)
+
+    def test_frozen_algorithm_topic_resolution_fails_closed_when_missing(self) -> None:
+        algorithm = {"topics": {"outputs": {"trajectory": "/Odometry"}}}
+        self.assertEqual("/Odometry", trajectory_topic_from_algorithm(algorithm))
+        with self.assertRaisesRegex(ValueError, "trajectory output topic"):
+            trajectory_topic_from_algorithm({"topics": {"outputs": {}}})
+
+    def test_output_paths_are_fixed_under_run_contract(self) -> None:
+        run = Path("/runs/greenhouse_smoke")
+        trajectory_path, metadata_path = trajectory_output_paths(run, "fast_lio2")
+        self.assertEqual(run / "standardized/trajectories/fast_lio2.csv", trajectory_path)
+        self.assertEqual(
+            run / "metadata/algorithms/fast_lio2/trajectory_standardization.json",
+            metadata_path,
+        )
+
+    def test_existing_standardized_trajectory_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fast_lio2.csv"
+            ensure_standardized_trajectory_absent(path)
+            path.write_text("existing\n", encoding="utf-8")
+            with self.assertRaisesRegex(FileExistsError, "refusing to overwrite"):
+                ensure_standardized_trajectory_absent(path)
+
+    def test_run_standardizer_evaluator_uses_shared_reader_and_pure_converter(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        evaluator = root / "evaluators/standardize_trajectory_from_run.py"
+        self.assertTrue(evaluator.is_file())
+        text = evaluator.read_text(encoding="utf-8")
+        self.assertIn("find_bag_for_topic", text)
+        self.assertIn("read_pose_observations", text)
+        self.assertIn("trajectory_from_observations", text)
+        self.assertIn("trajectory_standardization.json", text)
+        self.assertNotIn("--overwrite", text)
 
 
 if __name__ == "__main__":
