@@ -58,13 +58,75 @@ lio-benchmark standardize trajectory \
   --input <trajectory.csv> --source-topic /aft_mapped_to_init
 ```
 
+正式 runtime run 推荐直接从 run-local rosbag 标准化：
+
+```bash
+benchmark_base/bin/lio-benchmark standardize trajectory-from-run \
+  --run <run> --algorithm fast_livo2
+```
+
 再统一重建地图：
 
 ```bash
 lio-benchmark standardize map --run <run> --algorithm fast_livo2
 ```
 
-统一地图只接受时间戳匹配成功的扫描，并在 `map_metadata.json` 保存 selected/matched/unmatched scan 数、插值 gap、timestamp source 和生成命令。
+统一地图只接受时间戳匹配成功的扫描，并在 metadata 中保存 selected/matched/unmatched scan 数、插值 gap、timestamp source 和生成命令。
+
+## Relative SE(3) Motion Benchmark V1
+
+当一个 frozen run 已经完成 standardized trajectory、trajectory frame audit 和 runtime provenance 后，可执行：
+
+```bash
+benchmark_base/bin/lio-benchmark compare relative-se3 --run "$RUN"
+```
+
+也可以只比较 frozen run 中明确选择的一组算法：
+
+```bash
+benchmark_base/bin/lio-benchmark compare relative-se3 \
+  --run "$RUN" \
+  --algorithms fast_livo2 fast_lio2 kiss_icp
+```
+
+V1 不是轨迹最佳拟合，也不是 ATE/RPE。它先依据 source-backed trajectory contract 将参与算法统一到 `IMU_BODY` physical tracked frame；LiDAR-tracked trajectory 使用 frozen dataset canonical LiDAR-to-IMU calibration 做 `T_WI = T_WL * inverse(T_IL)`。然后所有算法使用同一个公共起始时刻 `t0`，计算：
+
+```text
+DeltaT_i(t) = T_i(t0)^-1 * T_i(t)
+```
+
+固定比较定义：
+
+```text
+target physical frame = IMU_BODY
+sample period          = 0.1 s
+rotation metric        = SO(3) geodesic
+translation thresholds = 0.05 / 0.10 / 0.20 / 0.50 m
+rotation thresholds    = 1 / 2 / 5 / 10 deg
+sustained onset        = 3 consecutive samples
+terminology            = PAIRWISE_DISAGREEMENT
+ground truth           = NONE
+```
+
+输出固定在：
+
+```text
+metrics/relative_se3/
+├─ metadata.json
+├─ normalized_motion.csv
+├─ pairwise_samples.csv
+├─ pairwise_summary.csv
+└─ onset_thresholds.csv
+```
+
+`metadata.json` 冻结输入 trajectory SHA-256、runtime identity/provenance/frame gate、tracked physical frame、calibration status 和科学状态。分析不会修改 `standardized/trajectories/*.csv`。
+
+当 LiDAR-IMU calibration 结构有效但仍未确认时，可以产生数值诊断，但相关结果必须保持 `DIAGNOSTIC_ONLY`。没有真值时不得把 pairwise disagreement 表述为 estimator accuracy/error，也不得据此生成 ATE/RPE 排名。
+
+设计与验收定义见：
+
+- [`../docs/superpowers/specs/2026-08-16-relative-se3-motion-benchmark-design.md`](../docs/superpowers/specs/2026-08-16-relative-se3-motion-benchmark-design.md)
+- [`../docs/verification/relative_se3_verification.md`](../docs/verification/relative_se3_verification.md)
 
 ## Inspector / Report / Demo
 

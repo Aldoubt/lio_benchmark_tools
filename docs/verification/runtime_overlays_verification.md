@@ -120,7 +120,7 @@ Shell adapter syntax
 Registry smoke
 ```
 
-Because this verification note update creates one final documentation commit after `1549f074...`, the exact final repository HEAD must still receive one last successful `Core Contracts` run before repository-side completion is claimed.
+Subsequent provenance-closure verification completed the target-machine chain and re-ran the repository contracts. Implementation HEAD `496df8bdaf2cc686e5dac1b4af249f4ead3e0f11` passed exact-head `Core Contracts` run `31939808531`, and documentation HEAD `25e7d552d56e36191fcdeeaba9c3d50c2b282bce` passed exact-head run `31939853750`. Repository-side runtime-overlay verification is therefore closed.
 
 ## Target-machine acceptance — ACCEPTED
 
