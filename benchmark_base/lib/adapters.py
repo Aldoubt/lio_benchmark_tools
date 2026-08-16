@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Any
 
 from benchmark_base.lib.calibration import resolve_algorithm_extrinsic
+from benchmark_base.lib.execution_contract import (
+    EXPLICIT_EXECUTABLE_OVERRIDE,
+    ExecutionContractError,
+    resolve_execution,
+)
 
 
 BLOCKING_STATUSES = frozenset({
@@ -23,6 +28,7 @@ BLOCKING_STATUSES = frozenset({
     "BLOCKED_DEPENDENCY",
     "BLOCKED_INPUT",
     "BLOCKED_CALIBRATION",
+    "BLOCKED_EXECUTION",
 })
 
 
@@ -115,10 +121,33 @@ def preflight_algorithm(
 
     checks: dict[str, Any] = {}
     reasons: list[str] = []
+    try:
+        execution = resolve_execution(manifest, algorithm_id)
+    except ExecutionContractError as exc:
+        checks["execution_resolution_method"] = "BLOCKED"
+        checks["resolved_executable"] = None
+        reasons.append(str(exc))
+        return AdapterStatus(
+            algorithm_id,
+            "BLOCKED_EXECUTION",
+            False,
+            False,
+            tuple(reasons),
+            checks,
+        )
+    checks["execution_resolution_method"] = execution.resolution_method
+    checks["resolved_executable"] = (
+        str(execution.resolved_executable) if execution.resolved_executable else None
+    )
+
     source = _source_path(manifest, algorithm)
     checks["source_path"] = str(source) if source else None
     checks["source_exists"] = bool(source and source.is_dir())
-    if source is not None and not source.is_dir():
+    if (
+        execution.resolution_method != EXPLICIT_EXECUTABLE_OVERRIDE
+        and source is not None
+        and not source.is_dir()
+    ):
         reasons.append(f"source repository/path does not exist: {source}")
         return AdapterStatus(algorithm_id, "BLOCKED_ENVIRONMENT", False, False, tuple(reasons), checks)
 
