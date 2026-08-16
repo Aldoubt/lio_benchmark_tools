@@ -13,6 +13,7 @@ from benchmark_base.lib.execution_contract import (
     resolve_execution,
     write_runtime_identity,
 )
+from evaluators.prepare_fast_lio2_config import fmt as fast_lio2_yaml_vector
 
 
 class RuntimeExecutionContractTest(unittest.TestCase):
@@ -119,6 +120,9 @@ class RuntimeExecutionContractTest(unittest.TestCase):
             write_runtime_identity(self.run, "fast_lio2", payload)
         stored = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual("FROZEN", stored["identity_status"])
+
+    def test_fast_lio2_yaml_vector_keeps_float_scalars(self) -> None:
+        self.assertEqual("[1.0, 0.0, -2.0, 0.125]", fast_lio2_yaml_vector([1, 0, -2, 0.125]))
 
     def test_fast_lio2_runner_supports_direct_override_and_registry_default(self) -> None:
         root = Path(__file__).resolve().parents[2]
