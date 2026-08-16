@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +16,7 @@ if str(MODULE_ROOT) not in sys.path:
     sys.path.insert(0, str(MODULE_ROOT))
 
 from benchmark_base.lib.execution_contract import (  # noqa: E402
+    EXPLICIT_EXECUTABLE_OVERRIDE,
     ExecutionContractError,
     build_runtime_identity,
     resolve_execution,
@@ -119,18 +121,21 @@ def main() -> int:
     resolution = resolve_execution(manifest, args.algorithm)
     implementation = algorithm.get("execution_implementation", {})
     implementation = implementation if isinstance(implementation, dict) else {}
-    package = str(implementation.get("package", "")) or None
-    prefix = package_prefix(package)
+    registry_package = str(implementation.get("package", "")) or None
 
+    runtime_package: str | None = None
+    runtime_prefix: str | None = None
     source_candidate: Path | None = None
-    if resolution.resolved_executable is not None:
-        source_candidate = resolution.resolved_executable.parent
+    if resolution.resolution_method == EXPLICIT_EXECUTABLE_OVERRIDE:
+        source_candidate = resolution.resolved_executable.parent if resolution.resolved_executable else None
     else:
-        runtime_binary = registry_runtime_binary(prefix, algorithm)
+        runtime_package = registry_package
+        runtime_prefix = package_prefix(runtime_package)
+        runtime_binary = registry_runtime_binary(runtime_prefix, algorithm)
         if runtime_binary is not None:
             resolution = replace(resolution, resolved_executable=runtime_binary)
-        workspace = workspace_from_package_prefix(prefix)
-        source_candidate = package_source(workspace, package)
+        workspace = workspace_from_package_prefix(runtime_prefix)
+        source_candidate = package_source(workspace, runtime_package)
         if source_candidate is None and workspace is not None:
             source_candidate = workspace
 
@@ -145,9 +150,10 @@ def main() -> int:
             resolution=resolution,
             effective_command=command,
             effective_config=config,
-            ros_distro=capture(["bash", "-lc", "printf %s \"${ROS_DISTRO:-}\""]) or None,
+            ros_distro=os.environ.get("ROS_DISTRO") or None,
             source_state=git_state(source_candidate),
-            ros_package_prefix=prefix,
+            runtime_package=runtime_package,
+            runtime_package_prefix=runtime_prefix,
         )
         path = write_runtime_identity(run, args.algorithm, payload)
     except ExecutionContractError as exc:
