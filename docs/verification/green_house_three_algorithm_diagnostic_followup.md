@@ -57,7 +57,7 @@ before adding more baseline families.
 
 ## 4. New diagnostic artifacts
 
-`lio-benchmark report` now generates, in addition to the existing report:
+The full-run `warmup=0` report produces canonical filenames:
 
 ```text
 metrics/smoke_diagnostics.csv
@@ -68,7 +68,26 @@ figures/trajectory_pitch_vs_time.png
 figures/trajectory_yaw_relative_vs_time.png
 figures/pairwise_xy_disagreement.png
 figures/pairwise_z_disagreement.png
+reports/report.md
+reports/report.html
 ```
+
+A non-zero warmup is a separate derived diagnostic view and receives a deterministic suffix. For `--warmup-s 2.0`:
+
+```text
+metrics/smoke_diagnostics_warmup_2s.csv
+metrics/pairwise_disagreement_warmup_2s.csv
+figures/trajectory_z_vs_time_warmup_2s.png
+figures/trajectory_roll_vs_time_warmup_2s.png
+figures/trajectory_pitch_vs_time_warmup_2s.png
+figures/trajectory_yaw_relative_vs_time_warmup_2s.png
+figures/pairwise_xy_disagreement_warmup_2s.png
+figures/pairwise_z_disagreement_warmup_2s.png
+reports/report_warmup_2s.md
+reports/report_warmup_2s.html
+```
+
+The post-warmup pass therefore cannot overwrite the full-run diagnostic evidence.
 
 Pairwise comparison:
 
@@ -88,6 +107,7 @@ After pulling the latest `feat/lio-baseline-suite`:
 
 ```bash
 cd /home/yangxuan/lio_benchmark_tools
+git pull --ff-only
 RUN=/tmp/lio_benchmark_runs/green_house_three_smoke_004
 
 benchmark_base/bin/lio-benchmark report \
@@ -96,7 +116,7 @@ benchmark_base/bin/lio-benchmark report \
   --warmup-s 0
 ```
 
-Then generate an additional post-initialization view without modifying the source artifacts, for example:
+Then generate an additional post-initialization view without modifying or overwriting the source/full-run artifacts:
 
 ```bash
 benchmark_base/bin/lio-benchmark report \
@@ -105,21 +125,21 @@ benchmark_base/bin/lio-benchmark report \
   --warmup-s 2.0
 ```
 
-The exact warmup value is an analysis choice, not hidden filtering. Always retain the full-run (`warmup=0`) outputs alongside any warmup-aware view.
+The exact warmup value is an analysis choice, not hidden filtering. Keep the full-run (`warmup=0`) outputs as the canonical diagnostic evidence and use warmup views only to test whether initialization dominates the observed divergence.
 
 ## 6. Gate before expanding the baseline count
 
-Review at least:
+Review both the full-run and warmup variants of:
 
 ```text
-trajectory_z_vs_time.png
-trajectory_roll_vs_time.png
-trajectory_pitch_vs_time.png
-trajectory_yaw_relative_vs_time.png
-pairwise_xy_disagreement.png
-pairwise_z_disagreement.png
-smoke_diagnostics.csv
-pairwise_disagreement.csv
+trajectory_z_vs_time*.png
+trajectory_roll_vs_time*.png
+trajectory_pitch_vs_time*.png
+trajectory_yaw_relative_vs_time*.png
+pairwise_xy_disagreement*.png
+pairwise_z_disagreement*.png
+smoke_diagnostics*.csv
+pairwise_disagreement*.csv
 ```
 
 Then classify the current difference as one or more of:
@@ -140,6 +160,8 @@ These labels are diagnostic notes, not algorithm-quality scores.
 
 ```text
 three-algorithm diagnostic smoke
+        ↓
+full vs post-warmup divergence review
         ↓
 freeze/verify LiDAR–IMU calibration
         ↓
