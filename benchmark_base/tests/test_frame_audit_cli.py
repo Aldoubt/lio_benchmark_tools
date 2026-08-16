@@ -38,6 +38,25 @@ class FrameAuditCliTest(unittest.TestCase):
         self.assertEqual(["fast_livo2", "fast_lio2", "kiss_icp"], args.algorithms)
         self.assertEqual("cmd_audit_trajectory_frames", args.func.__name__)
 
+    def test_runtime_provenance_audit_is_exposed_through_main_cli(self) -> None:
+        module = self._load_cli()
+        args = module.build_parser().parse_args(
+            [
+                "audit",
+                "runtime-provenance",
+                "--run",
+                "/tmp/run",
+                "--algorithms",
+                "fast_livo2",
+                "fast_lio2",
+                "kiss_icp",
+            ]
+        )
+        self.assertEqual("audit", args.command)
+        self.assertEqual("runtime-provenance", args.audit_command)
+        self.assertEqual(["fast_livo2", "fast_lio2", "kiss_icp"], args.algorithms)
+        self.assertEqual("cmd_audit_runtime_provenance", args.func.__name__)
+
 
 if __name__ == "__main__":
     unittest.main()
