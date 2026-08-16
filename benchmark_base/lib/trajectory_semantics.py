@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Trajectory world-gauge and tracked-frame semantics helpers.
 
-This module is intentionally descriptive.  It does not transform trajectories
-or fit one estimator to another.  It only checks whether the frames published
+This module is intentionally descriptive. It does not transform trajectories
+or fit one estimator to another. It only checks whether the frames published
 at runtime are consistent with the source-backed contract recorded for an
 algorithm.
 """
@@ -35,6 +35,14 @@ class FrameAuditStatus(str, Enum):
 class FrameAuditClassification:
     status: FrameAuditStatus
     reasons: tuple[str, ...]
+
+
+def audit_semantic_labels(contract: dict[str, Any] | None) -> tuple[str, str]:
+    if not isinstance(contract, dict):
+        return "UNKNOWN", "UNKNOWN"
+    tracked = str(contract.get("tracked_frame_physical", "UNKNOWN")) or "UNKNOWN"
+    world = str(contract.get("world_gauge", "UNKNOWN")) or "UNKNOWN"
+    return tracked, world
 
 
 def validate_trajectory_contract(contract: dict[str, Any]) -> None:
@@ -91,9 +99,6 @@ def classify_frame_audit(
             f"child frame mismatch: expected={list(expected_children)} observed={list(observed_children)}"
         )
 
-    # INPUT_LIDAR_FRAME is deliberately a semantic policy rather than a hard-coded
-    # label.  The actual label is dataset-dependent and is preserved by the
-    # frame-audit artifact for later inspection.
     if contract.get("child_frame_policy") == "INPUT_LIDAR_FRAME" and len(observed_children) != 1:
         reasons.append(
             f"input LiDAR child frame is not stable: observed={list(observed_children)}"
