@@ -178,6 +178,25 @@ class ManifestTest(unittest.TestCase):
         self.assertIn("--duration-s", result.stdout)
         self.assertIn("--overwrite", result.stdout)
 
+    def test_trajectory_from_run_cli_exposes_only_run_and_algorithm_inputs(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(root / "benchmark_base/bin/lio-benchmark"),
+                "standardize",
+                "trajectory-from-run",
+                "--help",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("--run", result.stdout)
+        self.assertIn("--algorithm", result.stdout)
+        self.assertNotIn("--overwrite", result.stdout)
+
     def test_bundle_cli_exposes_diagnostic_archive_options(self) -> None:
         root = Path(__file__).resolve().parents[2]
         result = subprocess.run(
