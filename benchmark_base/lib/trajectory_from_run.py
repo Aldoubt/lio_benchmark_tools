@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any, Iterable
 
 from benchmark_base.lib.frame_audit import RawPoseObservation
@@ -64,6 +65,27 @@ def trajectory_from_observations(
             )
         )
     return Trajectory(samples)
+
+
+def trajectory_topic_from_algorithm(algorithm: dict[str, Any]) -> str:
+    topics = algorithm.get("topics", {})
+    outputs = topics.get("outputs", {}) if isinstance(topics, dict) else {}
+    value = outputs.get("trajectory") if isinstance(outputs, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("frozen algorithm contract is missing trajectory output topic")
+    return value.strip()
+
+
+def trajectory_output_paths(run: Path, algorithm_id: str) -> tuple[Path, Path]:
+    return (
+        run / "standardized" / "trajectories" / f"{algorithm_id}.csv",
+        run / "metadata" / "algorithms" / algorithm_id / "trajectory_standardization.json",
+    )
+
+
+def ensure_standardized_trajectory_absent(path: Path) -> None:
+    if path.exists():
+        raise FileExistsError(f"refusing to overwrite existing standardized trajectory: {path}")
 
 
 def build_trajectory_standardization_metadata(
