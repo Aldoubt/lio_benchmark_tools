@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -121,10 +120,31 @@ class RuntimeExecutionContractTest(unittest.TestCase):
         stored = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual("FROZEN", stored["identity_status"])
 
-    def test_runner_has_no_hardcoded_local_fast_lio2_path(self) -> None:
+    def test_fast_lio2_runner_supports_direct_override_and_registry_default(self) -> None:
         root = Path(__file__).resolve().parents[2]
         text = (root / "evaluators/run_fast_lio2_test.sh").read_text(encoding="utf-8")
+        self.assertIn("EXPLICIT_EXECUTABLE_OVERRIDE", text)
+        self.assertIn('"$BENCHMARK_RESOLVED_EXECUTABLE"', text)
+        self.assertIn("ros2 launch fast_lio mapping.launch.py", text)
+        self.assertIn("BENCHMARK_REPLAY_START_OFFSET_S", text)
+        self.assertIn("BENCHMARK_REPLAY_DURATION_S", text)
+        self.assertIn("freeze_runtime_identity.py", text)
         self.assertNotIn("/home/yangxuan/RM-NAV/build", text)
+        self.assertNotIn("$WORKSPACE/build/fast_lio", text)
+
+    def test_three_smoke_runners_freeze_runtime_identity_and_use_frozen_replay(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        for name in (
+            "run_fast_livo_test.sh",
+            "run_fast_lio2_test.sh",
+            "run_kiss_icp_test.sh",
+        ):
+            with self.subTest(runner=name):
+                text = (root / "evaluators" / name).read_text(encoding="utf-8")
+                self.assertIn("freeze_runtime_identity.py", text)
+                self.assertIn("BENCHMARK_REPLAY_RATE", text)
+                self.assertIn("BENCHMARK_REPLAY_START_OFFSET_S", text)
+                self.assertIn("BENCHMARK_REPLAY_DURATION_S", text)
 
 
 if __name__ == "__main__":
