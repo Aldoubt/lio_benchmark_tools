@@ -14,6 +14,11 @@
   "optional_modalities": ["camera"],
   "extrinsic_convention": "LIDAR_TO_IMU",
   "source": {"repository": "hku-mars/FAST-LIVO2", "local_path_hint": "src/FAST-LIVO2-ROS2"},
+  "execution_implementation": {
+    "package": "fast_livo",
+    "executable": "fastlivo_mapping",
+    "provenance_note": "The current benchmark launches this ROS2 package through agt_mapping. The exact execution repository is intentionally not declared until the local ROS2 port git remote/commit is audited; the upstream algorithm source is not silently treated as the runtime implementation."
+  },
   "runner": {"adapter": "evaluators/run_fast_livo_test.sh"},
   "topics": {
     "inputs": {"lidar": "/livox/lidar", "imu": "/livox/imu", "camera": null},
