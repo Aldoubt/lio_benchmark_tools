@@ -333,7 +333,7 @@ roll_rad pitch_rad yaw_rad
 source_topic
 ```
 
-执行示例：
+如果 upstream 已经提供轨迹 CSV，继续使用：
 
 ```bash
 lio-benchmark standardize trajectory \
@@ -342,6 +342,48 @@ lio-benchmark standardize trajectory \
   --input /path/to/raw_trajectory.csv \
   --source-topic /odom
 ```
+
+如果轨迹由 benchmark runner 记录在 `raw/<algorithm>/` 下的 ROS 2 bag，使用 run-native 入口：
+
+```bash
+lio-benchmark standardize trajectory-from-run \
+  --run <run> \
+  --algorithm fast_livo2
+```
+
+它自动从 frozen algorithm contract 读取 trajectory output topic，只在 `raw/<algorithm>/` 下寻找包含该 topic 的单一 ROS 2 bag，并支持：
+
+```text
+nav_msgs/msg/Odometry
+geometry_msgs/msg/PoseStamped
+geometry_msgs/msg/PoseWithCovarianceStamped
+```
+
+时间戳策略固定为：
+
+```text
+HEADER_STAMP_ELSE_BAG_RECORD_TIME
+```
+
+这个阶段只做表示转换。它不会执行：
+
+```text
+tracked-frame conversion
+world-gauge / gravity alignment
+LiDAR-IMU calibration transform
+START_XY_YAW
+interpolation / resampling
+warm-up trimming
+accuracy scoring
+```
+
+同时写：
+
+```text
+metadata/algorithms/<algorithm>/trajectory_standardization.json
+```
+
+已有 standardized trajectory 时直接 fail closed，本阶段没有 `--overwrite`。
 
 统一地图的 pose association 必须使用：
 
@@ -419,6 +461,8 @@ same reconstruction code
 
 ```text
 runtime_identity.json
+        ↓
+trajectory standardization evidence
         ↓
 trajectory frame audit
         ↓
@@ -582,6 +626,7 @@ lio-benchmark bundle --run <run>
 ```text
 manifest / run status
 runtime_identity.json
+trajectory_standardization.json
 runtime provenance
 trajectory frame audit
 diagnostic CSV
@@ -692,6 +737,7 @@ RUN_ID=green_house_runtime_contract_smoke_001
 benchmark_base/bin/lio-benchmark validate --config "$CONFIG"
 benchmark_base/bin/lio-benchmark init --config "$CONFIG" --run-id "$RUN_ID"
 RUN=/home/yangxuan/lio_benchmark_runs/green_house/$RUN_ID
+benchmark_base/bin/lio-benchmark snapshot --run "$RUN"
 ```
 
 当前数据集 LiDAR–IMU calibration 仍是 diagnostic/unverified，因此 LIO smoke 要显式允许 diagnostic calibration：
@@ -705,7 +751,17 @@ for ALG in fast_livo2 fast_lio2 kiss_icp; do
 done
 ```
 
-然后：
+先把三个 run-local raw trajectory bag 标准化：
+
+```bash
+for ALG in fast_livo2 fast_lio2 kiss_icp; do
+  benchmark_base/bin/lio-benchmark standardize trajectory-from-run \
+    --run "$RUN" \
+    --algorithm "$ALG" || break
+done
+```
+
+然后冻结公共 scan selection 并做 frame/provenance audit：
 
 ```bash
 benchmark_base/bin/lio-benchmark standardize scan-manifest --run "$RUN"
@@ -717,19 +773,25 @@ benchmark_base/bin/lio-benchmark audit trajectory-frames \
 benchmark_base/bin/lio-benchmark audit runtime-provenance \
   --run "$RUN" \
   --algorithms fast_livo2 fast_lio2 kiss_icp
+```
 
+重建三张 Unified Map：
+
+```bash
 for ALG in fast_livo2 fast_lio2 kiss_icp; do
   benchmark_base/bin/lio-benchmark standardize map \
-    --run "$RUN" --algorithm "$ALG"
+    --run "$RUN" --algorithm "$ALG" || break
 done
 
 benchmark_base/bin/lio-benchmark bundle --run "$RUN"
 ```
 
-Runtime Contract gate 至少确认：
+Runtime + trajectory standardization gate 至少确认：
 
 ```text
 3 × runtime_identity.json exist
+3 × trajectory_standardization.json exist
+3 × standardized trajectory CSV exist and are non-empty
 FAST-LIO2 resolution_method = EXPLICIT_EXECUTABLE_OVERRIDE
 FAST-LIO2 resolved executable + SHA256 are non-empty
 all three replay.duration_s = 15.0
@@ -765,6 +827,7 @@ frame audit remains independent
 startup
 full/partial bag consumption
 runtime identity
+trajectory standardization evidence
 trajectory monotonic timestamps
 NaN / Inf
 trajectory duration coverage
