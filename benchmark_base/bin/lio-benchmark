@@ -21,6 +21,7 @@ from benchmark_base.lib.adapters import collect_algorithm, preflight_algorithm, 
 from benchmark_base.lib.live_debug import append_marker, prepare_session  # noqa: E402
 from benchmark_base.lib.manifest import load_json, resolve_manifest, validate_manifest  # noqa: E402
 from benchmark_base.lib.registry import Registry, RegistryError  # noqa: E402
+from benchmark_base.lib.ros_workspace import build_sourced_python_command  # noqa: E402
 
 BASE_RUN_DIRS = (
     "input",
@@ -95,6 +96,43 @@ def run_python(script: str, arguments: list[str], cwd: Path | None = None) -> No
     run_command(command, cwd or MODULE_ROOT)
 
 
+def resolve_ros_distro(run: Path) -> str:
+    value = os.environ.get("ROS_DISTRO", "").strip()
+    if value:
+        return value
+    snapshot = run / "metadata" / "environment_snapshot.json"
+    if snapshot.is_file():
+        try:
+            payload = json.loads(snapshot.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        value = str(payload.get("ros_distro", "")).strip() if isinstance(payload, dict) else ""
+        if value:
+            return value
+    ros_root = Path("/opt/ros")
+    candidates = sorted(
+        path.name for path in ros_root.iterdir()
+        if path.is_dir() and (path / "setup.bash").is_file()
+    ) if ros_root.is_dir() else []
+    if len(candidates) == 1:
+        return candidates[0]
+    raise SystemExit(
+        "unable to resolve ROS distro for run; source ROS first or capture metadata/environment_snapshot.json"
+    )
+
+
+def run_python_ros(run: Path, manifest: dict[str, Any], script: str, arguments: list[str]) -> None:
+    workspace = Path(str(manifest.get("workspace", "."))).expanduser().resolve()
+    command = build_sourced_python_command(
+        python_executable=sys.executable,
+        script=MODULE_ROOT / script,
+        arguments=arguments,
+        workspace=workspace,
+        ros_distro=resolve_ros_distro(run),
+    )
+    run_command(command, workspace)
+
+
 def cmd_validate(args: argparse.Namespace) -> None:
     source, resolved = resolve_config(args.config.resolve(), args.verify_hash)
     dataset = resolved["dataset"]
@@ -145,10 +183,11 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 def cmd_analyze_bag(args: argparse.Namespace) -> None:
     run, manifest = resolve_run(args.run)
-    run_python(
+    run_python_ros(
+        run,
+        manifest,
         "evaluators/analyze_bag.py",
         [manifest["dataset"]["bag_dir"], "--output", str(run / "metrics/bag_analysis.json")],
-        Path(manifest["workspace"]).expanduser(),
     )
 
 
@@ -412,25 +451,44 @@ def cmd_standardize_trajectory(args: argparse.Namespace) -> None:
     run_python("evaluators/standardize_trajectory.py", command)
 
 
+def cmd_standardize_scan_manifest(args: argparse.Namespace) -> None:
+    run, manifest = resolve_run(args.run)
+    command = ["--run", str(run)]
+    if args.overwrite:
+        command.append("--overwrite")
+    if args.start_offset_s is not None:
+        command.extend(("--start-offset-s", str(args.start_offset_s)))
+    if args.duration_s is not None:
+        command.extend(("--duration-s", str(args.duration_s)))
+    run_python_ros(run, manifest, "evaluators/build_scan_manifest.py", command)
+
+
 def cmd_standardize_map(args: argparse.Namespace) -> None:
     run, manifest = resolve_run(args.run)
     if args.algorithm not in manifest["algorithms"]:
         raise SystemExit(f"algorithm is not selected in run: {args.algorithm}")
-    run_python("evaluators/standardize_map.py", ["--run", str(run), "--algorithm", args.algorithm])
+    run_python_ros(
+        run,
+        manifest,
+        "evaluators/standardize_map.py",
+        ["--run", str(run), "--algorithm", args.algorithm],
+    )
 
 
 def cmd_audit_trajectory_frames(args: argparse.Namespace) -> None:
-    command = ["--run", str(args.run)]
+    run, manifest = resolve_run(args.run)
+    command = ["--run", str(run)]
     if args.algorithms:
         command.extend(["--algorithms", *args.algorithms])
-    run_python("evaluators/audit_trajectory_frames.py", command)
+    run_python_ros(run, manifest, "evaluators/audit_trajectory_frames.py", command)
 
 
 def cmd_audit_runtime_provenance(args: argparse.Namespace) -> None:
-    command = ["--run", str(args.run)]
+    run, manifest = resolve_run(args.run)
+    command = ["--run", str(run)]
     if args.algorithms:
         command.extend(["--algorithms", *args.algorithms])
-    run_python("evaluators/audit_runtime_provenance.py", command)
+    run_python_ros(run, manifest, "evaluators/audit_runtime_provenance.py", command)
 
 
 def cmd_inspect(args: argparse.Namespace) -> None:
@@ -506,6 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
     standardize = sub.add_parser("standardize")
     standardize_sub = standardize.add_subparsers(dest="standardize_command", required=True)
     st = standardize_sub.add_parser("trajectory"); st.add_argument("--run", type=Path, required=True); st.add_argument("--algorithm", required=True); st.add_argument("--input", type=Path, required=True); st.add_argument("--source-topic", default=""); st.add_argument("--column-map"); st.set_defaults(func=cmd_standardize_trajectory)
+    ss = standardize_sub.add_parser("scan-manifest"); ss.add_argument("--run", type=Path, required=True); ss.add_argument("--start-offset-s", type=float); ss.add_argument("--duration-s", type=float); ss.add_argument("--overwrite", action="store_true"); ss.set_defaults(func=cmd_standardize_scan_manifest)
     sm = standardize_sub.add_parser("map"); sm.add_argument("--run", type=Path, required=True); sm.add_argument("--algorithm", required=True); sm.set_defaults(func=cmd_standardize_map)
 
     audit = sub.add_parser("audit")
