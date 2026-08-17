@@ -35,6 +35,7 @@ from benchmark_base.lib.manifest import (  # noqa: E402
 from benchmark_base.lib.registry import Registry, RegistryError  # noqa: E402
 from benchmark_base.lib.ros_workspace import build_sourced_python_command  # noqa: E402
 from benchmark_base.lib.run_outcome import classify_runner_status  # noqa: E402
+from benchmark_base.lib.runtime_performance import run_process_with_metrics  # noqa: E402
 
 BASE_RUN_DIRS = (
     "input",
@@ -407,24 +408,22 @@ def execute_algorithm(
             "BAG_DURATION": duration,
         }
     )
-    with log_path.open("w", encoding="utf-8") as stream:
-        result = subprocess.run(
-            command,
-            cwd=Path(manifest["workspace"]).expanduser(),
-            env=env,
-            stdout=stream,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-        )
+    returncode = run_process_with_metrics(
+        command,
+        cwd=Path(manifest["workspace"]).expanduser(),
+        env=env,
+        log_path=log_path,
+        algorithm_id=algorithm_id,
+        output_path=run / "metrics" / "runtime" / f"{algorithm_id}.json",
+    )
     collection = collect_algorithm(run, manifest, algorithm_id)
     payload = {
         "algorithm_id": algorithm_id,
         "started_at": started,
         "finished_at": now_iso(),
         "command": command,
-        "returncode": result.returncode,
-        "status": classify_runner_status(result.returncode),
+        "returncode": returncode,
+        "status": classify_runner_status(returncode),
         "diagnostic_only": preflight.diagnostic_only,
         "preflight_status": preflight.status,
         "log": str(log_path),
@@ -433,10 +432,10 @@ def execute_algorithm(
     }
     _write_run_status(run, algorithm_id, payload)
     print(
-        f"{algorithm_id}: {payload['status']} returncode={result.returncode} "
+        f"{algorithm_id}: {payload['status']} returncode={returncode} "
         f"diagnostic_only={preflight.diagnostic_only}"
     )
-    return result.returncode
+    return returncode
 
 
 def cmd_run(args: argparse.Namespace) -> None:
