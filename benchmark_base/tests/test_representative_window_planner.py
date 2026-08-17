@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import unittest
 
+from benchmark_base.lib.manifest import resolve_manifest, validate_manifest
 from benchmark_base.lib.representative_windows import (
     SelectedWindow,
     WindowFeature,
@@ -101,9 +102,13 @@ class RepresentativeWindowPlannerTest(unittest.TestCase):
     def test_selector_config_is_full_bag_three_algorithm_v2_config(self) -> None:
         self.assertTrue(SELECTOR_CONFIG.is_file())
         config = json.loads(SELECTOR_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual([], validate_manifest(config, check_paths=False))
+        resolved = resolve_manifest(config)
         self.assertEqual(2, config["schema_version"])
         self.assertEqual("green_house_mid360", config["dataset"])
+        self.assertEqual("green_house_mid360", resolved["dataset_ref"])
         self.assertEqual(["fast_livo2", "fast_lio2", "kiss_icp"], config["algorithms"])
+        self.assertEqual(config["algorithms"], resolved["algorithm_refs"])
         self.assertEqual(
             {"rate": 1.0, "start_offset_s": 0.0, "duration_s": None},
             config["replay"],
