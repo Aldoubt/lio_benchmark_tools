@@ -32,7 +32,7 @@ def feature(
         imu_sample_count=9000 if valid else 10,
         gyro_rms_rad_s=gyro_rms,
         gyro_p95_rad_s=gyro_p95,
-        accel_dynamic_rms_m_s2=accel_dynamic,
+        accel_dynamic_rms_native=accel_dynamic,
         scene_change_mean=scene_change,
         geometric_degeneracy_median=degeneracy,
         geometric_degeneracy_p90=min(1.0, degeneracy + 0.1),
@@ -91,7 +91,7 @@ class RepresentativeWindowRawFeatureTest(unittest.TestCase):
         self.assertEqual(9000, record.imu_sample_count)
         self.assertTrue(record.valid)
         self.assertAlmostEqual(0.2, record.gyro_rms_rad_s, places=12)
-        self.assertGreater(record.accel_dynamic_rms_m_s2, 0.0)
+        self.assertGreater(record.accel_dynamic_rms_native, 0.0)
 
 
 class RepresentativeWindowSelectionTest(unittest.TestCase):
