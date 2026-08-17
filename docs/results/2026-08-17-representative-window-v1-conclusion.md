@@ -18,7 +18,7 @@ Accepted target-machine evidence:
 ```text
 Representative Window V1 FINAL acceptance = PASS
 windows = 4
-a lgorithms per window = 3
+algorithms per window = 3
 fresh estimator runs = 12 / 12 runtime PASS
 timestamp regression = 0
 frame contract = all MATCH
