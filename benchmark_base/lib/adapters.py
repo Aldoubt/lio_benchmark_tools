@@ -14,7 +14,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from benchmark_base.lib.calibration import resolve_algorithm_extrinsic
+from benchmark_base.lib.calibration import (
+    CONFIRMED_CALIBRATION_STATUSES,
+    resolve_algorithm_extrinsic,
+)
 from benchmark_base.lib.execution_contract import (
     EXPLICIT_EXECUTABLE_OVERRIDE,
     ExecutionContractError,
@@ -349,7 +352,7 @@ def preflight_algorithm(
         calibration = dataset.get("calibration", {})
         status = str(calibration.get("status", "UNKNOWN")).upper() if isinstance(calibration, dict) else "UNKNOWN"
         checks["calibration_status"] = status
-        if status not in {"CONFIRMED", "VERIFIED"}:
+        if status not in CONFIRMED_CALIBRATION_STATUSES:
             reasons.append(f"canonical LiDAR-IMU calibration is not confirmed: {status}")
             return AdapterStatus(
                 algorithm_id,
