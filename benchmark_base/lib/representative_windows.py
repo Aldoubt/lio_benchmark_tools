@@ -109,7 +109,7 @@ def _available(
 
 
 def _rank01(values: Sequence[float], *, high_is_good: bool) -> list[float]:
-    """Return deterministic [0,1] average ranks; equal values receive equal ranks."""
+    """Return deterministic [0,1] ranks; equal values receive equal ranks."""
     if not values:
         return []
     if len(values) == 1:
@@ -224,14 +224,17 @@ def select_from_window_features(features: Sequence[WindowFeature]) -> tuple[Sele
         if record.start_offset_s + 1e-9 >= post_start and record.valid
     ]
 
-    high = _choose_high_angular(_available(post_candidates, selected))
-    selected.append(high)
-
-    geometric = _choose_geometric(_available(post_candidates, selected))
-    selected.append(geometric)
-
-    steady = _choose_steady(_available(post_candidates, selected))
-    selected.append(steady)
+    try:
+        high = _choose_high_angular(_available(post_candidates, selected))
+        selected.append(high)
+        geometric = _choose_geometric(_available(post_candidates, selected))
+        selected.append(geometric)
+        steady = _choose_steady(_available(post_candidates, selected))
+        selected.append(steady)
+    except RepresentativeWindowError as exc:
+        raise RepresentativeWindowError(
+            "Representative Window V1 requires four pairwise non-overlapping windows"
+        ) from exc
 
     if len(selected) != 4 or any(
         _overlap(left, right)
