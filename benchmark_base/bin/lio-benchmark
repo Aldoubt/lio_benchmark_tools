@@ -45,6 +45,18 @@ def cmd_audit_trajectory_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit_trajectory_timestamps(args: argparse.Namespace) -> int:
+    run, manifest = _core.resolve_run(args.run)
+    arguments = ["--run", str(run), "--algorithms", *args.algorithms]
+    _core.run_python_ros(
+        run,
+        manifest,
+        "evaluators/audit_trajectory_timestamps.py",
+        arguments,
+    )
+    return 0
+
+
 def cmd_standardize_common_map_manifest(args: argparse.Namespace) -> None:
     run, manifest = _core.resolve_run(args.run)
     _core.run_python_ros(
@@ -87,6 +99,14 @@ def build_parser() -> argparse.ArgumentParser:
     coverage.add_argument("--run", type=Path, required=True)
     coverage.add_argument("--algorithms", nargs="+")
     coverage.set_defaults(func=cmd_audit_trajectory_coverage)
+
+    timestamps = audit_sub.add_parser(
+        "trajectory-timestamps",
+        help="diagnose raw trajectory header, bag-record, and effective timestamp ordering",
+    )
+    timestamps.add_argument("--run", type=Path, required=True)
+    timestamps.add_argument("--algorithms", nargs="+", required=True)
+    timestamps.set_defaults(func=cmd_audit_trajectory_timestamps)
 
     standardize_parser = root_sub.choices["standardize"]
     standardize_sub = _subparser_action(standardize_parser, "standardize_command")
@@ -147,6 +167,9 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] in {"-h", "--help"}:
         return _combined_help()
     if len(sys.argv) > 2 and sys.argv[1:3] == ["audit", "trajectory-coverage"]:
+        args = build_parser().parse_args(sys.argv[1:])
+        return int(args.func(args) or 0)
+    if len(sys.argv) > 2 and sys.argv[1:3] == ["audit", "trajectory-timestamps"]:
         args = build_parser().parse_args(sys.argv[1:])
         return int(args.func(args) or 0)
     if len(sys.argv) > 2 and sys.argv[1:3] == ["standardize", "common-map-manifest"]:
