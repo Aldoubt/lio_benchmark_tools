@@ -58,6 +58,12 @@ GENERATED_CONFIG_EVIDENCE_NAMES = (
     "runtime_params.yaml",
     "benchmark.yaml",
 )
+REPRESENTATIVE_WINDOW_GLOBS = (
+    "metadata/representative_windows/*.csv",
+    "metadata/representative_windows/*.json",
+    "configs/representative_windows/*.json",
+)
+REPRESENTATIVE_WINDOW_PLAN = "reports/REPRESENTATIVE_WINDOW_PLAN.md"
 
 
 @dataclass(frozen=True)
@@ -153,6 +159,14 @@ def collect_bundle_files(
     for relative in COMMON_MAP_ARTIFACTS:
         if _safe_relative_file(run, relative):
             included.add(relative)
+
+    # Representative-window planning evidence is small, additive, and useful
+    # even before estimator runs begin. Historical runs are not required to
+    # contain it, and the generated plan is bundled without enabling all reports.
+    for pattern in REPRESENTATIVE_WINDOW_GLOBS:
+        included.update(_existing_glob(run, pattern))
+    if _safe_relative_file(run, REPRESENTATIVE_WINDOW_PLAN):
+        included.add(REPRESENTATIVE_WINDOW_PLAN)
 
     for algorithm_id in _algorithm_ids(manifest):
         # Effective calibration/config files are small, additive provenance.
