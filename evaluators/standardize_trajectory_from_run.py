@@ -19,6 +19,7 @@ from benchmark_base.lib.rosbag_trajectory import (  # noqa: E402
 )
 from benchmark_base.lib.trajectory_from_run import (  # noqa: E402
     build_trajectory_standardization_metadata,
+    canonicalize_pose_observations,
     ensure_standardized_trajectory_absent,
     trajectory_from_observations,
     trajectory_output_paths,
@@ -50,8 +51,9 @@ def main() -> int:
         raw_dir = run / "raw" / args.algorithm
         bag, actual_topic, message_type = find_bag_for_topic(raw_dir, declared_topic)
         observations = read_pose_observations(bag, actual_topic, message_type)
+        canonical_observations, timestamp_canonicalization = canonicalize_pose_observations(observations)
         trajectory = trajectory_from_observations(
-            observations,
+            canonical_observations,
             source_topic=normalize_topic(actual_topic),
         )
     except (ValueError, FileExistsError) as exc:
@@ -68,6 +70,7 @@ def main() -> int:
         start_timestamp_s=trajectory.timestamps[0],
         end_timestamp_s=trajectory.timestamps[-1],
         output=relative_output,
+        timestamp_canonicalization=timestamp_canonicalization,
     )
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.write_text(
