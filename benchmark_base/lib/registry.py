@@ -204,6 +204,21 @@ class Registry:
             raise RegistryError("dataset calibration translation must have 3 values")
 
 
+def validate_dataset_record(
+    record: dict[str, Any], expected_id: str | None = None
+) -> None:
+    """Validate a schema-v2 dataset object with the same contract as the registry.
+
+    External machine-local dataset files use this public entry point so they do
+    not need to be copied into ``benchmark_base/registry/datasets`` merely to
+    receive the registry's semantic validation.
+    """
+    if not isinstance(record, dict):
+        raise RegistryError("dataset record must be an object")
+    resolved_id = expected_id or str(record.get("dataset_id", ""))
+    Registry._validate_dataset(record, resolved_id)
+
+
 def validate_fixed_baselines(registry: Registry | None = None) -> None:
     active = registry or Registry()
     missing = [item for item in FIXED_BASELINES if item not in active.list_algorithms()]
