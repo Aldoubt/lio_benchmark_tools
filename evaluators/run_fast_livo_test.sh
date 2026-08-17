@@ -25,9 +25,15 @@ mkdir -p "$ROS_LOG_DIR"
 cleanup() { jobs -pr | xargs -r kill 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
+fast_livo_params="$BENCHMARK_RUN_DIR/configs/generated/fast_livo2/runtime_params.yaml"
+python3 "$BENCHMARK_ROOT/evaluators/prepare_fast_livo2_config.py" \
+  --run "$BENCHMARK_RUN_DIR" \
+  --output "$fast_livo_params"
+
 estimator_cmd=(
   ros2 launch agt_mapping fast_livo2_mapping.launch.py
   start_lidar_self_filter:=false use_sim_time:=true save_pcd:=false
+  params_file:="$fast_livo_params"
 )
 command_json=$(python3 - "${estimator_cmd[@]}" <<'PY'
 import json,sys
