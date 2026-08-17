@@ -110,7 +110,7 @@ def main() -> int:
         "calibration_status": calibration.get("calibration_status"),
         "sensor_model": calibration.get("sensor_model"),
         "imu_relation": calibration.get("imu_relation"),
-        "online_extrinsic_estimation": false if False else False,
+        "online_extrinsic_estimation": False,
     }
     (args.output.parent / "adapter_config_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
