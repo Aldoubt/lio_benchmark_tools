@@ -123,11 +123,12 @@ class SameBagSummaryContractTest(unittest.TestCase):
                         "schema": "lio_benchmark_map/v3",
                         "map_source": "UNIFIED_RECONSTRUCTION",
                         "point_count": point_count,
+                        "scan_set_policy": "STRICT_COMMON_INTERSECTION",
                         "timestamp_matching": {
                             "matched_scan_count": 120,
-                            "selected_scan_count": 123,
-                            "match_ratio": 120 / 123,
-                            "scan_set_policy": "STRICT_COMMON_INTERSECTION",
+                            "selected_scan_count": 120,
+                            "unmatched_scan_count": 0,
+                            "matched_scan_ratio": 1.0,
                         },
                     }
                 ),
@@ -150,6 +151,10 @@ class SameBagSummaryContractTest(unittest.TestCase):
         self.assertEqual("NOT_PROVIDED", kiss["native_map_status"])
         self.assertEqual("AVAILABLE", fast_livo2["unified_map_status"])
         self.assertEqual(101, fast_livo2["unified_map_point_count"])
+        self.assertEqual("STRICT_COMMON_INTERSECTION", fast_livo2["strict_common_scan_policy"])
+        self.assertEqual(120, fast_livo2["matched_scan_count"])
+        self.assertEqual(120, fast_livo2["selected_scan_count"])
+        self.assertEqual(1.0, fast_livo2["matched_scan_ratio"])
         self.assertEqual("MISSING", kiss["unified_map_status"])
         self.assertIsNone(kiss["wall_time_s"])
         self.assertIsNone(kiss["max_rss_kib"])
