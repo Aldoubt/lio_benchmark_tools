@@ -48,6 +48,10 @@ RELATIVE_SE3_ARTIFACTS = (
 )
 TRAJECTORY_COVERAGE_ARTIFACT = "metrics/trajectory_coverage.csv"
 TRAJECTORY_COVERAGE_METADATA_GLOB = "metadata/trajectory_coverage/*.json"
+COMMON_MAP_ARTIFACTS = (
+    "standardized/map_sampling/common_matched_scans.csv",
+    "standardized/map_sampling/common_matched_metadata.json",
+)
 
 
 @dataclass(frozen=True)
@@ -136,6 +140,13 @@ def collect_bundle_files(
     if _safe_relative_file(run, TRAJECTORY_COVERAGE_ARTIFACT):
         included.add(TRAJECTORY_COVERAGE_ARTIFACT)
     included.update(_existing_glob(run, TRAJECTORY_COVERAGE_METADATA_GLOB))
+
+    # Strict common-map evidence is additive for P2+ runs. Historical runs do
+    # not become incomplete merely because this second-stage manifest did not
+    # exist when their maps were produced.
+    for relative in COMMON_MAP_ARTIFACTS:
+        if _safe_relative_file(run, relative):
+            included.add(relative)
 
     for algorithm_id in _algorithm_ids(manifest):
         for relative in (
