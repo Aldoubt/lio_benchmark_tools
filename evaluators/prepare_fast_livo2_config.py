@@ -30,7 +30,9 @@ def _float_scalar(value: float) -> str:
     number = float(value)
     if not math.isfinite(number):
         raise ValueError("FAST-LIVO2 calibration contains non-finite values")
-    text = f"{number:.17g}"
+    # Benchmark parameters are human-audited provenance. Twelve significant
+    # digits preserve the frozen values while avoiding binary-float expansion.
+    text = f"{number:.12g}"
     if "." not in text and "e" not in text.lower():
         text += ".0"
     return text
