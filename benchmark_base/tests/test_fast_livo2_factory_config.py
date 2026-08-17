@@ -73,14 +73,19 @@ class FastLivo2FactoryConfigContractTest(unittest.TestCase):
             self.assertEqual("p_I = R_IL * p_L + t_IL", metadata["canonical_equation"])
             self.assertEqual(str(output.resolve()), metadata["config"])
 
-    def test_runner_explicitly_generates_and_passes_run_local_params(self) -> None:
+    def test_runner_explicitly_generates_passes_and_fingerprints_run_local_params(self) -> None:
         text = RUNNER.read_text(encoding="utf-8")
         self.assertIn('prepare_fast_livo2_config.py', text)
         self.assertIn('runtime_params.yaml', text)
         self.assertIn('params_file:="$fast_livo_params"', text)
+        self.assertIn('--effective-config "$fast_livo_params"', text)
         self.assertLess(
             text.index('prepare_fast_livo2_config.py'),
             text.index('estimator_cmd=('),
+        )
+        self.assertLess(
+            text.index('fast_livo_params='),
+            text.index('--effective-config "$fast_livo_params"'),
         )
 
 
