@@ -46,6 +46,7 @@ Unified Maps are the formal visual comparison surface and must use `STRICT_COMMO
 The handoff prompt must export the exact repository-accepted HEAD as `SAME_BAG_MAPPING_V1_EXPECTED_HEAD`.
 
 ```bash
+set -euo pipefail
 cd ~/lio_benchmark_tools
 git switch feat/lio-baseline-suite
 git pull --ff-only
@@ -85,7 +86,7 @@ print("SAME_BAG_MAPPING_V1_CONFIG=PASS")
 PY
 ```
 
-The current dataset registry identifies the greenhouse MID360 source at its frozen configured path and uses the already accepted manufacturer-spec internal LiDAR/IMU geometry. Do not edit the bag, topics, calibration or adapter parameters during acceptance.
+The current dataset registry identifies the greenhouse MID360 source at its configured path and uses the accepted manufacturer-spec internal LiDAR/IMU geometry. Do not edit the bag, topics, calibration or adapter parameters during acceptance.
 
 ## 3. Create one new immutable full-bag run
 
@@ -124,7 +125,7 @@ for ALG in fast_livo2 fast_lio2 kiss_icp; do
   echo "===== FULL BAG: $ALG ====="
   python3 benchmark_base/bin/lio-benchmark run \
     --run "$RUN" \
-    --algorithm "$ALG" || exit $?
+    --algorithm "$ALG"
 done
 ```
 
@@ -142,9 +143,10 @@ Each record uses:
 
 ```text
 schema = lio_benchmark_runtime_performance/v1
-measurement_method = LINUX_PROC_PROCESS_SESSION_V1
 performance interpretation = SINGLE_RUN_DESCRIPTIVE
 ```
+
+On the target Linux host the expected measurement method is `LINUX_PROC_PROCESS_SESSION_V1`.
 
 ## 6. Standardize all trajectories
 
@@ -152,7 +154,7 @@ performance interpretation = SINGLE_RUN_DESCRIPTIVE
 for ALG in fast_livo2 fast_lio2 kiss_icp; do
   python3 benchmark_base/bin/lio-benchmark standardize trajectory-from-run \
     --run "$RUN" \
-    --algorithm "$ALG" || exit $?
+    --algorithm "$ALG"
 done
 ```
 
@@ -183,11 +185,8 @@ Acceptance requires zero effective timestamp regressions. Frame and runtime-prov
 ## 8. Freeze the selected scans and strict common intersection
 
 ```bash
-python3 benchmark_base/bin/lio-benchmark standardize scan-manifest \
-  --run "$RUN"
-
-python3 benchmark_base/bin/lio-benchmark standardize common-map-manifest \
-  --run "$RUN"
+python3 benchmark_base/bin/lio-benchmark standardize scan-manifest --run "$RUN"
+python3 benchmark_base/bin/lio-benchmark standardize common-map-manifest --run "$RUN"
 ```
 
 Required strict evidence:
@@ -206,7 +205,7 @@ Do not use `--overwrite` and do not introduce an algorithm subset or tolerance o
 for ALG in fast_livo2 fast_lio2 kiss_icp; do
   python3 benchmark_base/bin/lio-benchmark standardize map \
     --run "$RUN" \
-    --algorithm "$ALG" || exit $?
+    --algorithm "$ALG"
 done
 ```
 
@@ -217,20 +216,18 @@ standardized/maps/<algorithm>/unified/map.ply
 standardized/maps/<algorithm>/unified/metadata.json
 ```
 
-Every accepted Unified Map must report:
+The existing metadata contract stores `scan_set_policy` at the metadata root and scan counts inside `timestamp_matching`:
 
 ```text
-scan_set_policy = STRICT_COMMON_INTERSECTION
-matched_scan_count = selected_scan_count
-unmatched_scan_count = 0
-point_count > 0
+metadata.scan_set_policy = STRICT_COMMON_INTERSECTION
+metadata.timestamp_matching.matched_scan_count = selected_scan_count
+metadata.timestamp_matching.unmatched_scan_count = 0
+metadata.point_count > 0
 ```
 
 Point counts may legitimately differ between algorithms.
 
 ## 10. Existing Relative SE(3) descriptive comparison
-
-This is not a ground-truth metric, but retaining the existing pairwise trajectory description makes the full-bag package consistent with the established benchmark views.
 
 ```bash
 python3 benchmark_base/bin/lio-benchmark compare relative-se3 \
@@ -238,9 +235,9 @@ python3 benchmark_base/bin/lio-benchmark compare relative-se3 \
   --algorithms fast_livo2 fast_lio2 kiss_icp
 ```
 
-Keep terminology as `PAIRWISE_DISAGREEMENT` / `DESCRIPTIVE_NO_GROUND_TRUTH`.
+This is not ground truth. Keep terminology as `PAIRWISE_DISAGREEMENT` / `DESCRIPTIVE_NO_GROUND_TRUTH`.
 
-## 11. Generate the Same-Bag I/O / performance / map inventory
+## 11. Generate Same-Bag I/O / performance / map inventory
 
 ```bash
 python3 benchmark_base/bin/lio-benchmark summarize same-bag --run "$RUN"
@@ -324,8 +321,8 @@ for alg in algs:
     metadata_path = run / "standardized" / "maps" / alg / "unified" / "metadata.json"
     assert map_path.is_file() and map_path.stat().st_size > 0, alg
     meta = json.loads(metadata_path.read_text())
+    assert meta["scan_set_policy"] == "STRICT_COMMON_INTERSECTION", (alg, meta)
     matching = meta["timestamp_matching"]
-    assert matching["scan_set_policy"] == "STRICT_COMMON_INTERSECTION", (alg, matching)
     assert matching["matched_scan_count"] == matching["selected_scan_count"], (alg, matching)
     assert matching["unmatched_scan_count"] == 0, (alg, matching)
     assert meta["point_count"] > 0, (alg, meta["point_count"])
@@ -337,6 +334,7 @@ assert summary["scientific_status"] == "DESCRIPTIVE_NO_GROUND_TRUTH"
 assert summary["performance_status"] == "SINGLE_RUN_DESCRIPTIVE"
 assert summary["benchmark_profile"] == "DEFAULT_ADAPTED"
 assert [row["algorithm_id"] for row in summary["algorithms"]] == algs
+assert all(row["strict_common_scan_policy"] == "STRICT_COMMON_INTERSECTION" for row in summary["algorithms"])
 assert all("map_accuracy" not in row for row in summary["algorithms"])
 
 for path in (
@@ -365,9 +363,9 @@ PY
 
 Only print/claim target PASS after this machine check succeeds.
 
-## 13. Visualization commands after machine PASS
+## 13. Visualization after machine PASS
 
-These are human-facing views and are not required to claim the machine contract:
+These human-facing views are not required for the machine contract:
 
 ```bash
 python3 benchmark_base/bin/lio-benchmark inspect \
@@ -385,16 +383,7 @@ python3 benchmark_base/bin/lio-benchmark demo \
   --display-alignment START_XY_YAW
 ```
 
-Native maps may also be inspected where available:
-
-```bash
-python3 benchmark_base/bin/lio-benchmark inspect \
-  --run "$RUN" \
-  --map-kind native \
-  --display-alignment START_XY_YAW
-```
-
-A missing Native Map is not an acceptance failure if the frozen upstream/default profile does not provide one.
+Native maps may also be inspected where available. A missing Native Map is not an acceptance failure if the frozen/default runtime profile does not provide one.
 
 ## Target-machine stop condition
 
@@ -416,8 +405,8 @@ Do not begin new algorithm adapters or greenhouse-specific tuning in the same ta
 ## Current acceptance state
 
 ```text
-SAME_BAG_MAPPING_V1_REPOSITORY_ACCEPTANCE = PENDING
+SAME_BAG_MAPPING_V1_REPOSITORY_ACCEPTANCE = PENDING_EXACT_HEAD_CI
 SAME_BAG_MAPPING_V1_TARGET_MACHINE_ACCEPTANCE = PENDING
 ```
 
-The first line changes to PASS only after a fresh exact-head repository Core Contracts run succeeds. The second line remains PENDING until Codex executes this runbook on the target machine.
+Repository acceptance changes to PASS only after a fresh exact-head Core Contracts run succeeds. Target acceptance remains pending until Codex executes this runbook on the target machine.
