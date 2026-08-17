@@ -80,15 +80,17 @@ For each IMU message use the vector norms:
 
 ```text
 angular_speed_rad_s = ||omega||
-acceleration_m_s2 = ||a||
+acceleration_norm_native = ||a||
 ```
+
+`acceleration_norm_native` intentionally preserves the frozen dataset's declared acceleration unit rather than assuming SI. The current greenhouse registry describes the stream as `g_like_raw; existing DLIO adapter scales by 9.80665`. Representative Window V1 only uses rank/order information from acceleration dynamics, so a constant unit scale does not alter the selector ordering.
 
 Each 45 s candidate window records:
 
 ```text
 gyro_rms_rad_s
 gyro_p95_rad_s
-accel_dynamic_rms_m_s2
+accel_dynamic_rms_native
 scene_change_mean
 geometric_degeneracy_median
 geometric_degeneracy_p90
@@ -96,7 +98,7 @@ lidar_scan_count
 imu_sample_count
 ```
 
-`accel_dynamic_rms_m_s2` is the RMS deviation of acceleration magnitude from the window median, so gravity magnitude itself does not dominate the score.
+`accel_dynamic_rms_native` is the RMS deviation of acceleration magnitude from the window median in the dataset-native unit, so gravity magnitude itself does not dominate the score. The actual declared unit string is frozen in `selection_metadata.json`.
 
 ## Candidate grid and validity
 
@@ -147,7 +149,7 @@ Among remaining non-overlapping windows, compute deterministic percentile ranks 
 steady_score =
     0.60 * rank(scene_change_mean, high_is_good)
   + 0.30 * rank(gyro_rms_rad_s, low_is_good)
-  + 0.10 * rank(accel_dynamic_rms_m_s2, low_is_good)
+  + 0.10 * rank(accel_dynamic_rms_native, low_is_good)
 ```
 
 Choose maximum score, tie-break by earlier start time.
