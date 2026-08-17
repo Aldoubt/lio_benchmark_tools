@@ -52,6 +52,12 @@ COMMON_MAP_ARTIFACTS = (
     "standardized/map_sampling/common_matched_scans.csv",
     "standardized/map_sampling/common_matched_metadata.json",
 )
+GENERATED_CONFIG_EVIDENCE_NAMES = (
+    "calibration.json",
+    "adapter_config_metadata.json",
+    "runtime_params.yaml",
+    "benchmark.yaml",
+)
 
 
 @dataclass(frozen=True)
@@ -149,6 +155,14 @@ def collect_bundle_files(
             included.add(relative)
 
     for algorithm_id in _algorithm_ids(manifest):
+        # Effective calibration/config files are small, additive provenance.
+        # They are intentionally optional so historical bundles are not marked
+        # incomplete merely because older runners did not generate them.
+        for name in GENERATED_CONFIG_EVIDENCE_NAMES:
+            relative = f"configs/generated/{algorithm_id}/{name}"
+            if _safe_relative_file(run, relative):
+                included.add(relative)
+
         for relative in (
             f"metadata/algorithms/{algorithm_id}/runtime_identity.json",
             f"metadata/algorithms/{algorithm_id}/trajectory_standardization.json",
