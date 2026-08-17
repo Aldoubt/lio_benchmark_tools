@@ -2,14 +2,15 @@
 """Estimator-independent representative-window selection contracts.
 
 This module is deliberately ROS-independent. Target-machine bag readers turn
-raw LiDAR/IMU messages into :class:`WindowFeature` records; this module only
+raw LiDAR/IMU messages into compact raw-sensor features; this module aggregates,
 validates, ranks, and selects those records deterministically.
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 import math
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 
@@ -38,6 +39,20 @@ class RepresentativeWindowError(ValueError):
 
 
 @dataclass(frozen=True)
+class LidarScanFeature:
+    timestamp_s: float
+    range_histogram: np.ndarray
+    geometric_degeneracy_score: float
+
+
+@dataclass(frozen=True)
+class ImuFeatureSample:
+    timestamp_s: float
+    angular_speed_rad_s: float
+    acceleration_norm_native: float
+
+
+@dataclass(frozen=True)
 class WindowFeature:
     start_offset_s: float
     duration_s: float
@@ -45,7 +60,7 @@ class WindowFeature:
     imu_sample_count: int
     gyro_rms_rad_s: float
     gyro_p95_rad_s: float
-    accel_dynamic_rms_m_s2: float
+    accel_dynamic_rms_native: float
     scene_change_mean: float
     geometric_degeneracy_median: float
     geometric_degeneracy_p90: float
@@ -69,13 +84,203 @@ class SelectedWindow:
         return self.start_offset_s + self.duration_s
 
 
+def _finite_vector(values: np.ndarray) -> np.ndarray:
+    return values[np.all(np.isfinite(values), axis=1)]
+
+
+def lidar_scan_feature(timestamp_s: float, xyz: np.ndarray) -> LidarScanFeature:
+    """Build the frozen raw-geometry signature for one LiDAR scan."""
+    timestamp = float(timestamp_s)
+    points = np.asarray(xyz, dtype=np.float64)
+    if not math.isfinite(timestamp):
+        raise RepresentativeWindowError("LiDAR feature timestamp must be finite")
+    if points.ndim != 2 or points.shape[1] < 3:
+        raise RepresentativeWindowError("LiDAR feature points must be an Nx3 array")
+    points = _finite_vector(points[:, :3])
+    if len(points) < 3:
+        raise RepresentativeWindowError("LiDAR feature requires at least three finite points")
+
+    ranges = np.linalg.norm(points, axis=1)
+    in_histogram = ranges[
+        (ranges >= LIDAR_NEAR_RANGE_M) & (ranges <= RANGE_HISTOGRAM_MAX_M)
+    ]
+    counts, _ = np.histogram(
+        in_histogram,
+        bins=RANGE_HISTOGRAM_BINS,
+        range=(LIDAR_NEAR_RANGE_M, RANGE_HISTOGRAM_MAX_M),
+    )
+    histogram = counts.astype(np.float64)
+    total = float(np.sum(histogram))
+    if total <= 0.0:
+        raise RepresentativeWindowError("LiDAR feature has no points in histogram range")
+    histogram /= total
+
+    centered = points - np.mean(points, axis=0)
+    covariance = (centered.T @ centered) / float(len(points))
+    eigenvalues = np.linalg.eigvalsh(covariance)
+    eigenvalues = np.maximum(eigenvalues, 0.0)[::-1]
+    eigen_sum = float(np.sum(eigenvalues))
+    if eigen_sum <= np.finfo(np.float64).eps:
+        degeneracy = 1.0
+    else:
+        probabilities = eigenvalues / eigen_sum
+        positive = probabilities[probabilities > 0.0]
+        entropy = -float(np.sum(positive * np.log(positive))) / math.log(3.0)
+        degeneracy = min(1.0, max(0.0, 1.0 - entropy))
+
+    histogram.setflags(write=False)
+    return LidarScanFeature(timestamp, histogram, degeneracy)
+
+
+def _window_grid(analysis_end_s: float) -> tuple[float, ...]:
+    end = float(analysis_end_s)
+    if not math.isfinite(end) or end < WINDOW_DURATION_S:
+        raise RepresentativeWindowError(
+            f"raw sensor interval must cover at least {WINDOW_DURATION_S} s"
+        )
+    maximum_start = end - WINDOW_DURATION_S
+    count = int(math.floor(maximum_start / WINDOW_STRIDE_S + 1e-12))
+    return tuple(index * WINDOW_STRIDE_S for index in range(count + 1))
+
+
+def build_window_features(
+    lidar_samples: Sequence[LidarScanFeature],
+    imu_samples: Sequence[ImuFeatureSample],
+    *,
+    analysis_end_s: float,
+) -> tuple[WindowFeature, ...]:
+    """Aggregate raw sensor features on the frozen 45 s / 5 s candidate grid."""
+    lidar = tuple(sorted(lidar_samples, key=lambda item: item.timestamp_s))
+    imu = tuple(sorted(imu_samples, key=lambda item: item.timestamp_s))
+    if not lidar or not imu:
+        raise RepresentativeWindowError("raw LiDAR and IMU feature streams are required")
+    if any(not math.isfinite(item.timestamp_s) for item in lidar):
+        raise RepresentativeWindowError("LiDAR feature timestamps must be finite")
+    if any(
+        not math.isfinite(value)
+        for item in imu
+        for value in (item.timestamp_s, item.angular_speed_rad_s, item.acceleration_norm_native)
+    ):
+        raise RepresentativeWindowError("IMU feature samples must be finite")
+
+    records: list[WindowFeature] = []
+    for start in _window_grid(analysis_end_s):
+        end = start + WINDOW_DURATION_S
+        lidar_window = [item for item in lidar if start <= item.timestamp_s < end]
+        imu_window = [item for item in imu if start <= item.timestamp_s < end]
+
+        gyro = np.asarray([item.angular_speed_rad_s for item in imu_window], dtype=np.float64)
+        acceleration = np.asarray(
+            [item.acceleration_norm_native for item in imu_window], dtype=np.float64
+        )
+        degeneracy = np.asarray(
+            [item.geometric_degeneracy_score for item in lidar_window], dtype=np.float64
+        )
+        scene_change = np.asarray(
+            [
+                0.5
+                * float(
+                    np.sum(
+                        np.abs(
+                            right.range_histogram - left.range_histogram
+                        )
+                    )
+                )
+                for left, right in zip(lidar_window, lidar_window[1:])
+            ],
+            dtype=np.float64,
+        )
+
+        gyro_rms = float(np.sqrt(np.mean(np.square(gyro)))) if len(gyro) else 0.0
+        gyro_p95 = float(np.percentile(gyro, 95.0)) if len(gyro) else 0.0
+        if len(acceleration):
+            acceleration_median = float(np.median(acceleration))
+            accel_dynamic = float(
+                np.sqrt(np.mean(np.square(acceleration - acceleration_median)))
+            )
+        else:
+            accel_dynamic = 0.0
+        scene_mean = float(np.mean(scene_change)) if len(scene_change) else 0.0
+        degeneracy_median = float(np.median(degeneracy)) if len(degeneracy) else 0.0
+        degeneracy_p90 = float(np.percentile(degeneracy, 90.0)) if len(degeneracy) else 0.0
+        valid = (
+            len(lidar_window) >= MIN_LIDAR_SCANS_PER_WINDOW
+            and len(imu_window) >= MIN_IMU_SAMPLES_PER_WINDOW
+            and len(scene_change) > 0
+            and len(degeneracy) > 0
+        )
+        records.append(
+            WindowFeature(
+                start_offset_s=start,
+                duration_s=WINDOW_DURATION_S,
+                lidar_scan_count=len(lidar_window),
+                imu_sample_count=len(imu_window),
+                gyro_rms_rad_s=gyro_rms,
+                gyro_p95_rad_s=gyro_p95,
+                accel_dynamic_rms_native=accel_dynamic,
+                scene_change_mean=scene_mean,
+                geometric_degeneracy_median=degeneracy_median,
+                geometric_degeneracy_p90=degeneracy_p90,
+                valid=valid,
+            )
+        )
+    return tuple(records)
+
+
+def validate_selector_manifest(manifest: dict[str, Any]) -> None:
+    """Require a schema-v2 full-bag selector run with source refs preserved."""
+    if int(manifest.get("schema_version", 0)) != 2:
+        raise RepresentativeWindowError("representative-window selector requires schema-v2 run")
+    if not str(manifest.get("dataset_ref", "")).strip():
+        raise RepresentativeWindowError("selector run is missing dataset_ref")
+    algorithm_refs = manifest.get("algorithm_refs")
+    if not isinstance(algorithm_refs, list) or not algorithm_refs:
+        raise RepresentativeWindowError("selector run is missing algorithm_refs")
+    replay = manifest.get("replay")
+    if not isinstance(replay, dict):
+        raise RepresentativeWindowError("selector run requires frozen full-bag replay")
+    rate = float(replay.get("rate", 1.0))
+    start = float(replay.get("start_offset_s", 0.0))
+    duration = replay.get("duration_s")
+    if abs(rate - 1.0) > 1e-12 or abs(start) > 1e-12 or duration is not None:
+        raise RepresentativeWindowError(
+            "representative-window selector requires full-bag replay: rate=1, start=0, duration=null"
+        )
+
+
+def build_child_experiment_config(
+    manifest: dict[str, Any], selected: SelectedWindow
+) -> dict[str, Any]:
+    """Create a normal V2 child config that only changes name/replay interval."""
+    validate_selector_manifest(manifest)
+    if selected.label not in SELECTION_LABELS:
+        raise RepresentativeWindowError(f"unknown representative-window label: {selected.label}")
+    config: dict[str, Any] = {
+        "schema_version": 2,
+        "name": f"{manifest.get('name', 'representative_window')}__{selected.label}",
+        "workspace": str(manifest["workspace"]),
+        "output_root": str(manifest["output_root"]),
+        "dataset": str(manifest["dataset_ref"]),
+        "algorithms": copy.deepcopy(manifest["algorithm_refs"]),
+        "replay": {
+            "rate": 1.0,
+            "start_offset_s": float(selected.start_offset_s),
+            "duration_s": WINDOW_DURATION_S,
+        },
+    }
+    for key in ("execution_overrides", "runtime_overlays", "standardization"):
+        if key in manifest:
+            config[key] = copy.deepcopy(manifest[key])
+    return config
+
+
 def _validate_feature(value: WindowFeature) -> None:
     numeric = (
         value.start_offset_s,
         value.duration_s,
         value.gyro_rms_rad_s,
         value.gyro_p95_rad_s,
-        value.accel_dynamic_rms_m_s2,
+        value.accel_dynamic_rms_native,
         value.scene_change_mean,
         value.geometric_degeneracy_median,
         value.geometric_degeneracy_p90,
@@ -167,13 +372,10 @@ def _choose_steady(candidates: Sequence[WindowFeature]) -> SelectedWindow:
     scene_rank = _rank01([item.scene_change_mean for item in candidates], high_is_good=True)
     gyro_rank = _rank01([item.gyro_rms_rad_s for item in candidates], high_is_good=False)
     accel_rank = _rank01(
-        [item.accel_dynamic_rms_m_s2 for item in candidates], high_is_good=False
+        [item.accel_dynamic_rms_native for item in candidates], high_is_good=False
     )
     scored = [
-        (
-            0.60 * scene + 0.30 * gyro + 0.10 * accel,
-            feature,
-        )
+        (0.60 * scene + 0.30 * gyro + 0.10 * accel, feature)
         for feature, scene, gyro, accel in zip(candidates, scene_rank, gyro_rank, accel_rank)
     ]
     score, feature = min(scored, key=lambda item: (-item[0], item[1].start_offset_s))
@@ -187,23 +389,14 @@ def _choose_steady(candidates: Sequence[WindowFeature]) -> SelectedWindow:
 
 
 def select_from_window_features(features: Sequence[WindowFeature]) -> tuple[SelectedWindow, ...]:
-    """Select the four frozen Representative Window V1 classes.
-
-    The input records are assumed to have been computed exclusively from raw
-    LiDAR/IMU evidence. Selection order and non-overlap are fixed by the V1
-    scientific contract.
-    """
+    """Select the four frozen Representative Window V1 classes."""
     records = sorted(features, key=lambda item: item.start_offset_s)
     if not records:
         raise RepresentativeWindowError("representative-window feature set is empty")
     for record in records:
         _validate_feature(record)
 
-    initial = [
-        record
-        for record in records
-        if abs(record.start_offset_s) <= 1e-9 and record.valid
-    ]
+    initial = [record for record in records if abs(record.start_offset_s) <= 1e-9 and record.valid]
     if len(initial) != 1:
         raise RepresentativeWindowError(
             "Representative Window V1 requires one valid initialization window at 0.0 s"
