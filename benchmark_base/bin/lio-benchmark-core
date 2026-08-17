@@ -70,12 +70,16 @@ def resolved_source_hint(config: dict[str, Any]) -> str:
 def resolve_config(path: Path, verify_hash: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
     manifest = load_json(path)
     errors = validate_manifest(
-        manifest, registry=REGISTRY, verify_hash=verify_hash, module_root=MODULE_ROOT
+        manifest,
+        registry=REGISTRY,
+        verify_hash=verify_hash,
+        module_root=MODULE_ROOT,
+        manifest_dir=path.parent,
     )
     if errors:
         raise SystemExit("manifest validation failed:\n- " + "\n- ".join(errors))
     try:
-        return manifest, resolve_manifest(manifest, REGISTRY)
+        return manifest, resolve_manifest(manifest, REGISTRY, manifest_dir=path.parent)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
