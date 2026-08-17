@@ -48,6 +48,10 @@ RELATIVE_SE3_ARTIFACTS = (
 )
 TRAJECTORY_COVERAGE_ARTIFACT = "metrics/trajectory_coverage.csv"
 TRAJECTORY_COVERAGE_METADATA_GLOB = "metadata/trajectory_coverage/*.json"
+TRAJECTORY_TIMESTAMP_AUDIT_GLOBS = (
+    "metrics/trajectory_timestamp_audit/*.csv",
+    "metadata/trajectory_timestamp_audit/*.json",
+)
 COMMON_MAP_ARTIFACTS = (
     "standardized/map_sampling/common_matched_scans.csv",
     "standardized/map_sampling/common_matched_metadata.json",
@@ -152,6 +156,11 @@ def collect_bundle_files(
     if _safe_relative_file(run, TRAJECTORY_COVERAGE_ARTIFACT):
         included.add(TRAJECTORY_COVERAGE_ARTIFACT)
     included.update(_existing_glob(run, TRAJECTORY_COVERAGE_METADATA_GLOB))
+
+    # Raw trajectory timestamp audits are descriptive debugging evidence only.
+    # They are optional for historical runs and never make a bundle incomplete.
+    for pattern in TRAJECTORY_TIMESTAMP_AUDIT_GLOBS:
+        included.update(_existing_glob(run, pattern))
 
     # Strict common-map evidence is additive for P2+ runs. Historical runs do
     # not become incomplete merely because this second-stage manifest did not
