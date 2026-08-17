@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import unittest
 
+import numpy as np
+
 from benchmark_base.lib.representative_windows import (
     WINDOW_DURATION_S,
+    ImuFeatureSample,
     RepresentativeWindowError,
     WindowFeature,
+    build_window_features,
+    lidar_scan_feature,
     select_from_window_features,
 )
 
@@ -33,6 +38,60 @@ def feature(
         geometric_degeneracy_p90=min(1.0, degeneracy + 0.1),
         valid=valid,
     )
+
+
+class RepresentativeWindowRawFeatureTest(unittest.TestCase):
+    def test_lidar_signature_is_normalized_and_line_is_more_degenerate_than_3d_cloud(self) -> None:
+        line = np.column_stack(
+            (np.linspace(1.0, 10.0, 200), np.zeros(200), np.zeros(200))
+        )
+        grid = np.asarray(
+            [
+                [x, y, z]
+                for x in (-2.0, 0.0, 2.0)
+                for y in (-2.0, 0.0, 2.0)
+                for z in (-2.0, 0.0, 2.0)
+                if (x, y, z) != (0.0, 0.0, 0.0)
+            ],
+            dtype=np.float64,
+        )
+        line_feature = lidar_scan_feature(1.0, line)
+        grid_feature = lidar_scan_feature(1.0, grid)
+        self.assertAlmostEqual(1.0, float(np.sum(line_feature.range_histogram)), places=12)
+        self.assertAlmostEqual(1.0, float(np.sum(grid_feature.range_histogram)), places=12)
+        self.assertGreater(
+            line_feature.geometric_degeneracy_score,
+            grid_feature.geometric_degeneracy_score,
+        )
+
+    def test_window_aggregation_uses_raw_counts_and_motion_norms(self) -> None:
+        lidar = tuple(
+            lidar_scan_feature(
+                index * 0.1,
+                np.asarray(
+                    [
+                        [1.0 + 0.01 * index, 0.0, 0.0],
+                        [0.0, 2.0, 0.0],
+                        [0.0, 0.0, 3.0],
+                        [1.0, 1.0, 1.0],
+                    ],
+                    dtype=np.float64,
+                ),
+            )
+            for index in range(450)
+        )
+        imu = tuple(
+            ImuFeatureSample(index * 0.005, 0.2, 9.8 + 0.1 * ((index % 3) - 1))
+            for index in range(9000)
+        )
+        records = build_window_features(lidar, imu, analysis_end_s=45.0)
+        self.assertEqual(1, len(records))
+        record = records[0]
+        self.assertEqual(450, record.lidar_scan_count)
+        self.assertEqual(9000, record.imu_sample_count)
+        self.assertTrue(record.valid)
+        self.assertAlmostEqual(0.2, record.gyro_rms_rad_s, places=12)
+        self.assertGreater(record.accel_dynamic_rms_m_s2, 0.0)
 
 
 class RepresentativeWindowSelectionTest(unittest.TestCase):
@@ -68,7 +127,7 @@ class RepresentativeWindowSelectionTest(unittest.TestCase):
             [
                 feature(0.0),
                 feature(60.0, gyro_p95=2.5),
-                feature(100.0, degeneracy=0.99, scene_change=0.8),  # overlaps 60..105
+                feature(100.0, degeneracy=0.99, scene_change=0.8),
                 feature(110.0, degeneracy=0.8, scene_change=0.6),
                 feature(160.0, scene_change=0.9, gyro_rms=0.01),
                 feature(210.0, scene_change=0.7, gyro_rms=0.03),
