@@ -43,7 +43,8 @@ PY
 python3 "$BENCHMARK_ROOT/evaluators/freeze_runtime_identity.py" \
   --run "$BENCHMARK_RUN_DIR" \
   --algorithm fast_livo2 \
-  --effective-command-json "$command_json"
+  --effective-command-json "$command_json" \
+  --effective-config "$fast_livo_params"
 
 "${estimator_cmd[@]}" >"$OUTPUT_DIR/fast_livo.log" 2>&1 &
 node_pid=$!
