@@ -210,7 +210,7 @@ class DatasetIntakeContractTest(unittest.TestCase):
             self.assertEqual("UNKNOWN", calibration["sensor_model"])
             self.assertTrue(calibration["placeholder_transform"])
             self.assertFalse(calibration["usable_for_lidar_imu_benchmark"])
-            self.assertEqual([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0], calibration["rotation_lidar_to_imu_row_major"])
+            self.assertEqual([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], calibration["rotation_lidar_to_imu_row_major"])
             self.assertEqual([0.0, 0.0, 0.0], calibration["translation_lidar_to_imu_m"])
 
     def test_changed_bag_after_probe_is_rejected(self) -> None:
