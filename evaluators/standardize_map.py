@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Reconstruct a unified comparison map from one bag and a timestamped trajectory.
+"""Reconstruct one strict-comparison Unified Map from frozen common LiDAR scans.
 
-Every Unified Map consumes the run-level frozen selected-scan manifest. LiDAR
-scans are matched to standardized trajectories by timestamp and are rejected
-when they cannot be matched within the configured tolerance. Scan points are
-first expressed in the physical frame tracked by that algorithm's trajectory;
-this prevents LiDAR-tracked and IMU/body-tracked estimators from being mixed.
+Every formal Unified Map consumes the same run-level strict common matched-scan
+manifest. That manifest contains only original LiDAR scan indices that can be
+matched by every selected algorithm trajectory under the frozen tolerance.
+Map reconstruction re-validates the common evidence and every trajectory match;
+it never silently falls back to independently matched scan populations.
 """
 from __future__ import annotations
 
@@ -34,12 +34,15 @@ from benchmark_base.lib.artifacts import (  # noqa: E402
     write_unified_map_metadata,
 )
 from benchmark_base.lib.cloud_contract import cloud_rows, scan_timestamp  # noqa: E402
+from benchmark_base.lib.common_map_manifest import (  # noqa: E402
+    sha256_file,
+    validate_common_map_manifest,
+)
 from benchmark_base.lib.manifest import load_json  # noqa: E402
 from benchmark_base.lib.map_frame_contract import lidar_points_in_tracked_frame  # noqa: E402
 from benchmark_base.lib.map_sampling import read_scan_manifest  # noqa: E402
 from benchmark_base.lib.registry import Registry  # noqa: E402
 from benchmark_base.lib.trajectory import Trajectory, TrajectoryMatchError  # noqa: E402
-from evaluators.build_scan_manifest import build_manifest  # noqa: E402
 
 
 def quaternion_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
@@ -99,15 +102,28 @@ def trajectory_contract(manifest: dict[str, Any], algorithm_id: str) -> tuple[di
 
 
 def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
+    run = run.resolve()
     manifest = load_json(run / "manifest.json")
+    algorithms = manifest.get("algorithms", {})
+    if not isinstance(algorithms, dict) or algorithm_id not in algorithms:
+        raise ValueError(f"algorithm is not selected in frozen run: {algorithm_id}")
+
     dataset = manifest["dataset"]
     standardization = manifest.get("standardization", manifest.get("evaluation", {}))
     point_step = int(standardization.get("map_point_step", 8))
     voxel_m = float(standardization.get("map_voxel_m", 0.12))
     near_range_m = float(standardization.get("near_range_m", 0.5))
-    tolerance_s = float(standardization.get("trajectory_time_tolerance_s", 0.05))
-    if point_step < 1 or voxel_m <= 0 or tolerance_s < 0:
-        raise ValueError("invalid standardization point sampling/voxel/tolerance settings")
+    if point_step < 1 or voxel_m <= 0:
+        raise ValueError("invalid standardization point sampling/voxel settings")
+
+    common_metadata = validate_common_map_manifest(run)
+    common_path = run / "standardized" / "map_sampling" / "common_matched_scans.csv"
+    tolerance_s = float(common_metadata["trajectory_time_tolerance_s"])
+    if not math.isfinite(tolerance_s) or tolerance_s < 0:
+        raise ValueError("strict common map metadata contains invalid trajectory tolerance")
+    common_sha = sha256_file(common_path)
+    if common_sha != common_metadata.get("common_manifest_sha256"):
+        raise ValueError("strict common map manifest fingerprint changed after validation")
 
     contract, contract_source = trajectory_contract(manifest, algorithm_id)
     tracked_frame = str(contract["tracked_frame_physical"]).upper()
@@ -124,12 +140,13 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
     )
     calibration = dataset.get("calibration", manifest.get("calibration", {}))
 
-    sampling_path = build_manifest(run)
-    selected_rows = read_scan_manifest(sampling_path)
+    selected_rows = read_scan_manifest(common_path)
     if not selected_rows:
-        raise ValueError("selected scan manifest is empty")
+        raise ValueError("strict common matched scan manifest is empty")
+    if len(selected_rows) != int(common_metadata["common_matched_scan_count"]):
+        raise ValueError("strict common map scan count disagrees with common metadata")
     if any(row.lidar_topic != topic for row in selected_rows):
-        raise ValueError("selected scan manifest LiDAR topic does not match frozen dataset")
+        raise ValueError("strict common scan LiDAR topic does not match frozen dataset")
     selected_by_index = {row.scan_index: row for row in selected_rows}
 
     reader = rosbag2_py.SequentialReader()
@@ -146,7 +163,6 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
     scan_index = 0
     encountered_selected = 0
     matched = 0
-    unmatched = 0
     interpolation_gaps: list[float] = []
     nearest_gaps: list[float] = []
     stamp_sources: dict[str, int] = {}
@@ -168,7 +184,7 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
         )
         if abs(observed_timestamp_s - selected_row.timestamp_s) > 1e-6:
             raise ValueError(
-                "frozen selected scan timestamp no longer matches bag: "
+                "strict common scan timestamp no longer matches bag: "
                 f"scan={scan_index} manifest={selected_row.timestamp_s:.9f} "
                 f"observed={observed_timestamp_s:.9f} source={observed_source}"
             )
@@ -178,10 +194,12 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
 
         try:
             match = trajectory.interpolate_pose(timestamp_s, tolerance_s)
-        except TrajectoryMatchError:
-            unmatched += 1
-            scan_index += 1
-            continue
+        except TrajectoryMatchError as exc:
+            raise ValueError(
+                "COMMON INTERSECTION CONTRACT VIOLATION: "
+                f"algorithm={algorithm_id} scan_index={scan_index} "
+                f"timestamp_s={timestamp_s:.9f}"
+            ) from exc
 
         scan = cloud_rows(msg, point_step=point_step, near_range_m=near_range_m)
         if scan.size:
@@ -202,13 +220,20 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
         common_timestamps.append(timestamp_s)
         scan_index += 1
 
-    if encountered_selected != len(selected_rows):
+    selected = len(selected_rows)
+    if encountered_selected != selected:
         raise ValueError(
-            f"bag ended before all frozen selected scans were encountered: "
-            f"encountered={encountered_selected} expected={len(selected_rows)}"
+            "bag ended before all strict common scans were encountered: "
+            f"encountered={encountered_selected} expected={selected}"
+        )
+    if matched != selected or encountered_selected != selected:
+        raise ValueError(
+            "COMMON INTERSECTION CONTRACT VIOLATION: "
+            f"algorithm={algorithm_id} selected={selected} matched={matched} "
+            f"encountered={encountered_selected}"
         )
     if not chunks:
-        raise ValueError("no matched LiDAR scans produced map points")
+        raise ValueError("strict common scans produced no Unified Map points")
 
     cloud = voxel_downsample(np.concatenate(chunks, axis=0), voxel_m)
     paths = map_artifact_paths(run, algorithm_id)
@@ -216,13 +241,12 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
     write_binary_ply(paths.unified_map, cloud)
     ensure_relative_symlink(paths.unified_map, paths.compat_unified_map)
 
-    selected = len(selected_rows)
     timing = {
-        "selected_scan_manifest": str(sampling_path),
+        "selected_scan_manifest": str(common_path),
         "selected_scan_count": selected,
         "matched_scan_count": matched,
-        "unmatched_scan_count": unmatched,
-        "matched_scan_ratio": matched / selected if selected else 0.0,
+        "unmatched_scan_count": 0,
+        "matched_scan_ratio": 1.0,
         "max_interpolation_gap_s": max(interpolation_gaps, default=None),
         "median_interpolation_gap_s": float(np.median(interpolation_gaps)) if interpolation_gaps else None,
         "max_nearest_sample_gap_s": max(nearest_gaps, default=None),
@@ -243,6 +267,9 @@ def reconstruct(run: Path, algorithm_id: str) -> dict[str, Any]:
         generated_at=dt.datetime.now(dt.timezone.utc).astimezone().isoformat(),
         timestamp_matching=timing,
     )
+    metadata["scan_set_policy"] = "STRICT_COMMON_INTERSECTION"
+    metadata["common_manifest"] = str(common_path)
+    metadata["common_manifest_sha256"] = common_sha
     metadata["tracked_frame_physical"] = tracked_frame
     metadata["trajectory_contract_source"] = contract_source
     metadata["scan_frame_transform"] = (
