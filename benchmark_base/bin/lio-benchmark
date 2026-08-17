@@ -69,6 +69,16 @@ def cmd_audit_failure_mode(args: argparse.Namespace) -> int:
     return subprocess.run(command, cwd=MODULE_ROOT, check=False).returncode
 
 
+def cmd_summarize_same_bag(args: argparse.Namespace) -> int:
+    command = [
+        sys.executable,
+        str(MODULE_ROOT / "evaluators/summarize_same_bag.py"),
+        "--run",
+        str(args.run),
+    ]
+    return subprocess.run(command, cwd=MODULE_ROOT, check=False).returncode
+
+
 def cmd_standardize_common_map_manifest(args: argparse.Namespace) -> None:
     run, manifest = _core.resolve_run(args.run)
     _core.run_python_ros(
@@ -98,7 +108,7 @@ def _subparser_action(parser: argparse.ArgumentParser, dest: str):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Return the historical parser plus additive audit/standardize/plan commands."""
+    """Return the historical parser plus additive audit/standardize/plan/summarize commands."""
     parser = _core.build_parser()
     root_sub = _subparser_action(parser, "command")
 
@@ -148,6 +158,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     representative.add_argument("--run", type=Path, required=True)
     representative.set_defaults(func=cmd_plan_representative_windows)
+
+    summarize_parser = root_sub.add_parser(
+        "summarize",
+        help="summarize already-frozen benchmark artifacts without rerunning algorithms",
+    )
+    summarize_sub = summarize_parser.add_subparsers(dest="summarize_command", required=True)
+    same_bag = summarize_sub.add_parser(
+        "same-bag",
+        help="write Same-Bag Mapping Benchmark V1 I/O, map, and runtime summaries",
+    )
+    same_bag.add_argument("--run", type=Path, required=True)
+    same_bag.set_defaults(func=cmd_summarize_same_bag)
     return parser
 
 
@@ -199,6 +221,9 @@ def main() -> int:
         args = build_parser().parse_args(sys.argv[1:])
         return int(args.func(args) or 0)
     if len(sys.argv) > 2 and sys.argv[1:3] == ["plan", "representative-windows"]:
+        args = build_parser().parse_args(sys.argv[1:])
+        return int(args.func(args) or 0)
+    if len(sys.argv) > 2 and sys.argv[1:3] == ["summarize", "same-bag"]:
         args = build_parser().parse_args(sys.argv[1:])
         return int(args.func(args) or 0)
     return _core.main()
