@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Iterable
@@ -11,6 +12,7 @@ from benchmark_base.lib.artifacts import map_artifact_paths
 
 
 SCHEMA = "lio_benchmark_same_bag_mapping/v1"
+FINALIZATION_SCHEMA = "lio_benchmark_same_bag_mapping_finalization/v1"
 ROW_FIELDS = (
     "algorithm_id",
     "display_name",
@@ -71,6 +73,14 @@ def _load_json(path: Path) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         raise ValueError(f"JSON root must be an object: {path}")
     return payload
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _format_mapping(value: Any) -> str:
@@ -301,27 +311,79 @@ def _markdown(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def summarize_same_bag(run: str | Path) -> dict[str, Any]:
-    """Summarize final run artifacts without running ROS or rebuilding maps."""
-    run = Path(run).resolve()
+def _build_payload(
+    *,
+    run: Path,
+    manifest: dict[str, Any],
+    rows: list[dict[str, Any]],
+    artifact_role: str,
+    source_canonical_summary_sha256: str | None = None,
+) -> dict[str, Any]:
+    dataset = manifest.get("dataset") if isinstance(manifest.get("dataset"), dict) else {}
+    payload: dict[str, Any] = {
+        "schema": SCHEMA,
+        "scientific_status": "DESCRIPTIVE_NO_GROUND_TRUTH",
+        "performance_status": "SINGLE_RUN_DESCRIPTIVE",
+        "benchmark_profile": "DEFAULT_ADAPTED",
+        "artifact_role": artifact_role,
+        "generated_at": _now_iso(),
+        "run_id": manifest.get("run_id", run.name),
+        "dataset_id": dataset.get("dataset_id", "UNKNOWN"),
+        "replay": manifest.get("replay", {}),
+        "algorithms": rows,
+    }
+    if source_canonical_summary_sha256 is not None:
+        payload["source_canonical_summary_sha256"] = source_canonical_summary_sha256
+    return payload
+
+
+def _canonical_outputs(run: Path) -> tuple[Path, Path, Path, Path]:
+    return (
+        run / "reports" / "algorithm_io_matrix.csv",
+        run / "reports" / "algorithm_io_matrix.md",
+        run / "metrics" / "runtime_performance.csv",
+        run / "reports" / "same_bag_mapping_v1.json",
+    )
+
+
+def _write_summary_package(
+    *,
+    outputs: tuple[Path, Path, Path, Path],
+    rows: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> None:
+    _write_csv(outputs[0], ROW_FIELDS, rows)
+    outputs[1].parent.mkdir(parents=True, exist_ok=True)
+    outputs[1].write_text(_markdown(rows), encoding="utf-8")
+    _write_csv(outputs[2], PERFORMANCE_FIELDS, rows)
+    outputs[3].write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _load_manifest_and_rows(run: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     manifest = _load_json(run / "manifest.json")
     if manifest is None:
         raise ValueError(f"missing frozen run manifest: {run / 'manifest.json'}")
     algorithms = manifest.get("algorithms")
     if not isinstance(algorithms, dict) or not algorithms:
         raise ValueError("frozen manifest algorithms must be a non-empty object")
+    rows = [_row_for_algorithm(run, algorithm_id, algorithm) for algorithm_id, algorithm in algorithms.items()]
+    return manifest, rows
 
-    outputs = (
-        run / "reports" / "algorithm_io_matrix.csv",
-        run / "reports" / "algorithm_io_matrix.md",
-        run / "metrics" / "runtime_performance.csv",
-        run / "reports" / "same_bag_mapping_v1.json",
-    )
+
+def summarize_same_bag(run: str | Path) -> dict[str, Any]:
+    """Summarize final run artifacts without running ROS or rebuilding maps."""
+    run = Path(run).resolve()
+    outputs = _canonical_outputs(run)
     existing = [path for path in outputs if path.exists()]
     if existing:
-        raise FileExistsError("refusing to overwrite same-bag summary output: " + ", ".join(str(path) for path in existing))
+        raise FileExistsError(
+            "refusing to overwrite same-bag summary output: "
+            + ", ".join(str(path) for path in existing)
+        )
 
-    rows = [_row_for_algorithm(run, algorithm_id, algorithm) for algorithm_id, algorithm in algorithms.items()]
+    manifest, rows = _load_manifest_and_rows(run)
     readiness_reasons = _summary_readiness_reasons(rows)
     if readiness_reasons:
         raise ValueError(
@@ -329,22 +391,101 @@ def summarize_same_bag(run: str | Path) -> dict[str, Any]:
             + "; ".join(readiness_reasons)
         )
 
-    dataset = manifest.get("dataset") if isinstance(manifest.get("dataset"), dict) else {}
-    payload = {
-        "schema": SCHEMA,
-        "scientific_status": "DESCRIPTIVE_NO_GROUND_TRUTH",
-        "performance_status": "SINGLE_RUN_DESCRIPTIVE",
-        "benchmark_profile": "DEFAULT_ADAPTED",
-        "generated_at": _now_iso(),
-        "run_id": manifest.get("run_id", run.name),
-        "dataset_id": dataset.get("dataset_id", "UNKNOWN"),
-        "replay": manifest.get("replay", {}),
-        "algorithms": rows,
-    }
+    payload = _build_payload(
+        run=run,
+        manifest=manifest,
+        rows=rows,
+        artifact_role="CANONICAL_FINAL_SUMMARY",
+    )
+    _write_summary_package(outputs=outputs, rows=rows, payload=payload)
+    return payload
 
-    _write_csv(outputs[0], ROW_FIELDS, rows)
-    outputs[1].parent.mkdir(parents=True, exist_ok=True)
-    outputs[1].write_text(_markdown(rows), encoding="utf-8")
-    _write_csv(outputs[2], PERFORMANCE_FIELDS, rows)
-    outputs[3].write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+def finalize_stale_same_bag(run: str | Path) -> dict[str, Any]:
+    """Append a final summary package without modifying a premature immutable summary."""
+    run = Path(run).resolve()
+    canonical_outputs = _canonical_outputs(run)
+    missing = [path for path in canonical_outputs if not path.is_file()]
+    if missing:
+        raise ValueError(
+            "cannot finalize without the complete canonical stale summary package: "
+            + ", ".join(str(path) for path in missing)
+        )
+
+    canonical_summary = _load_json(canonical_outputs[3])
+    if canonical_summary is None or canonical_summary.get("schema") != SCHEMA:
+        raise ValueError("canonical summary schema is missing or unsupported")
+    old_rows = canonical_summary.get("algorithms")
+    if not isinstance(old_rows, list) or not old_rows:
+        raise ValueError("canonical summary algorithms are missing")
+    if not any(
+        not isinstance(row, dict) or row.get("unified_map_status") != "AVAILABLE"
+        for row in old_rows
+    ):
+        raise ValueError("canonical summary is not stale; append-only finalization is not applicable")
+
+    final_dir = run / "reports" / "same_bag_mapping_v1_finalization"
+    if final_dir.exists():
+        raise FileExistsError(f"refusing to overwrite same-bag finalization output: {final_dir}")
+
+    manifest, rows = _load_manifest_and_rows(run)
+    readiness_reasons = _summary_readiness_reasons(rows)
+    if readiness_reasons:
+        raise ValueError(
+            "Same-Bag finalization is not ready: " + "; ".join(readiness_reasons)
+        )
+
+    source_summary_sha = _sha256_file(canonical_outputs[3])
+    payload = _build_payload(
+        run=run,
+        manifest=manifest,
+        rows=rows,
+        artifact_role="APPEND_ONLY_FINALIZATION",
+        source_canonical_summary_sha256=source_summary_sha,
+    )
+
+    final_outputs = (
+        final_dir / "algorithm_io_matrix.csv",
+        final_dir / "algorithm_io_matrix.md",
+        final_dir / "runtime_performance.csv",
+        final_dir / "same_bag_mapping_v1.json",
+    )
+    final_dir.mkdir(parents=True, exist_ok=False)
+    _write_summary_package(outputs=final_outputs, rows=rows, payload=payload)
+
+    source_artifacts = {
+        path.relative_to(run).as_posix(): _sha256_file(path) for path in canonical_outputs
+    }
+    final_inputs: dict[str, str] = {
+        "manifest.json": _sha256_file(run / "manifest.json"),
+    }
+    common_metadata = run / "standardized" / "map_sampling" / "common_matched_metadata.json"
+    if common_metadata.is_file():
+        final_inputs[common_metadata.relative_to(run).as_posix()] = _sha256_file(common_metadata)
+    for row in rows:
+        algorithm_id = str(row["algorithm_id"])
+        paths = map_artifact_paths(run, algorithm_id)
+        metadata_path = (
+            paths.unified_metadata
+            if paths.unified_metadata.is_file()
+            else paths.compat_unified_metadata
+        )
+        runtime_path = run / "metrics" / "runtime" / f"{algorithm_id}.json"
+        trajectory_path = run / "standardized" / "trajectories" / f"{algorithm_id}.csv"
+        for path in (metadata_path, runtime_path, trajectory_path):
+            final_inputs[path.relative_to(run).as_posix()] = _sha256_file(path)
+
+    lineage = {
+        "schema": FINALIZATION_SCHEMA,
+        "reason": "PREMATURE_IMMUTABLE_SUMMARY",
+        "created_at": _now_iso(),
+        "source_summary_sha256": source_summary_sha,
+        "source_artifacts": source_artifacts,
+        "final_inputs": final_inputs,
+        "final_summary": final_outputs[3].relative_to(run).as_posix(),
+        "mutation_policy": "APPEND_ONLY_NO_SOURCE_OVERWRITE",
+    }
+    (final_dir / "lineage.json").write_text(
+        json.dumps(lineage, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     return payload
