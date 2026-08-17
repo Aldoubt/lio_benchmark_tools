@@ -82,13 +82,27 @@ def find_bag_for_topic(raw_dir: Path, declared_topic: str) -> tuple[Path, str, s
     return matches[0]
 
 
-def stamp_seconds(message: Any, recorded_ns: int) -> float:
+def timestamp_components(message: Any, recorded_ns: int) -> tuple[float, float | None, float, str]:
+    """Return bag-record, header, effective timestamp, and effective source.
+
+    The effective timestamp exactly preserves the trajectory standardizer's
+    historical policy: use a non-zero header stamp when available, otherwise
+    fall back to the rosbag record timestamp.
+    """
+    bag_record_s = recorded_ns * 1e-9
+    header_s: float | None = None
     if hasattr(message, "header") and hasattr(message.header, "stamp"):
         stamp = message.header.stamp
         value = float(stamp.sec) + float(stamp.nanosec) * 1e-9
         if value != 0.0:
-            return value
-    return recorded_ns * 1e-9
+            header_s = value
+    if header_s is not None:
+        return bag_record_s, header_s, header_s, "HEADER_STAMP"
+    return bag_record_s, None, bag_record_s, "ROSBAG_RECORD_TIME"
+
+
+def stamp_seconds(message: Any, recorded_ns: int) -> float:
+    return timestamp_components(message, recorded_ns)[2]
 
 
 def pose_fields(message: Any, message_type: str) -> tuple[str, str, Any]:
