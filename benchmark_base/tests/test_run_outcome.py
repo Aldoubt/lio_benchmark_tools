@@ -30,7 +30,7 @@ class RunOutcomeTest(unittest.TestCase):
             text,
         )
         self.assertIn(
-            '"status": classify_runner_status(result.returncode)',
+            '"status": classify_runner_status(returncode)',
             text,
         )
 
