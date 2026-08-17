@@ -62,6 +62,7 @@ def canonicalize_pose_observations(
     duplicate_groups = 0
     coalesced = 0
     previous_raw_timestamp: float | None = None
+    in_duplicate_group = False
 
     for observation in raw:
         _finite_pose(observation)
@@ -71,12 +72,14 @@ def canonicalize_pose_observations(
                 f"trajectory timestamp regression: {timestamp:.9f} < {previous_raw_timestamp:.9f}"
             )
         if canonical and timestamp == float(canonical[-1].timestamp_s):
-            if previous_raw_timestamp != timestamp:
+            if not in_duplicate_group:
                 duplicate_groups += 1
             canonical[-1] = observation
             coalesced += 1
+            in_duplicate_group = True
         else:
             canonical.append(observation)
+            in_duplicate_group = False
         previous_raw_timestamp = timestamp
 
     summary = TimestampCanonicalization(
