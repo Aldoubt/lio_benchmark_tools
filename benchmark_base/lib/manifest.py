@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Experiment manifest validation and V2 registry resolution."""
+"""Experiment manifest validation and V2 registry/external-dataset resolution."""
 from __future__ import annotations
 
 import hashlib
@@ -8,7 +8,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from .registry import Registry, RegistryError
+from .registry import Registry, RegistryError, validate_dataset_record
 
 
 V1_REQUIRED_DATASET_KEYS = (
@@ -153,31 +153,80 @@ def normalized_runtime_overlays(
     return normalized
 
 
-def resolve_manifest(manifest: dict[str, Any], registry: Registry | None = None) -> dict[str, Any]:
+def _resolve_dataset_file(raw: Any, manifest_dir: Path | None) -> Path:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("schema-v2 dataset_file must be a non-empty path string")
+    path = Path(raw.strip()).expanduser()
+    if not path.is_absolute():
+        if manifest_dir is None:
+            raise ValueError("relative dataset_file requires manifest_dir")
+        path = Path(manifest_dir).expanduser().resolve() / path
+    return path.resolve()
+
+
+def _resolve_v2_dataset(
+    manifest: dict[str, Any],
+    active: Registry,
+    manifest_dir: Path | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    present = [key for key in ("dataset", "dataset_file") if key in manifest]
+    if len(present) != 1:
+        raise ValueError("schema-v2 manifest must specify exactly one of dataset or dataset_file")
+
+    if present[0] == "dataset":
+        dataset_ref = manifest.get("dataset")
+        if not isinstance(dataset_ref, str) or not dataset_ref.strip():
+            raise ValueError("schema-v2 dataset must be a registry id string")
+        try:
+            dataset = active.load_dataset(dataset_ref.strip())
+        except RegistryError as exc:
+            raise ValueError(str(exc)) from exc
+        return dataset, {"dataset_ref": dataset_ref.strip()}
+
+    dataset_path = _resolve_dataset_file(manifest.get("dataset_file"), manifest_dir)
+    if not dataset_path.is_file():
+        raise ValueError(f"dataset_file not found: {dataset_path}")
+    try:
+        dataset = load_json(dataset_path)
+    except ValueError as exc:
+        raise ValueError(f"dataset_file {exc}") from exc
+    try:
+        validate_dataset_record(dataset)
+    except RegistryError as exc:
+        raise ValueError(f"dataset_file dataset record invalid: {exc}") from exc
+    return dict(dataset), {
+        "dataset_file_ref": str(dataset_path),
+        "dataset_file_sha256": sha256_file(dataset_path),
+    }
+
+
+def resolve_manifest(
+    manifest: dict[str, Any],
+    registry: Registry | None = None,
+    *,
+    manifest_dir: Path | None = None,
+) -> dict[str, Any]:
     """Resolve schema-v2 references into a frozen v1-like runtime structure."""
     version = schema_version(manifest)
     if version == 1:
         return dict(manifest)
     active = registry or Registry()
-    dataset_ref = manifest.get("dataset")
     algorithm_refs = manifest.get("algorithms")
-    if not isinstance(dataset_ref, str) or not dataset_ref:
-        raise ValueError("schema-v2 dataset must be a registry id string")
     if (
         not isinstance(algorithm_refs, list)
         or not algorithm_refs
         or not all(isinstance(item, str) and item for item in algorithm_refs)
     ):
         raise ValueError("schema-v2 algorithms must be a non-empty list of registry ids")
+    dataset, dataset_provenance = _resolve_v2_dataset(manifest, active, manifest_dir)
     try:
-        dataset = active.load_dataset(dataset_ref)
         algorithms = {item: active.load_algorithm(item) for item in algorithm_refs}
     except RegistryError as exc:
         raise ValueError(str(exc)) from exc
     resolved = dict(manifest)
     resolved["source_schema_version"] = 2
-    resolved["dataset_ref"] = dataset_ref
     resolved["algorithm_refs"] = list(algorithm_refs)
+    resolved.update(dataset_provenance)
     resolved["dataset"] = dataset
     resolved["algorithms"] = algorithms
     resolved["execution_overrides"] = normalized_execution_overrides(manifest, algorithm_refs)
@@ -193,6 +242,7 @@ def validate_manifest(
     verify_hash: bool = False,
     check_paths: bool = True,
     module_root: str | Path | None = None,
+    manifest_dir: Path | None = None,
 ) -> list[str]:
     try:
         version = schema_version(manifest)
@@ -211,6 +261,7 @@ def validate_manifest(
         verify_hash=verify_hash,
         check_paths=check_paths,
         module_root=module_root,
+        manifest_dir=manifest_dir,
     )
 
 
@@ -286,15 +337,16 @@ def _validate_v2(
     verify_hash: bool,
     check_paths: bool,
     module_root: str | Path | None,
+    manifest_dir: Path | None,
 ) -> list[str]:
     errors: list[str] = []
-    for key in ("name", "workspace", "output_root", "dataset", "algorithms", "standardization"):
+    for key in ("name", "workspace", "output_root", "algorithms", "standardization"):
         if key not in manifest:
             errors.append(f"missing top-level field: {key}")
     if errors:
         return errors
     try:
-        resolved = resolve_manifest(manifest, registry)
+        resolved = resolve_manifest(manifest, registry, manifest_dir=manifest_dir)
     except ValueError as exc:
         return [str(exc)]
     dataset = resolved["dataset"]
