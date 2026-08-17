@@ -186,6 +186,32 @@ Core Contracts run:
 
 Large/raw artifacts remain excluded.
 
+## FAST-LIVO2 effective-config runtime fingerprint closure
+
+The run-local FAST-LIVO2 YAML is both the scientific parameter evidence and the actual launch input, so its contents must be frozen by runtime identity rather than only appearing as a path inside the effective command.
+
+RED commit:
+
+```text
+e87553c772dfa2a0465ceb707fdc74b5d0674f58
+```
+
+The exact-head run had 246 unit contracts with one intended failure: the FAST-LIVO2 runner did not pass its run-local YAML to `freeze_runtime_identity.py --effective-config`.
+
+GREEN implementation HEAD:
+
+```text
+dbc49485462d4a29530b4b3fa8b8512968ee0b46
+```
+
+Core Contracts run:
+
+```text
+31984190234 = core job completed / success
+```
+
+The runtime identity for a fresh FAST-LIVO2 run will now fingerprint the same `runtime_params.yaml` passed through `params_file:=...`, allowing its SHA256/size/path to be independently checked against the bundled generated config evidence.
+
 ## Historical-run rule
 
 All previously frozen runs are immutable historical evidence.
@@ -222,6 +248,8 @@ frozen dataset calibration status = MANUFACTURER_SPEC
 preflight PASS without --allow-diagnostic-calibration
 FAST-LIVO2 effective config T_IL = [-0.011,-0.02329,+0.04412]
 FAST-LIO2 effective config T_IL = [-0.011,-0.02329,+0.04412]
+FAST-LIVO2 runtime identity effective-config SHA matches runtime_params.yaml
+FAST-LIO2 runtime identity effective-config SHA matches benchmark.yaml
 FAST-LIVO2/FAST-LIO2 online extrinsic estimation remains disabled/fixed
 KISS remains LiDAR-only
 runtime identity FROZEN x3
