@@ -25,7 +25,7 @@ ANGULAR_VELOCITY_UNITS = frozenset({"rad_s", "unknown"})
 LINEAR_ACCELERATION_UNITS = frozenset({"m_s2", "g_like_raw", "unknown"})
 LIVOX_CUSTOM_TYPE = "livox_ros_driver2/msg/CustomMsg"
 IMU_TYPE = "sensor_msgs/msg/Imu"
-INTERNAL_ROTATION = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0)
+INTERNAL_ROTATION = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
 INTERNAL_TRANSLATION = (-0.011, -0.02329, 0.04412)
 MANUFACTURER_IMU_ORIGIN_IN_LIDAR = (0.011, 0.02329, -0.04412)
 
