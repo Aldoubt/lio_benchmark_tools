@@ -55,6 +55,17 @@ def cmd_standardize_common_map_manifest(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_plan_representative_windows(args: argparse.Namespace) -> int:
+    run, manifest = _core.resolve_run(args.run)
+    _core.run_python_ros(
+        run,
+        manifest,
+        "evaluators/plan_representative_windows.py",
+        ["--run", str(run)],
+    )
+    return 0
+
+
 def _subparser_action(parser: argparse.ArgumentParser, dest: str):
     for action in parser._actions:  # argparse exposes no public lookup API
         if isinstance(action, argparse._SubParsersAction) and action.dest == dest:
@@ -63,7 +74,7 @@ def _subparser_action(parser: argparse.ArgumentParser, dest: str):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Return the historical parser plus additive audit/standardize commands."""
+    """Return the historical parser plus additive audit/standardize/plan commands."""
     parser = _core.build_parser()
     root_sub = _subparser_action(parser, "command")
 
@@ -85,6 +96,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common_map.add_argument("--run", type=Path, required=True)
     common_map.set_defaults(func=cmd_standardize_common_map_manifest)
+
+    plan_parser = root_sub.add_parser(
+        "plan",
+        help="derive immutable experiment plans from frozen run evidence",
+    )
+    plan_sub = plan_parser.add_subparsers(dest="plan_command", required=True)
+    representative = plan_sub.add_parser(
+        "representative-windows",
+        help="select fixed raw-sensor representative windows from a full-bag selector run",
+    )
+    representative.add_argument("--run", type=Path, required=True)
+    representative.set_defaults(func=cmd_plan_representative_windows)
     return parser
 
 
@@ -127,6 +150,9 @@ def main() -> int:
         args = build_parser().parse_args(sys.argv[1:])
         return int(args.func(args) or 0)
     if len(sys.argv) > 2 and sys.argv[1:3] == ["standardize", "common-map-manifest"]:
+        args = build_parser().parse_args(sys.argv[1:])
+        return int(args.func(args) or 0)
+    if len(sys.argv) > 2 and sys.argv[1:3] == ["plan", "representative-windows"]:
         args = build_parser().parse_args(sys.argv[1:])
         return int(args.func(args) or 0)
     return _core.main()
