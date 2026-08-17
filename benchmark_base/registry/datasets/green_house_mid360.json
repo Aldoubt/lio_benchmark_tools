@@ -32,10 +32,21 @@
     "frame_id": "livox_frame"
   },
   "calibration": {
+    "canonical_convention": "LIDAR_TO_IMU",
+    "canonical_equation": "p_I = R_IL * p_L + t_IL",
     "rotation_lidar_to_imu_row_major": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-    "translation_lidar_to_imu_m": [0.011, 0.02329, -0.04412],
-    "source": "/home/yangxuan/agt_navigation_v2/src/agt_mapping/config/mid360_lio_only.yaml (legacy baseline; numeric calibration not verified for this bag)",
-    "status": "BLOCKED_CALIBRATION",
-    "verification_artifact": "/home/yangxuan/agt_navigation_v2/runtime/calibrations/handheld_mid360_sensor_v01.yaml"
+    "translation_lidar_to_imu_m": [-0.011, -0.02329, 0.04412],
+    "manufacturer_imu_origin_in_lidar_m": [0.011, 0.02329, -0.04412],
+    "status": "MANUFACTURER_SPEC",
+    "source_type": "MANUFACTURER_SPEC",
+    "sensor_model": "Livox Mid-360",
+    "imu_relation": "INTERNAL_IMU",
+    "online_extrinsic_estimation": false,
+    "source": "Livox Mid-360 manufacturer internal LiDAR/IMU geometry; canonical T_IL direction cross-checked against hku-mars/FAST_LIO config/mid360.yaml and README extrinsic definition",
+    "references": [
+      "Livox Mid-360 User Manual / official downloads",
+      "hku-mars/FAST_LIO config/mid360.yaml",
+      "hku-mars/FAST_LIO README: LiDAR pose expressed in IMU body frame"
+    ]
   }
 }
