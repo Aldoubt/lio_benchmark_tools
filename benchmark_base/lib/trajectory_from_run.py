@@ -2,6 +2,7 @@
 """ROS-independent conversion from raw pose observations to standard trajectory."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 from pathlib import Path
 from typing import Any, Iterable
@@ -17,7 +18,18 @@ from benchmark_base.lib.trajectory import (
 
 
 TIMESTAMP_POLICY = "HEADER_STAMP_ELSE_BAG_RECORD_TIME"
+TIMESTAMP_DUPLICATE_POLICY = "COALESCE_EXACT_TIMESTAMP_KEEP_LAST_PUBLISHED_STATE"
+TIMESTAMP_REGRESSION_POLICY = "FAIL_CLOSED"
 SOURCE_KIND = "RUN_LOCAL_ROS2_BAG"
+
+
+@dataclass(frozen=True)
+class TimestampCanonicalization:
+    policy: str
+    raw_sample_count: int
+    canonical_sample_count: int
+    duplicate_group_count: int
+    coalesced_sample_count: int
 
 
 def _finite_pose(observation: RawPoseObservation) -> None:
@@ -33,6 +45,48 @@ def _finite_pose(observation: RawPoseObservation) -> None:
     )
     if any(not math.isfinite(float(value)) for value in values):
         raise TrajectoryError("raw pose observation contains non-finite values")
+
+
+def canonicalize_pose_observations(
+    observations: Iterable[RawPoseObservation],
+) -> tuple[tuple[RawPoseObservation, ...], TimestampCanonicalization]:
+    """Convert repeated same-time state revisions into one state per timestamp.
+
+    Input order is preserved. Exact duplicate timestamps are interpreted as
+    multiple published revisions of the same declared estimator time and the
+    last published state is retained. Any backwards timestamp remains a hard
+    failure; this function never sorts or retimes observations.
+    """
+    raw = tuple(observations)
+    canonical: list[RawPoseObservation] = []
+    duplicate_groups = 0
+    coalesced = 0
+    previous_raw_timestamp: float | None = None
+
+    for observation in raw:
+        _finite_pose(observation)
+        timestamp = float(observation.timestamp_s)
+        if previous_raw_timestamp is not None and timestamp < previous_raw_timestamp:
+            raise TrajectoryError(
+                f"trajectory timestamp regression: {timestamp:.9f} < {previous_raw_timestamp:.9f}"
+            )
+        if canonical and timestamp == float(canonical[-1].timestamp_s):
+            if previous_raw_timestamp != timestamp:
+                duplicate_groups += 1
+            canonical[-1] = observation
+            coalesced += 1
+        else:
+            canonical.append(observation)
+        previous_raw_timestamp = timestamp
+
+    summary = TimestampCanonicalization(
+        policy=TIMESTAMP_DUPLICATE_POLICY,
+        raw_sample_count=len(raw),
+        canonical_sample_count=len(canonical),
+        duplicate_group_count=duplicate_groups,
+        coalesced_sample_count=coalesced,
+    )
+    return tuple(canonical), summary
 
 
 def trajectory_from_observations(
@@ -98,7 +152,17 @@ def build_trajectory_standardization_metadata(
     start_timestamp_s: float,
     end_timestamp_s: float,
     output: str,
+    timestamp_canonicalization: TimestampCanonicalization | None = None,
 ) -> dict[str, Any]:
+    canonicalization = timestamp_canonicalization or TimestampCanonicalization(
+        policy=TIMESTAMP_DUPLICATE_POLICY,
+        raw_sample_count=int(sample_count),
+        canonical_sample_count=int(sample_count),
+        duplicate_group_count=0,
+        coalesced_sample_count=0,
+    )
+    if canonicalization.canonical_sample_count != int(sample_count):
+        raise ValueError("timestamp canonicalization sample count does not match trajectory sample count")
     return {
         "schema_version": 1,
         "algorithm_id": str(algorithm_id),
@@ -107,7 +171,12 @@ def build_trajectory_standardization_metadata(
         "source_topic": str(source_topic),
         "source_message_type": str(source_message_type),
         "timestamp_policy": TIMESTAMP_POLICY,
+        "timestamp_duplicate_policy": TIMESTAMP_DUPLICATE_POLICY,
+        "timestamp_regression_policy": TIMESTAMP_REGRESSION_POLICY,
+        "raw_sample_count": int(canonicalization.raw_sample_count),
         "sample_count": int(sample_count),
+        "duplicate_timestamp_group_count": int(canonicalization.duplicate_group_count),
+        "coalesced_duplicate_sample_count": int(canonicalization.coalesced_sample_count),
         "start_timestamp_s": float(start_timestamp_s),
         "end_timestamp_s": float(end_timestamp_s),
         "output": str(output),
