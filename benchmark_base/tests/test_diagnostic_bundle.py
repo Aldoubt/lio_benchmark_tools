@@ -66,6 +66,19 @@ class DiagnosticBundleTest(unittest.TestCase):
         self._write(run, "standardized/map_sampling/selected_scans.csv", "scan_index,timestamp_s\n0,1.0\n")
         self._write(
             run,
+            "standardized/map_sampling/common_matched_scans.csv",
+            "scan_index,timestamp_s\n0,1.0\n",
+        )
+        self._write(
+            run,
+            "standardized/map_sampling/common_matched_metadata.json",
+            json.dumps({
+                "policy": "STRICT_ALL_ALGORITHM_TRAJECTORY_INTERSECTION",
+                "common_matched_scan_count": 1,
+            }),
+        )
+        self._write(
+            run,
             "standardized/maps/algo_a/unified/metadata.json",
             json.dumps({"tracked_frame_physical": "IMU_BODY", "world_gauge": "GRAVITY_ALIGNED"}),
         )
@@ -119,6 +132,8 @@ class DiagnosticBundleTest(unittest.TestCase):
             self.assertIn("metadata/algorithms/algo_a/trajectory_standardization.json", names)
             self.assertIn("standardized/maps/algo_a/unified/metadata.json", names)
             self.assertIn("standardized/maps/unexpected_algo_name/unified/metadata.json", names)
+            self.assertIn("standardized/map_sampling/common_matched_scans.csv", names)
+            self.assertIn("standardized/map_sampling/common_matched_metadata.json", names)
             self.assertIn("metadata/bundle/SUMMARY.txt", names)
             self.assertIn("metadata/bundle/bundle_manifest.json", names)
             self.assertIn("metadata/bundle/benchmark_git_head.txt", names)
@@ -145,6 +160,29 @@ class DiagnosticBundleTest(unittest.TestCase):
                 bundle_manifest["missing"],
             )
             self.assertIn("tracked.txt", local_patch)
+
+    def test_common_map_evidence_is_optional_for_historical_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = self._make_run(root)
+            repo = self._make_git_repo(root)
+            (run / "standardized/map_sampling/common_matched_scans.csv").unlink()
+            (run / "standardized/map_sampling/common_matched_metadata.json").unlink()
+
+            archive = create_diagnostic_bundle(run, repository_root=repo)
+            with tarfile.open(archive, "r:gz") as stream:
+                bundle_manifest = json.loads(
+                    stream.extractfile("metadata/bundle/bundle_manifest.json").read().decode("utf-8")
+                )
+
+            self.assertNotIn(
+                "standardized/map_sampling/common_matched_scans.csv",
+                bundle_manifest["missing"],
+            )
+            self.assertNotIn(
+                "standardized/map_sampling/common_matched_metadata.json",
+                bundle_manifest["missing"],
+            )
 
     def test_include_reports_adds_existing_reports_and_png_only_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
