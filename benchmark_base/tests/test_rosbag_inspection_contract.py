@@ -27,6 +27,16 @@ class RosbagInspectionContractTest(unittest.TestCase):
         self.assertNotIn("rosbag2_py.SequentialReader", analyze_text)
         self.assertNotIn("rosbag2_py.SequentialReader", probe_text)
 
+    def test_custom_messages_keep_full_header_audit_even_when_layout_sampling_is_bounded(self) -> None:
+        shared = ROOT / "benchmark_base/lib/rosbag_inspection.py"
+        text = shared.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "if is_custom and custom_samples.get(topic, 0) >= 3:\n            continue",
+            text,
+        )
+        self.assertIn("sample_custom_layout", text)
+        self.assertIn("header_times[topic].append", text)
+
     def test_probe_builds_v1_evidence_from_pure_contract_helpers(self) -> None:
         probe = ROOT / "evaluators/probe_dataset.py"
         self.assertTrue(probe.is_file())
