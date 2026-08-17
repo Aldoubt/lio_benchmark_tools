@@ -55,7 +55,7 @@ def selected(label: str, start: float) -> SelectedWindow:
         imu_sample_count=9000,
         gyro_rms_rad_s=0.1,
         gyro_p95_rad_s=0.2,
-        accel_dynamic_rms_m_s2=0.1,
+        accel_dynamic_rms_native=0.1,
         scene_change_mean=0.2,
         geometric_degeneracy_median=0.3,
         geometric_degeneracy_p90=0.4,
