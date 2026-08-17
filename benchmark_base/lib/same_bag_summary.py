@@ -31,6 +31,7 @@ ROW_FIELDS = (
     "strict_common_scan_policy",
     "matched_scan_count",
     "selected_scan_count",
+    "unmatched_scan_count",
     "matched_scan_ratio",
     "runtime_measurement_method",
     "wall_time_s",
@@ -196,6 +197,7 @@ def _row_for_algorithm(run: Path, algorithm_id: str, algorithm: dict[str, Any]) 
         ),
         "matched_scan_count": _first_value(matching, ("matched_scan_count", "matched_manifest_scan_count", "matched_scans")),
         "selected_scan_count": _first_value(matching, ("selected_scan_count", "manifest_scan_count", "selected_scans")),
+        "unmatched_scan_count": _first_value(matching, ("unmatched_scan_count", "unmatched_scans")),
         "matched_scan_ratio": _first_value(matching, ("matched_scan_ratio", "match_ratio", "matched_ratio")),
         "runtime_measurement_method": runtime.get("measurement_method") if runtime else None,
         "wall_time_s": runtime.get("wall_time_s") if runtime else None,
@@ -204,6 +206,44 @@ def _row_for_algorithm(run: Path, algorithm_id: str, algorithm: dict[str, Any]) 
         "cpu_total_s": runtime.get("cpu_total_s") if runtime else None,
         "max_rss_kib": runtime.get("max_rss_kib") if runtime else None,
     }
+
+
+def _summary_readiness_reasons(rows: list[dict[str, Any]]) -> list[str]:
+    reasons: list[str] = []
+    for row in rows:
+        algorithm_id = str(row["algorithm_id"])
+        if row["run_status"] != "PASS":
+            reasons.append(f"{algorithm_id}: run_status={row['run_status']}")
+        if row["runtime_identity_status"] != "FROZEN":
+            reasons.append(
+                f"{algorithm_id}: runtime_identity_status={row['runtime_identity_status']}"
+            )
+        if row["trajectory_status"] != "AVAILABLE":
+            reasons.append(f"{algorithm_id}: trajectory_status={row['trajectory_status']}")
+        if row["runtime_measurement_method"] is None or row["wall_time_s"] is None or row["max_rss_kib"] is None:
+            reasons.append(f"{algorithm_id}: runtime performance evidence is incomplete")
+        if row["unified_map_status"] != "AVAILABLE":
+            reasons.append(f"{algorithm_id}: unified_map_status={row['unified_map_status']}")
+            continue
+        if row["strict_common_scan_policy"] != "STRICT_COMMON_INTERSECTION":
+            reasons.append(
+                f"{algorithm_id}: strict_common_scan_policy={row['strict_common_scan_policy']}"
+            )
+        selected = row["selected_scan_count"]
+        matched = row["matched_scan_count"]
+        unmatched = row["unmatched_scan_count"]
+        point_count = row["unified_map_point_count"]
+        if not isinstance(selected, int) or selected <= 0:
+            reasons.append(f"{algorithm_id}: selected_scan_count={selected}")
+        if matched != selected:
+            reasons.append(
+                f"{algorithm_id}: matched_scan_count={matched} selected_scan_count={selected}"
+            )
+        if unmatched != 0:
+            reasons.append(f"{algorithm_id}: unmatched_scan_count={unmatched}")
+        if not isinstance(point_count, int) or point_count <= 0:
+            reasons.append(f"{algorithm_id}: unified_map_point_count={point_count}")
+    return reasons
 
 
 def _write_csv(path: Path, fields: tuple[str, ...], rows: list[dict[str, Any]]) -> None:
@@ -262,7 +302,7 @@ def _markdown(rows: list[dict[str, Any]]) -> str:
 
 
 def summarize_same_bag(run: str | Path) -> dict[str, Any]:
-    """Summarize already-existing run artifacts without running ROS or rebuilding maps."""
+    """Summarize final run artifacts without running ROS or rebuilding maps."""
     run = Path(run).resolve()
     manifest = _load_json(run / "manifest.json")
     if manifest is None:
@@ -282,6 +322,13 @@ def summarize_same_bag(run: str | Path) -> dict[str, Any]:
         raise FileExistsError("refusing to overwrite same-bag summary output: " + ", ".join(str(path) for path in existing))
 
     rows = [_row_for_algorithm(run, algorithm_id, algorithm) for algorithm_id, algorithm in algorithms.items()]
+    readiness_reasons = _summary_readiness_reasons(rows)
+    if readiness_reasons:
+        raise ValueError(
+            "Same-Bag summary is not ready; refusing to freeze an intermediate state: "
+            + "; ".join(readiness_reasons)
+        )
+
     dataset = manifest.get("dataset") if isinstance(manifest.get("dataset"), dict) else {}
     payload = {
         "schema": SCHEMA,
