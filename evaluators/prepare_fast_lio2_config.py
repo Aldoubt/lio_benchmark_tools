@@ -8,7 +8,9 @@ from pathlib import Path
 
 
 def float_scalar(value: float) -> str:
-    text = f"{float(value):.17g}"
+    # Keep run-local parameter provenance human-readable without exposing the
+    # binary expansion of ordinary decimal calibration constants.
+    text = f"{float(value):.12g}"
     if "." not in text and "e" not in text.lower():
         text += ".0"
     return text
@@ -98,8 +100,17 @@ def main() -> int:
         "collect_native_map": args.collect_native_map,
         "config": str(args.output),
         "native_map_path": str(native_map) if args.collect_native_map else None,
+        "canonical_convention": calibration.get("canonical_convention"),
+        "canonical_equation": calibration.get("canonical_equation"),
+        "effective_convention": calibration.get("convention"),
+        "rotation_row_major": calibration.get("rotation_row_major"),
+        "translation_m": calibration.get("translation_m"),
         "calibration_source": calibration.get("calibration_source"),
+        "calibration_source_type": calibration.get("calibration_source_type"),
         "calibration_status": calibration.get("calibration_status"),
+        "sensor_model": calibration.get("sensor_model"),
+        "imu_relation": calibration.get("imu_relation"),
+        "online_extrinsic_estimation": false if False else False,
     }
     (args.output.parent / "adapter_config_metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
