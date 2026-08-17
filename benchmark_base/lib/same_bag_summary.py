@@ -191,10 +191,12 @@ def _row_for_algorithm(run: Path, algorithm_id: str, algorithm: dict[str, Any]) 
         "native_map_point_count": native_points,
         "unified_map_status": unified_status,
         "unified_map_point_count": unified_points,
-        "strict_common_scan_policy": _first_value(matching, ("scan_set_policy", "selection_policy")),
+        "strict_common_scan_policy": (
+            unified_metadata.get("scan_set_policy") if isinstance(unified_metadata, dict) else None
+        ),
         "matched_scan_count": _first_value(matching, ("matched_scan_count", "matched_manifest_scan_count", "matched_scans")),
         "selected_scan_count": _first_value(matching, ("selected_scan_count", "manifest_scan_count", "selected_scans")),
-        "matched_scan_ratio": _first_value(matching, ("match_ratio", "matched_scan_ratio", "matched_ratio")),
+        "matched_scan_ratio": _first_value(matching, ("matched_scan_ratio", "match_ratio", "matched_ratio")),
         "runtime_measurement_method": runtime.get("measurement_method") if runtime else None,
         "wall_time_s": runtime.get("wall_time_s") if runtime else None,
         "cpu_user_s": runtime.get("cpu_user_s") if runtime else None,
