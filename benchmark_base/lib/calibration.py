@@ -13,7 +13,10 @@ import math
 from typing import Any, Iterable
 
 
-CONFIRMED_CALIBRATION_STATUSES = frozenset({"CONFIRMED", "VERIFIED"})
+CONFIRMED_CALIBRATION_STATUSES = frozenset({"CONFIRMED", "VERIFIED", "MANUFACTURER_SPEC"})
+# New code should use this name; keep the historical constant above for callers
+# and frozen verification contracts that already import it.
+USABLE_CALIBRATION_STATUSES = CONFIRMED_CALIBRATION_STATUSES
 EXTRINSIC_CONVENTIONS = frozenset({"LIDAR_TO_IMU", "IMU_TO_LIDAR", "NONE"})
 
 
@@ -61,6 +64,9 @@ def canonical_lidar_to_imu(dataset: dict[str, Any]) -> RigidTransform:
     calibration = dataset.get("calibration")
     if not isinstance(calibration, dict):
         raise ValueError("dataset calibration object is required")
+    convention = str(calibration.get("canonical_convention", "LIDAR_TO_IMU")).strip().upper()
+    if convention != "LIDAR_TO_IMU":
+        raise ValueError(f"dataset canonical calibration must be LIDAR_TO_IMU, got {convention or '<missing>'}")
     return RigidTransform(
         rotation=tuple(calibration.get("rotation_lidar_to_imu_row_major", ())),
         translation=tuple(calibration.get("translation_lidar_to_imu_m", ())),
@@ -95,8 +101,13 @@ def resolve_algorithm_extrinsic(dataset: dict[str, Any], algorithm: dict[str, An
             "rotation_row_major": None,
             "translation_m": None,
             "canonical_convention": "LIDAR_TO_IMU",
+            "canonical_equation": None,
             "calibration_status": "NOT_REQUIRED",
             "calibration_source": None,
+            "calibration_source_type": None,
+            "sensor_model": None,
+            "imu_relation": None,
+            "manufacturer_imu_origin_in_lidar_m": None,
             "diagnostic_only": False,
         }
 
@@ -109,8 +120,14 @@ def resolve_algorithm_extrinsic(dataset: dict[str, Any], algorithm: dict[str, An
         "convention": convention,
         "rotation_row_major": list(resolved.rotation),
         "translation_m": list(resolved.translation),
-        "canonical_convention": "LIDAR_TO_IMU",
+        "canonical_convention": str(calibration.get("canonical_convention", "LIDAR_TO_IMU")),
+        "canonical_equation": calibration.get("canonical_equation"),
         "calibration_status": status,
         "calibration_source": calibration.get("source"),
+        "calibration_source_type": calibration.get("source_type"),
+        "sensor_model": calibration.get("sensor_model"),
+        "imu_relation": calibration.get("imu_relation"),
+        "manufacturer_imu_origin_in_lidar_m": calibration.get("manufacturer_imu_origin_in_lidar_m"),
+        "online_extrinsic_estimation": calibration.get("online_extrinsic_estimation"),
         "diagnostic_only": status not in CONFIRMED_CALIBRATION_STATUSES,
     }
