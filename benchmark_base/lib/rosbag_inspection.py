@@ -67,10 +67,9 @@ def inspect_ros2_bag(bag: Path) -> dict[str, Any]:
         topic, raw, recorded_ns = reader.read_next()
         recorded_times[topic].append(recorded_ns * 1e-9)
         is_custom = "CustomMsg" in type_map[topic]
-        if is_custom and custom_samples.get(topic, 0) >= 3:
-            continue
+        sample_custom_layout = is_custom and custom_samples.get(topic, 0) < 3
         message = deserialize_message(raw, message_types[topic])
-        if is_custom:
+        if sample_custom_layout:
             custom_samples[topic] = custom_samples.get(topic, 0) + 1
         if hasattr(message, "header"):
             header_times[topic].append(stamp_seconds(message))
@@ -85,7 +84,11 @@ def inspect_ros2_bag(bag: Path) -> dict[str, Any]:
                 }
                 for field in message.fields
             ]
-        elif hasattr(message, "points") and topic not in point_fields:
+        elif (
+            hasattr(message, "points")
+            and topic not in point_fields
+            and sample_custom_layout
+        ):
             point_fields[topic] = [
                 {"name": name, "datatype": datatype}
                 for name, datatype in (
@@ -174,7 +177,7 @@ def inspect_ros2_bag(bag: Path) -> dict[str, Any]:
         "limitations": [
             "Bag inspection alone does not provide ground-truth trajectory accuracy.",
             "Full-dataset IMU statistics do not replace a known stationary interval for bias/noise estimation.",
-            "Livox CustomMsg header/point semantics are deserialized from only the first 3 messages per CustomMsg topic; full message counts and recorded times cover the full bag.",
+            "Livox CustomMsg header timestamps are audited across the full bag; point-layout evidence is sampled only as needed and does not prove a physical sensor model.",
             "Livox message layout does not prove a physical sensor model such as MID360.",
         ],
     }
