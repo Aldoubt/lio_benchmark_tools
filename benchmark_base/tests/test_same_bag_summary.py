@@ -86,7 +86,7 @@ class SameBagSummaryContractTest(unittest.TestCase):
 
         runtime_dir = self.run / "metrics" / "runtime"
         runtime_dir.mkdir(parents=True)
-        for index, algorithm_id in enumerate(("fast_livo2", "fast_lio2"), start=1):
+        for index, algorithm_id in enumerate(("fast_livo2", "fast_lio2", "kiss_icp"), start=1):
             (runtime_dir / f"{algorithm_id}.json").write_text(
                 json.dumps(
                     {
@@ -113,7 +113,7 @@ class SameBagSummaryContractTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        for algorithm_id, point_count in (("fast_livo2", 101), ("fast_lio2", 202)):
+        for algorithm_id, point_count in (("fast_livo2", 101), ("fast_lio2", 202), ("kiss_icp", 303)):
             unified = self.run / "standardized" / "maps" / algorithm_id / "unified"
             unified.mkdir(parents=True)
             (unified / "map.ply").write_text("ply\n", encoding="utf-8")
@@ -138,7 +138,15 @@ class SameBagSummaryContractTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def test_summary_preserves_modalities_artifacts_and_missing_evidence(self) -> None:
+    def _summary_outputs(self) -> tuple[Path, ...]:
+        return (
+            self.run / "reports" / "algorithm_io_matrix.csv",
+            self.run / "reports" / "algorithm_io_matrix.md",
+            self.run / "metrics" / "runtime_performance.csv",
+            self.run / "reports" / "same_bag_mapping_v1.json",
+        )
+
+    def test_summary_preserves_modalities_final_maps_and_native_missing_evidence(self) -> None:
         payload = summarize_same_bag(self.run)
         rows = payload["algorithms"]
         self.assertEqual(["fast_livo2", "fast_lio2", "kiss_icp"], [row["algorithm_id"] for row in rows])
@@ -154,26 +162,32 @@ class SameBagSummaryContractTest(unittest.TestCase):
         self.assertEqual("STRICT_COMMON_INTERSECTION", fast_livo2["strict_common_scan_policy"])
         self.assertEqual(120, fast_livo2["matched_scan_count"])
         self.assertEqual(120, fast_livo2["selected_scan_count"])
+        self.assertEqual(0, fast_livo2["unmatched_scan_count"])
         self.assertEqual(1.0, fast_livo2["matched_scan_ratio"])
-        self.assertEqual("MISSING", kiss["unified_map_status"])
-        self.assertIsNone(kiss["wall_time_s"])
-        self.assertIsNone(kiss["max_rss_kib"])
+        self.assertEqual("AVAILABLE", kiss["unified_map_status"])
+        self.assertEqual(303, kiss["unified_map_point_count"])
+        self.assertIsNotNone(kiss["wall_time_s"])
+        self.assertIsNotNone(kiss["max_rss_kib"])
         for row in rows:
             self.assertNotIn("map_accuracy", row)
 
-        expected_outputs = {
-            self.run / "reports" / "algorithm_io_matrix.csv",
-            self.run / "reports" / "algorithm_io_matrix.md",
-            self.run / "metrics" / "runtime_performance.csv",
-            self.run / "reports" / "same_bag_mapping_v1.json",
-        }
-        self.assertTrue(all(path.is_file() for path in expected_outputs))
+        self.assertTrue(all(path.is_file() for path in self._summary_outputs()))
 
         with (self.run / "reports" / "algorithm_io_matrix.csv").open(newline="", encoding="utf-8") as stream:
             csv_rows = list(csv.DictReader(stream))
         self.assertEqual(3, len(csv_rows))
         self.assertEqual("kiss_icp", csv_rows[2]["algorithm_id"])
-        self.assertEqual("", csv_rows[2]["wall_time_s"])
+        self.assertEqual("0", csv_rows[2]["unmatched_scan_count"])
+
+    def test_summary_refuses_to_freeze_before_all_strict_unified_maps_are_complete(self) -> None:
+        unified = self.run / "standardized" / "maps" / "kiss_icp" / "unified"
+        (unified / "map.ply").unlink()
+        (unified / "metadata.json").unlink()
+
+        with self.assertRaisesRegex(ValueError, "Same-Bag summary is not ready"):
+            summarize_same_bag(self.run)
+
+        self.assertTrue(all(not path.exists() for path in self._summary_outputs()))
 
     def test_summary_outputs_are_immutable(self) -> None:
         summarize_same_bag(self.run)
