@@ -66,7 +66,8 @@ class FakeStageRunner:
             self.stop_controller.request(signal.SIGINT)
         return 1 if stage_id == f"runtime/{self.fail_runtime}" else 0
 
-    def _algorithm_arg(self, args: list[str]) -> str:
+    @staticmethod
+    def _algorithm_arg(args: list[str]) -> str:
         return args[args.index("--algorithm") + 1]
 
     def _stage_id(self, args: list[str]) -> str:
@@ -136,7 +137,11 @@ class FakeStageRunner:
             status = "FAIL_ALGORITHM" if algorithm_id == self.fail_runtime else "PASS"
             write_json(
                 self.run / "metadata" / f"run_{algorithm_id}.json",
-                {"algorithm_id": algorithm_id, "status": status, "returncode": 1 if status != "PASS" else 0},
+                {
+                    "algorithm_id": algorithm_id,
+                    "status": status,
+                    "returncode": 1 if status != "PASS" else 0,
+                },
             )
             if status == "PASS":
                 write_json(
@@ -164,7 +169,14 @@ class FakeStageRunner:
                 )
                 write_json(
                     self.run / "metadata/trajectory_timestamp_audit" / f"{algorithm_id}.json",
-                    {"algorithm_id": algorithm_id, "summary": {"sample_count": 1}},
+                    {
+                        "algorithm_id": algorithm_id,
+                        "summary": {
+                            "classification": "PASS",
+                            "sample_count": 1,
+                            "effective_regression_count": 0,
+                        },
+                    },
                 )
             return
         if stage_id == "audit/trajectory_frames":
@@ -203,7 +215,11 @@ class FakeStageRunner:
         if stage_id == "audit/trajectory_coverage":
             rows = []
             for algorithm_id in ALGORITHMS:
-                row = {"algorithm_id": algorithm_id, "trajectory_count": 1, "trajectory_large_gap_count": 500}
+                row = {
+                    "algorithm_id": algorithm_id,
+                    "trajectory_count": 1,
+                    "trajectory_large_gap_count": 500,
+                }
                 rows.append(row)
                 write_json(self.run / "metadata/trajectory_coverage" / f"{algorithm_id}.json", row)
             write_csv(
@@ -275,13 +291,26 @@ class FakeStageRunner:
                     "terminology": "PAIRWISE_DISAGREEMENT",
                 },
             )
-            for name in ("normalized_motion.csv", "pairwise_samples.csv", "pairwise_summary.csv", "onset_thresholds.csv"):
+            for name in (
+                "normalized_motion.csv",
+                "pairwise_samples.csv",
+                "pairwise_summary.csv",
+                "onset_thresholds.csv",
+            ):
                 write_csv(root / name, ["value"], [{"value": 1}])
             return
         if stage_id == "same_bag_summary":
-            write_csv(self.run / "reports/algorithm_io_matrix.csv", ["algorithm_id"], [{"algorithm_id": a} for a in ALGORITHMS])
+            write_csv(
+                self.run / "reports/algorithm_io_matrix.csv",
+                ["algorithm_id"],
+                [{"algorithm_id": a} for a in ALGORITHMS],
+            )
             (self.run / "reports/algorithm_io_matrix.md").write_text("# matrix\n", encoding="utf-8")
-            write_csv(self.run / "metrics/runtime_performance.csv", ["algorithm_id"], [{"algorithm_id": a} for a in ALGORITHMS])
+            write_csv(
+                self.run / "metrics/runtime_performance.csv",
+                ["algorithm_id"],
+                [{"algorithm_id": a} for a in ALGORITHMS],
+            )
             write_json(
                 self.run / "reports/same_bag_mapping_v1.json",
                 {
@@ -306,7 +335,11 @@ class SuiteOrchestratorContractTest(unittest.TestCase):
             json.dumps(self.manifest, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        self.plan = build_suite_plan(self.run, self.manifest, created_at="2026-08-18T00:00:00+00:00")
+        self.plan = build_suite_plan(
+            self.run,
+            self.manifest,
+            created_at="2026-08-18T00:00:00+00:00",
+        )
         write_suite_plan(self.run, self.plan)
         self.cli = Path("/repo/benchmark_base/bin/lio-benchmark")
 
@@ -324,12 +357,30 @@ class SuiteOrchestratorContractTest(unittest.TestCase):
 
     def test_stage_commands_use_existing_public_cli_without_overrides(self) -> None:
         self.require_interfaces()
-        runtime = orchestrator.build_stage_command(self.run, self.plan, "runtime/fast_livo2", self.cli)
+        runtime = orchestrator.build_stage_command(
+            self.run,
+            self.plan,
+            "runtime/fast_livo2",
+            self.cli,
+        )
         self.assertEqual(
-            (sys.executable, str(self.cli), "run", "--run", str(self.run), "--algorithm", "fast_livo2"),
+            (
+                sys.executable,
+                str(self.cli),
+                "run",
+                "--run",
+                str(self.run),
+                "--algorithm",
+                "fast_livo2",
+            ),
             runtime.argv,
         )
-        relative = orchestrator.build_stage_command(self.run, self.plan, "relative_se3", self.cli)
+        relative = orchestrator.build_stage_command(
+            self.run,
+            self.plan,
+            "relative_se3",
+            self.cli,
+        )
         self.assertEqual(
             (
                 sys.executable,
@@ -344,7 +395,12 @@ class SuiteOrchestratorContractTest(unittest.TestCase):
             relative.argv,
         )
         for stage in self.plan["stages"]:
-            command = orchestrator.build_stage_command(self.run, self.plan, stage["stage_id"], self.cli)
+            command = orchestrator.build_stage_command(
+                self.run,
+                self.plan,
+                stage["stage_id"],
+                self.cli,
+            )
             if command is None:
                 continue
             joined = " ".join(command.argv)
@@ -415,9 +471,7 @@ class SuiteOrchestratorContractTest(unittest.TestCase):
         self.assertIn("runtime/fast_livo2", runner.started)
         self.assertIn("runtime/fast_lio2", runner.started)
         self.assertIn("runtime/kiss_icp", runner.started)
-        self.assertNotIn("trajectory/fast_livo2", runner.started)
-        self.assertNotIn("trajectory/fast_lio2", runner.started)
-        self.assertNotIn("trajectory/kiss_icp", runner.started)
+        self.assertFalse(any(stage.startswith("trajectory/") for stage in runner.started))
         self.assertTrue((self.run / "metadata/suite/dataset_identity_post.json").is_file())
 
     def test_blocked_preflight_allows_other_runtimes_and_resume_only_missing_runtime(self) -> None:
