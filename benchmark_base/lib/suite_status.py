@@ -252,6 +252,15 @@ def _per_algorithm_pair_stage(
             payload = _load_object(metadata_path)
             if payload.get("algorithm_id") != algorithm_id:
                 raise ValueError(f"audit metadata algorithm_id mismatch: {algorithm_id}")
+            summary = payload.get("summary")
+            if not isinstance(summary, dict):
+                raise ValueError(f"timestamp audit summary is missing: {algorithm_id}")
+            regressions = summary.get("effective_regression_count")
+            if not isinstance(regressions, int) or regressions != 0:
+                raise ValueError(
+                    f"timestamp audit effective regression count must be zero: "
+                    f"{algorithm_id}={regressions}"
+                )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return _invalid(stage, str(exc), paths)
     return _state(stage, PASS, artifacts=paths)
