@@ -171,20 +171,21 @@ def cmd_validate(args: argparse.Namespace) -> None:
     print(f"algorithms={','.join(resolved['algorithms'])}")
 
 
-def cmd_init(args: argparse.Namespace) -> None:
-    config = args.config.resolve()
+def initialize_run(config: Path, run_id: str | None = None) -> Path:
+    """Create one immutable run using the historical init artifact contract."""
+    config = config.resolve()
     source, resolved = resolve_config(config)
-    run_id = args.run_id or f"{source['name']}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    if not run_id.replace("-", "").replace("_", "").isalnum():
+    resolved_run_id = run_id or f"{source['name']}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    if not resolved_run_id.replace("-", "").replace("_", "").isalnum():
         raise SystemExit("run-id may contain only letters, numbers, underscore and hyphen")
-    run = Path(source["output_root"]).expanduser() / run_id
+    run = Path(source["output_root"]).expanduser() / resolved_run_id
     if run.exists():
         raise SystemExit(f"refusing to overwrite existing run: {run}")
     for relative in list(BASE_RUN_DIRS) + [f"raw/{name}" for name in resolved["algorithms"]]:
         (run / relative).mkdir(parents=True, exist_ok=False)
     frozen = dict(resolved)
     frozen.update(
-        run_id=run_id,
+        run_id=resolved_run_id,
         created_at=now_iso(),
         source_manifest=str(config),
         source_manifest_schema_version=source["schema_version"],
@@ -200,12 +201,16 @@ def cmd_init(args: argparse.Namespace) -> None:
         encoding="utf-8",
     )
     (run / "RUN_STATUS.md").write_text(
-        f"# Run {run_id}\n\n- status: initialized\n- created: {frozen['created_at']}\n"
+        f"# Run {resolved_run_id}\n\n- status: initialized\n- created: {frozen['created_at']}\n"
         "- bag analysis: pending\n- frontend runs: pending\n"
         "- standardization: pending\n- report: pending\n",
         encoding="utf-8",
     )
-    print(run)
+    return run
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    print(initialize_run(args.config.resolve(), args.run_id))
 
 
 def cmd_analyze_bag(args: argparse.Namespace) -> None:
