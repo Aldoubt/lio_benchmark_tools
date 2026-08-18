@@ -16,7 +16,7 @@ import uuid
 
 from benchmark_base.lib.bag_probe import build_bag_identity
 from benchmark_base.lib.manifest import sha256_file
-from benchmark_base.lib.suite_events import SuiteExecutionLock, append_event
+from benchmark_base.lib.suite_events import SuiteEventError, SuiteExecutionLock, append_event
 from benchmark_base.lib.suite_plan import build_stage_definitions, load_and_validate_suite_plan
 from benchmark_base.lib.suite_status import (
     BLOCKED,
@@ -483,6 +483,16 @@ def execute_suite(
                 observed_state=final_status.state,
                 reason_code=stop_reason or (invocation_error.reason_code if invocation_error else None),
             )
+    except SuiteEventError as exc:
+        if "BLOCKED_EXECUTOR_LOCKED" not in str(exc):
+            raise
+        return OrchestratorResult(
+            run=run,
+            state=BLOCKED,
+            exit_code=2,
+            started_stage_ids=(),
+            stop_reason="BLOCKED_EXECUTOR_LOCKED",
+        )
     finally:
         if install_signal_handlers:
             for signum, handler in previous_handlers.items():
