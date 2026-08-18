@@ -11,13 +11,7 @@ from typing import Any, Sequence
 from benchmark_base.lib.artifacts import map_artifact_paths
 from benchmark_base.lib.common_map_manifest import sha256_file, validate_common_map_manifest
 from benchmark_base.lib.map_sampling import read_scan_manifest
-from benchmark_base.lib.suite_plan import (
-    RECHECKABLE_BEFORE_RUNTIME,
-    SINGLE_RUNTIME_ATTEMPT,
-    StageDefinition,
-    build_stage_definitions,
-    load_and_validate_suite_plan,
-)
+from benchmark_base.lib.suite_plan import StageDefinition, build_stage_definitions, load_and_validate_suite_plan
 from benchmark_base.lib.trajectory import Trajectory
 
 
@@ -482,11 +476,7 @@ def _summary_state(run: Path, stage: StageDefinition, algorithms: Sequence[str])
     return _state(stage, PASS, artifacts=paths)
 
 
-def _inspect_artifacts(
-    run: Path,
-    plan: dict[str, Any],
-    stage: StageDefinition,
-) -> StageState | None:
+def _inspect_artifacts(run: Path, plan: dict[str, Any], stage: StageDefinition) -> StageState | None:
     stage_id = stage.stage_id
     algorithms = tuple(str(value) for value in plan["selected_algorithms"])
     if stage_id == "snapshot":
@@ -530,10 +520,7 @@ def _inspect_artifacts(
     return _invalid(stage, f"unknown suite stage: {stage_id}", ())
 
 
-def _dependency_gate(
-    stage: StageDefinition,
-    states: dict[str, StageState],
-) -> StageState:
+def _dependency_gate(stage: StageDefinition, states: dict[str, StageState]) -> StageState:
     dependencies = [states[stage_id] for stage_id in stage.dependencies]
     if stage.stage_id == "dataset_identity/post":
         terminal = all(
@@ -546,7 +533,6 @@ def _dependency_gate(
         if any(dependency.state in {BLOCKED, FAIL} for dependency in dependencies):
             return _state(stage, BLOCKED, reason=BLOCKED_DEPENDENCY)
         return _state(stage, PENDING)
-
     if any(dependency.state in {BLOCKED, FAIL} for dependency in dependencies):
         return _state(stage, BLOCKED, reason=BLOCKED_DEPENDENCY)
     if all(dependency.state == PASS for dependency in dependencies):
@@ -568,9 +554,6 @@ def _derive_one(
         return observed
     if gate.state == READY:
         return observed
-    if stage.stage_id == "dataset_identity/post" and gate.state == READY:
-        return observed
-    # Existing accepted output whose frozen dependency contract no longer passes is stale.
     return _state(
         stage,
         FAIL,
@@ -591,11 +574,7 @@ def _all_states(run: Path, plan: dict[str, Any]) -> tuple[StageState, ...]:
     return tuple(ordered)
 
 
-def derive_stage_state(
-    run: Path,
-    plan: dict[str, Any],
-    stage: StageDefinition,
-) -> StageState:
+def derive_stage_state(run: Path, plan: dict[str, Any], stage: StageDefinition) -> StageState:
     run = Path(run).resolve()
     states = _all_states(run, plan)
     for row in states:
@@ -605,6 +584,8 @@ def derive_stage_state(
 
 
 def _overall_state(stages: Sequence[StageState]) -> str:
+    if any(stage.state == RUNNING for stage in stages):
+        return RUNNING
     by_id = {stage.stage_id: stage for stage in stages}
     if by_id.get("same_bag_summary") and by_id["same_bag_summary"].state == PASS:
         return PASS
@@ -617,11 +598,39 @@ def _overall_state(stages: Sequence[StageState]) -> str:
     return PENDING
 
 
-def derive_suite_status(run: Path) -> SuiteStatus:
+def _apply_execution_observation(
+    stages: tuple[StageState, ...],
+    execution: Any | None,
+) -> tuple[StageState, ...]:
+    if execution is None or not bool(getattr(execution, "locked", False)):
+        return stages
+    active = getattr(execution, "active_stage_id", None)
+    if not isinstance(active, str) or not active:
+        return stages
+    replaced: list[StageState] = []
+    matched = False
+    for stage in stages:
+        if stage.stage_id == active:
+            matched = True
+            replaced.append(
+                StageState(
+                    stage_id=stage.stage_id,
+                    state=RUNNING,
+                    reason_code=None,
+                    detail="live suite executor owns lock and has an unmatched STAGE_STARTED event",
+                    artifacts=stage.artifacts,
+                )
+            )
+        else:
+            replaced.append(stage)
+    return tuple(replaced) if matched else stages
+
+
+def derive_suite_status(run: Path, *, execution: Any | None = None) -> SuiteStatus:
     """Derive suite state without creating, repairing, or rewriting any artifact."""
     run = Path(run).resolve()
     plan = load_and_validate_suite_plan(run)
-    stages = _all_states(run, plan)
+    stages = _apply_execution_observation(_all_states(run, plan), execution)
     return SuiteStatus(
         run=run,
         profile=str(plan["profile"]),
