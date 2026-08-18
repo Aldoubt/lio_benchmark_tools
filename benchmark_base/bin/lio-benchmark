@@ -45,59 +45,6 @@ from benchmark_base.lib.suite_status import derive_suite_status, status_to_dict 
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
-def _initialize_run(config: Path, run_id: str | None = None) -> Path:
-    """Reuse the historical core init semantics while returning the run path."""
-    config = config.resolve()
-    source, resolved = _core.resolve_config(config)
-    resolved_run_id = run_id or (
-        f"{source['name']}_{_core.dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    )
-    if not resolved_run_id.replace("-", "").replace("_", "").isalnum():
-        raise SystemExit("run-id may contain only letters, numbers, underscore and hyphen")
-    run = Path(source["output_root"]).expanduser() / resolved_run_id
-    if run.exists():
-        raise SystemExit(f"refusing to overwrite existing run: {run}")
-    for relative in list(_core.BASE_RUN_DIRS) + [
-        f"raw/{name}" for name in resolved["algorithms"]
-    ]:
-        (run / relative).mkdir(parents=True, exist_ok=False)
-    frozen = dict(resolved)
-    frozen.update(
-        run_id=resolved_run_id,
-        created_at=_core.now_iso(),
-        source_manifest=str(config),
-        source_manifest_schema_version=source["schema_version"],
-    )
-    (run / "manifest.json").write_text(
-        json.dumps(frozen, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    dataset = frozen["dataset"]
-    (run / "input" / "DATASET.txt").write_text(
-        f"dataset_id={dataset.get('dataset_id', '')}\n"
-        f"bag_dir={dataset['bag_dir']}\n"
-        f"sha256={dataset.get('sha256', '')}\n",
-        encoding="utf-8",
-    )
-    (run / "RUN_STATUS.md").write_text(
-        f"# Run {resolved_run_id}\n\n- status: initialized\n- created: {frozen['created_at']}\n"
-        "- bag analysis: pending\n- frontend runs: pending\n"
-        "- standardization: pending\n- report: pending\n",
-        encoding="utf-8",
-    )
-    return run
-
-
-def _cmd_init(args: argparse.Namespace) -> None:
-    print(_initialize_run(args.config.resolve(), args.run_id))
-
-
-# The public dispatcher is the supported entry point. Install the reusable helper
-# into the loaded historical core module so its parser retains the exact init CLI
-# surface while suite orchestration can use the same initialization implementation.
-_core.initialize_run = _initialize_run
-_core.cmd_init = _cmd_init
-
-
 def cmd_audit_trajectory_coverage(args: argparse.Namespace) -> int:
     run, manifest = _core.resolve_run(args.run)
     arguments = ["--run", str(run)]
