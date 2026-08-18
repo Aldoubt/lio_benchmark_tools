@@ -225,6 +225,15 @@ class SuiteCliContractTest(unittest.TestCase):
         load.assert_called_once_with(run.resolve())
         execute.assert_called_once()
 
+    def test_main_dispatches_suite_without_unhashable_slice(self) -> None:
+        module = load_cli()
+        self.require_interfaces(module)
+        parsed = SimpleNamespace(func=lambda _args: 7)
+        parser = SimpleNamespace(parse_args=lambda _argv: parsed)
+        with mock.patch.object(module, "build_parser", return_value=parser):
+            with mock.patch.object(module.sys, "argv", ["lio-benchmark", "suite", "status", "--run", "/tmp/run"]):
+                self.assertEqual(7, module.main())
+
 
 if __name__ == "__main__":
     unittest.main()
