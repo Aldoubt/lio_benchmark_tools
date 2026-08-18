@@ -193,17 +193,35 @@ def _identity_state(run: Path, stage: StageDefinition, phase: str) -> StageState
         return None
     try:
         payload = _load_object(path)
+        plan = _load_object(run / "metadata" / "suite" / "plan.json")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return _invalid(stage, str(exc), (path,))
     if payload.get("schema") != "lio_benchmark_suite_dataset_identity/v1":
         return _invalid(stage, "invalid suite dataset identity schema", (path,))
     if payload.get("phase") != phase:
         return _invalid(stage, "dataset identity phase mismatch", (path,))
+    plan_dataset = plan.get("dataset")
+    plan_expected = (
+        plan_dataset.get("expected_bag_content_sha256") if isinstance(plan_dataset, dict) else None
+    )
     if payload.get("status") == PASS:
         expected = payload.get("expected_bag_content_sha256")
         observed = payload.get("observed_bag_content_sha256")
         if not isinstance(expected, str) or observed != expected:
             return _invalid(stage, "PASS dataset identity record does not match expected hash", (path,))
+        if expected != plan_expected:
+            return _invalid(stage, "dataset identity expected hash does not match immutable suite plan", (path,))
+        if phase == "post":
+            pre_path = run / "metadata" / "suite" / "dataset_identity_pre.json"
+            try:
+                pre = _load_object(pre_path)
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                return _invalid(stage, f"post identity cannot validate pre evidence: {exc}", (path, pre_path))
+            pre_observed = pre.get("observed_bag_content_sha256")
+            if pre.get("status") != PASS or pre.get("expected_bag_content_sha256") != plan_expected:
+                return _invalid(stage, "post identity requires valid PASS pre identity bound to plan", (path, pre_path))
+            if payload.get("pre_observed_bag_content_sha256") != pre_observed or observed != pre_observed:
+                return _invalid(stage, "post identity does not match frozen pre observed hash", (path, pre_path))
         return _state(stage, PASS, artifacts=(path,))
     reason = str(payload.get("reason_code", FAIL_INPUT_MUTATION))
     return _state(stage, FAIL, reason=reason, detail="dataset identity gate failed", artifacts=(path,))
