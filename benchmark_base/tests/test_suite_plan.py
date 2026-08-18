@@ -80,10 +80,20 @@ class SuitePlanContractTest(unittest.TestCase):
             tuple(f"trajectory/{algorithm_id}" for algorithm_id in ALGORITHMS),
             by_id["audit/trajectory_timestamps"].dependencies,
         )
+        expected_summary_dependencies = (
+            tuple(f"runtime/{algorithm_id}" for algorithm_id in ALGORITHMS)
+            + tuple(f"trajectory/{algorithm_id}" for algorithm_id in ALGORITHMS)
+            + tuple(f"unified_map/{algorithm_id}" for algorithm_id in ALGORITHMS)
+            + (
+                "relative_se3",
+                "audit/trajectory_timestamps",
+                "audit/trajectory_frames",
+                "audit/runtime_provenance",
+                "audit/trajectory_coverage",
+            )
+        )
         self.assertEqual(
-            tuple(f"unified_map/{algorithm_id}" for algorithm_id in ALGORITHMS)
-            + ("relative_se3", "audit/trajectory_timestamps", "audit/trajectory_frames",
-               "audit/runtime_provenance", "audit/trajectory_coverage"),
+            expected_summary_dependencies,
             by_id["same_bag_summary"].dependencies,
         )
 
