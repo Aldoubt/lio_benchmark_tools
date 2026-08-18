@@ -7,19 +7,20 @@ Branch: `feat/lio-baseline-suite`
 
 `Benchmark Suite Orchestrator V1` turns the already-validated Same-Bag Mapping Benchmark V1 command chain into one auditable, resumable execution surface without changing the scientific meaning of any existing evaluator.
 
-The orchestrator is not a new benchmark algorithm and is not a replacement for the existing `lio-benchmark` commands. It is a coordination layer that:
+The orchestrator is a coordination layer, not a new benchmark algorithm. It must:
 
-1. freezes one immutable suite plan from one already-frozen experiment manifest;
-2. derives stage state from existing run artifacts and validators rather than trusting a mutable status database;
-3. executes only stages that are both dependency-ready and safe to execute;
-4. never re-executes an estimator after that estimator has established a run-local runtime identity;
-5. continues independent estimator attempts when another estimator fails;
-6. blocks all comparison-wide downstream stages when the frozen selected-algorithm set is no longer complete;
-7. preserves append-only operational lineage;
-8. supports stage-boundary interruption and safe resume;
-9. keeps estimator execution sequential in V1.
+1. freeze one immutable suite plan from one frozen experiment manifest;
+2. derive stage state from run artifacts and validators rather than a mutable status database;
+3. execute only dependency-ready stages that are safe to execute;
+4. never re-execute an estimator after that estimator has established a run-local runtime identity;
+5. continue independent estimator attempts when another estimator fails during the same invocation;
+6. never silently remove a failed/blocked algorithm from the frozen comparison set;
+7. block comparison-wide downstream stages when the frozen selected set cannot be completed;
+8. preserve append-only operational lineage;
+9. support stage-boundary interruption and safe resume;
+10. keep estimator and post-processing execution sequential in V1.
 
-The user-facing flow is:
+Public flow:
 
 ```bash
 lio-benchmark suite run \
@@ -33,17 +34,17 @@ lio-benchmark suite resume \
   --run /absolute/path/to/run
 ```
 
-`run` creates one new immutable benchmark run and executes the suite. `status` is read-only. `resume` re-derives all stage states from artifacts and executes only missing stages that are still safe to execute.
+`run` creates one new benchmark run and executes the suite. `status` is read-only. `resume` re-derives every stage from artifacts and executes only work that is both missing and safe.
 
 ## 2. Scope
 
-V1 supports exactly one suite profile:
+V1 supports exactly one profile:
 
 ```text
 SAME_BAG_MAPPING_V1
 ```
 
-The profile schedules the existing Same-Bag Mapping V1 capabilities for the algorithms frozen in the experiment manifest. Initial repository and target-machine acceptance use exactly:
+Initial repository and target-machine acceptance use exactly the algorithms frozen in the accepted three-algorithm profile:
 
 ```text
 fast_livo2
@@ -51,32 +52,27 @@ fast_lio2
 kiss_icp
 ```
 
-V1 does not add algorithm-specific behavior. A later adapter may participate only after it has independently passed its own adapter acceptance and the suite profile is explicitly revised in a later spec.
+The profile reuses the existing Same-Bag Mapping V1 stages. It does not add algorithm-specific behavior.
 
 ## 3. Non-goals
 
-V1 explicitly does not implement:
+V1 does not implement:
 
 - Point-LIO, DLIO, Leg-KILO, LIO-SAM, GLIM, Faster-LIO, SLICT, or any new adapter acceptance;
-- Representative Window selection or Representative Window gating inside the suite;
+- Representative Window selection/gating inside the suite;
 - Failure-Mode Audit automation;
-- estimator parallelism;
-- post-processing parallelism;
+- estimator or post-processing parallelism;
 - `--force`, `--overwrite`, `--skip`, `--jobs`, `--parallel`, `--ignore-failure`, or `--rerun-algorithm`;
-- dynamic algorithm selection at suite invocation time;
-- changing replay, calibration, topics, map reconstruction parameters, or trajectory tolerance after run creation;
+- invocation-time algorithm selection;
+- invocation-time replay/calibration/topic/map/tolerance overrides;
 - automatic deletion, repair, replacement, or overwriting of partial scientific artifacts;
-- automatic recovery of a `FAIL_ALGORITHM` estimator attempt inside the same run;
-- ground-truth accuracy metrics;
-- algorithm ranking;
-- report/demo/README generation;
-- multi-bag orchestration;
-- repeated-trial performance statistics;
-- a generic workflow engine for arbitrary user-defined DAGs.
+- retrying `FAIL_ALGORITHM` inside the same run;
+- GT metrics, algorithm ranking, report/demo/README generation, multi-bag orchestration, or repeated-trial statistics;
+- a generic workflow engine for arbitrary user DAGs.
 
 ## 4. Scientific boundary
 
-The orchestrator must preserve the scientific labels and contracts already accepted by Same-Bag Mapping Benchmark V1:
+The orchestrator preserves the accepted Same-Bag labels:
 
 ```text
 benchmark_profile = DEFAULT_ADAPTED
@@ -86,13 +82,11 @@ Unified Map policy = STRICT_COMMON_INTERSECTION
 Relative SE(3) = PAIRWISE_DISAGREEMENT
 ```
 
-KISS-ICP remains a LiDAR-only control. FAST-LIVO2 and FAST-LIO2 remain LiDAR+IMU methods. Orchestration must not describe the three algorithms as having identical modality.
+KISS-ICP remains a LiDAR-only control; FAST-LIVO2 and FAST-LIO2 remain LiDAR+IMU methods. Suite `PASS` means the frozen workflow and evidence contracts completed. It does not mean an estimator is accurate or superior.
 
-A suite `PASS` means the frozen workflow and its evidence contracts completed successfully. It does not mean any estimator is accurate or superior.
+Trajectory coverage remains descriptive. Coverage stage `PASS` means the audit produced valid evidence; no new hidden thresholds are introduced for output rate, gap count, first lag, end delta, or count ratio.
 
-Trajectory coverage remains descriptive evidence. A coverage audit `PASS` means the audit produced valid evidence; it does not impose a new quality threshold on rate, large-gap count, boundary lag, or count ratio.
-
-Raw trajectory frame audit and semantic frame compatibility remain distinct:
+Raw frame evidence and semantic frame compatibility remain distinct:
 
 ```text
 trajectory_frame_audit.csv status = AVAILABLE
@@ -100,33 +94,27 @@ runtime_provenance.csv status = MATCH
 runtime_provenance.csv frame_contract_status = MATCH
 ```
 
-The orchestrator must never require the raw frame-audit evidence-layer status to equal `MATCH`.
+The orchestrator must never require raw frame-audit `status == MATCH`.
 
 ## 5. Architectural principle: artifact-derived state
 
-The orchestrator must not use a mutable `state.json` as the source of truth.
-
-Authoritative state is derived from existing run artifacts plus their existing validators:
+There is no mutable authoritative `state.json`.
 
 ```text
-immutable/frozen artifact
-        +
-artifact validator
-        ↓
+run artifact(s)
+    +
+validator
+    ↓
 derived stage state
-        ↓
-orchestrator scheduling decision
+    ↓
+scheduler decision
 ```
 
-Operational events record what the orchestrator attempted, but events never override artifact truth.
+Append-only events record attempts and lineage but never override artifact truth. A `STAGE_FINISHED` event with return code `0` does not itself make a stage `PASS`.
 
-For example, an event saying that `runtime/fast_lio2` exited with return code `0` does not by itself make the stage `PASS`. The runtime stage is `PASS` only when the accepted runtime-status and runtime-identity artifacts satisfy the runtime validator.
+## 6. Modules and responsibilities
 
-Likewise, strict common-map state is derived from `common_matched_scans.csv`, `common_matched_metadata.json`, selected-scan evidence, standardized trajectory fingerprints, and the existing strict common-map validator.
-
-## 6. New modules and responsibilities
-
-The implementation should introduce four focused library modules:
+Create four focused modules:
 
 ```text
 benchmark_base/lib/
@@ -138,61 +126,43 @@ benchmark_base/lib/
 
 ### 6.1. `suite_plan.py`
 
-Responsibilities:
-
-- define `SAME_BAG_MAPPING_V1` stage IDs;
-- define deterministic dependencies and scheduling order;
-- build the immutable `plan.json` payload from the frozen run manifest;
-- validate the plan schema;
-- validate that the current run manifest still matches the plan fingerprint;
-- expose stage metadata and recovery policy to status/orchestrator code.
-
-It must not execute ROS, estimators, or evaluators.
+- defines the fixed V1 stage IDs, dependencies, recovery policies, and deterministic scheduling priority;
+- builds and validates immutable `plan.json`;
+- validates the current run manifest fingerprint against the plan;
+- contains no ROS/evaluator execution.
 
 ### 6.2. `suite_status.py`
 
-Responsibilities:
-
-- read the run manifest and suite plan;
-- inspect existing artifacts without modifying them;
-- invoke pure validators where available;
-- classify every stage as `PENDING`, `READY`, `RUNNING`, `PASS`, `BLOCKED`, or `FAIL`;
-- attach stable reason codes;
-- derive the overall suite state;
-- provide both structured and human-readable status views.
-
-It must be read-only.
+- reads plan/manifest/artifacts;
+- invokes pure validators where available;
+- classifies every stage as `PENDING`, `READY`, `RUNNING`, `PASS`, `BLOCKED`, or `FAIL`;
+- attaches stable reason codes and artifact references;
+- derives overall suite state;
+- is strictly read-only.
 
 ### 6.3. `suite_events.py`
 
-Responsibilities:
-
-- append one immutable event file per event;
-- allocate deterministic monotonically increasing event filenames while the suite executor holds the exclusive lock;
-- validate event schema;
-- read event lineage for diagnostics and active-stage display.
-
-Events are lineage, not source-of-truth state.
+- creates one immutable JSON event per event;
+- allocates monotonically increasing event filenames while the executor owns the lock;
+- validates event schema;
+- reads lineage for diagnostics/active-stage display;
+- never treats events as scientific truth.
 
 ### 6.4. `suite_orchestrator.py`
 
-Responsibilities:
-
-- acquire/release the suite execution lock;
-- create/validate the suite plan;
-- derive current state;
-- choose the next dependency-ready safe stage according to deterministic execution order;
-- delegate stage execution to existing public benchmark capabilities;
-- record append-only events;
-- implement the failure policy;
-- implement graceful stage-boundary stop on first SIGINT/SIGTERM;
-- stop once no further safe stage can execute or the suite is complete.
-
-It must not duplicate estimator, trajectory, map, Relative SE(3), audit, or summary algorithms.
+- acquires/releases suite lock;
+- creates/validates plan;
+- derives state;
+- selects the next safe stage by fixed priority;
+- delegates to existing benchmark commands/handlers;
+- records events;
+- applies failure/recovery policy;
+- implements stage-boundary graceful stop;
+- never reimplements estimator, trajectory, map, Relative SE(3), audit, or summary algorithms.
 
 ## 7. Run-local suite layout
 
-Every suite-managed run adds only:
+Suite-managed runs add:
 
 ```text
 metadata/suite/
@@ -203,25 +173,20 @@ metadata/suite/
 └── events/
     ├── 000001.json
     ├── 000002.json
-    ├── 000003.json
     └── ...
 ```
 
-`plan.json`, `dataset_identity_pre.json`, `dataset_identity_post.json`, and every event file are write-once.
+`plan.json`, both dataset-identity records, and every event file are write-once. `suite.lock` contents are never authoritative.
 
-`suite.lock` is only a lock inode/path. Its file contents are not authoritative evidence.
+## 8. Immutable plan contract
 
-No mutable suite-state database is created.
-
-## 8. Immutable suite plan contract
-
-The plan schema is:
+Schema:
 
 ```text
 lio_benchmark_suite_plan/v1
 ```
 
-Required top-level fields:
+Required shape includes:
 
 ```json
 {
@@ -237,11 +202,7 @@ Required top-level fields:
     "bag_dir": "/absolute/path/to/bag",
     "expected_bag_content_sha256": "..."
   },
-  "selected_algorithms": [
-    "fast_livo2",
-    "fast_lio2",
-    "kiss_icp"
-  ],
+  "selected_algorithms": ["fast_livo2", "fast_lio2", "kiss_icp"],
   "execution_policy": "SEQUENTIAL_ESTIMATORS",
   "failure_policy": "CONTINUE_INDEPENDENT_BLOCK_DEPENDENTS",
   "state_policy": "ARTIFACT_DERIVED",
@@ -251,84 +212,57 @@ Required top-level fields:
 }
 ```
 
-The exact selected algorithm order comes from the frozen resolved run manifest and is preserved.
+Selected-algorithm order is copied from the frozen resolved run manifest and never reordered. Stage graph and scheduling priority are materialized in `stages`.
 
-The plan freezes the absolute run directory, manifest SHA-256, dataset identity expectation, stage graph, and execution order. It must not be rewritten on resume.
-
-If `plan.json` already exists, `suite resume` validates it. A plan/manifest mismatch is terminal for that run:
+Plan overwrite is refused. On resume, current `manifest.json` must fingerprint exactly to `manifest_sha256`. Mismatch is terminal:
 
 ```text
-status = FAIL
-reason_code = FAIL_MANIFEST_MUTATION
+FAIL / FAIL_MANIFEST_MUTATION
 ```
 
-The user must create a new run rather than update the plan.
+A new run is required rather than editing the plan.
 
 ## 9. Dataset identity precondition
 
-P2 requires a frozen content identity for the source bag.
-
-The resolved dataset must contain a non-empty 64-hex-character SHA-256 in:
+The resolved dataset must carry a non-empty 64-hex SHA-256 at:
 
 ```text
 dataset.sha256
 ```
 
-For datasets produced by MID360 Bag Intake V1, this value is the content-based aggregate `bag_content_sha256` built from `metadata.yaml` plus ordered ROS 2 storage files.
+For MID360 Bag Intake V1 this is the aggregate `bag_content_sha256` over `metadata.yaml` plus ordered ROS 2 storage files.
 
-P2 does not require the dataset to originate specifically from `dataset_file`; a registry dataset is acceptable only if it carries the same valid frozen content hash contract.
+P2 does not require `dataset_file` specifically; a registry dataset is allowed only if it provides the same valid frozen content identity contract.
 
-A dataset with missing or malformed `dataset.sha256` is rejected before run execution:
+Missing/malformed identity blocks suite execution before estimator startup:
 
 ```text
-BLOCKED_INPUT_IDENTITY_UNAVAILABLE
+BLOCKED / BLOCKED_INPUT_IDENTITY_UNAVAILABLE
 ```
-
-No estimator may start without this identity.
 
 ## 10. Dataset identity gates
 
-The suite has two mandatory bag-byte identity gates.
+### 10.1. Pre-execution gate
 
-### 10.1. Pre-execution identity
-
-Before the first estimator is started, compute the current bag identity using the same content-identity semantics established by MID360 Bag Intake V1.
-
-Write once:
+After setup/preflight observations and before any estimator starts, recompute bag identity with the P1 content-identity helper and write once:
 
 ```text
 metadata/suite/dataset_identity_pre.json
 ```
 
-It records at minimum:
-
-```text
-expected_bag_content_sha256
-observed_bag_content_sha256
-storage file fingerprints
-metadata.yaml fingerprint
-captured_at
-status
-```
-
-It passes only when:
-
-```text
-observed == expected
-```
+Required evidence includes expected/observed aggregate SHA, metadata SHA, ordered storage-file fingerprints, capture time, and status.
 
 Mismatch is terminal:
 
 ```text
-status = FAIL
-reason_code = FAIL_INPUT_MUTATION
+FAIL / FAIL_INPUT_MUTATION
 ```
 
-No estimator runs.
+No estimator starts.
 
-### 10.2. Post-execution identity
+### 10.2. Post-execution gate
 
-The post identity is computed only after every selected runtime stage has reached a non-recheckable terminal runtime outcome:
+Post identity is computed only after every selected runtime is in a non-recheckable runtime terminal outcome:
 
 ```text
 PASS
@@ -336,7 +270,7 @@ or
 FAIL_ALGORITHM
 ```
 
-If any selected runtime remains `BLOCKED_ENVIRONMENT`, the post identity remains pending and downstream post-processing does not begin.
+If any selected runtime remains `BLOCKED_ENVIRONMENT`, post identity remains `PENDING`/`BLOCKED_DEPENDENCY`; no trajectory/map/comparison stage starts.
 
 Write once:
 
@@ -344,22 +278,13 @@ Write once:
 metadata/suite/dataset_identity_post.json
 ```
 
-It must equal both the plan expectation and the pre-execution identity.
+Observed post SHA must equal both plan expectation and pre-execution observed SHA. Mismatch is terminal `FAIL_INPUT_MUTATION` and all downstream stages become `BLOCKED_DEPENDENCY`.
 
-Any mismatch is terminal:
+V1 intentionally hashes the multi-gigabyte bag once before the estimator group and once after it, not before every sequential estimator.
 
-```text
-status = FAIL
-reason_code = FAIL_INPUT_MUTATION
-```
+## 11. Stage states
 
-All downstream standardization/comparison stages become `BLOCKED_DEPENDENCY`.
-
-V1 intentionally hashes the bag before the estimator group and after the estimator group rather than before every estimator. Estimators remain sequential, and the post gate detects any mutation during the execution interval without adding a full multi-gigabyte hash pass before each algorithm.
-
-## 11. Stage state vocabulary
-
-Every stage has exactly one top-level state:
+Exactly:
 
 ```text
 PENDING
@@ -370,16 +295,14 @@ BLOCKED
 FAIL
 ```
 
-Meaning:
+- `PENDING`: required PASS dependencies are not complete and none has failed/blocked the stage;
+- `READY`: required PASS dependencies are satisfied, required operational gates allow execution, and no conflicting owned artifact exists;
+- `RUNNING`: an executor currently owns the lock and its active invocation identifies this stage as started without a terminal stage event;
+- `PASS`: owned authoritative artifacts exist and validate;
+- `BLOCKED`: stage itself is not terminal-failed, but execution is currently disallowed;
+- `FAIL`: terminal contract violation or non-retryable failed attempt.
 
-- `PENDING`: required dependencies have not yet passed and no dependency has failed/blocked;
-- `READY`: all dependencies required for this stage have passed, no conflicting artifact exists, and execution is safe;
-- `RUNNING`: the suite lock is currently held by an executor and append-only events identify this stage as the active stage;
-- `PASS`: authoritative artifacts exist and satisfy the stage validator;
-- `BLOCKED`: execution is currently not allowed, but the stage itself has not produced a terminal failure artifact;
-- `FAIL`: the run contains a terminal contract violation or a non-retryable failed attempt for this stage.
-
-Every `BLOCKED` or `FAIL` state includes a stable `reason_code`.
+Every BLOCKED/FAIL includes a stable reason code.
 
 ## 12. Reason codes
 
@@ -400,95 +323,64 @@ FAIL_ARTIFACT_STALE
 FAIL_COMMAND
 ```
 
-A stage validator may include a human-readable `detail`, but machine acceptance must key off the stable reason code.
+Human-readable detail may accompany a code but machine acceptance keys off the code.
 
-## 13. Recovery policy classes
-
-Each stage declares one of three recovery policies.
+## 13. Recovery policies
 
 ### 13.1. `REUSABLE_IF_VALID`
 
-Used for deterministic post-processing/scientific artifact stages.
+For deterministic post-processing/scientific outputs:
 
-Rules:
+```text
+complete + valid       -> PASS, never rerun
+all owned absent       -> READY when dependencies permit
+partial                -> FAIL_PARTIAL_ARTIFACT
+complete but invalid   -> FAIL_ARTIFACT_INVALID
+complete but stale     -> FAIL_ARTIFACT_STALE
+```
 
-- complete + valid artifact -> `PASS`, never rerun;
-- no artifact -> `READY` when dependencies pass;
-- partial artifact -> `FAIL_PARTIAL_ARTIFACT`;
-- complete but invalid/stale artifact -> `FAIL_ARTIFACT_INVALID` or `FAIL_ARTIFACT_STALE`;
-- V1 never auto-deletes or overwrites these artifacts.
+No automatic deletion or overwrite.
 
 ### 13.2. `RECHECKABLE_BEFORE_RUNTIME`
 
-Used only for preflight/environment observations.
+Only for per-algorithm preflight/environment observations. `BLOCKED_ENVIRONMENT` may be re-evaluated on `resume` only while that algorithm has no runtime identity.
 
-A preflight that is blocked because the target environment is temporarily unavailable may be re-evaluated on a later `suite resume` provided no runtime identity exists for that algorithm.
-
-The latest preflight JSON may be refreshed by the existing preflight machinery. Every orchestrator attempt remains preserved in append-only suite events.
-
-This is an explicit exception to the write-once scientific artifact policy because preflight is an operational environment observation, not estimator output.
+The existing preflight JSON may be refreshed because it is an operational environment observation, not scientific output. Every attempt is preserved in append-only suite events.
 
 ### 13.3. `SINGLE_RUNTIME_ATTEMPT`
 
-Used for each estimator runtime.
-
-Once `metadata/algorithms/<algorithm>/runtime_identity.json` exists, that estimator is never started again inside the same run.
-
-Possible outcomes:
+For estimator runtime stages. Once:
 
 ```text
-runtime identity absent + environment currently runnable -> READY
-runtime identity absent + BLOCKED_ENVIRONMENT -> BLOCKED, resume allowed
-runtime identity exists + run status PASS -> PASS
-runtime identity exists + run status FAIL_ALGORITHM -> FAIL
-runtime identity exists + inconsistent/missing run status -> FAIL_ARTIFACT_INVALID
+metadata/algorithms/<alg>/runtime_identity.json
 ```
 
-A `FAIL_ALGORITHM` is terminal for the run. Retrying that estimator requires a new run ID.
+exists, that estimator is never launched again in that run.
 
-## 14. Stage IDs
+```text
+identity absent + runnable environment       -> READY
+identity absent + BLOCKED_ENVIRONMENT        -> BLOCKED, recheckable
+identity exists + run status PASS            -> PASS
+identity exists + run status FAIL_ALGORITHM  -> FAIL
+identity exists + missing/inconsistent status-> FAIL_ARTIFACT_INVALID
+```
 
-V1 stage IDs are fixed.
+Retrying `FAIL_ALGORITHM` requires a new run ID.
 
-Run-global setup/input stages:
+## 14. Fixed stage IDs
 
 ```text
 snapshot
 analyze_bag
-dataset_identity/pre
-```
-
-Per-algorithm operational/runtime stages, expanded in frozen selected-algorithm order:
-
-```text
 preflight/<algorithm_id>
+dataset_identity/pre
 runtime/<algorithm_id>
-```
-
-Run-global post-runtime identity:
-
-```text
 dataset_identity/post
-```
-
-Per-algorithm trajectory stages:
-
-```text
 trajectory/<algorithm_id>
-```
-
-Global audit stages:
-
-```text
 audit/trajectory_timestamps
 audit/trajectory_frames
 audit/runtime_provenance
 audit/trajectory_coverage
-```
-
-Map/comparison stages:
-
-```text
 scan_manifest
 common_map_manifest
 unified_map/<algorithm_id>
@@ -496,57 +388,55 @@ relative_se3
 same_bag_summary
 ```
 
-The overall suite state is derived and is not a write-once stage artifact.
+Overall suite state is derived and is not a stored stage artifact.
 
-## 15. Stage dependency graph
+## 15. Dependencies and operational gates
 
-Dependencies are deterministic.
-
-### 15.1. Setup
+### 15.1. Setup and preflight
 
 ```text
-snapshot                 <- plan
-analyze_bag              <- plan
-preflight/<alg>          <- snapshot + analyze_bag
+snapshot                <- plan
+analyze_bag             <- plan
+preflight/<alg>         <- snapshot + analyze_bag
 
-dataset_identity/pre     <- snapshot + analyze_bag + all preflight stages not terminal-failed
+dataset_identity/pre    <- snapshot + analyze_bag
 ```
 
-Preflight may run for every selected algorithm even if another algorithm is blocked.
+The pre-identity stage is logically safe once snapshot/analyze-bag pass, but fixed scheduling priority (Section 16) attempts every selected preflight first. This avoids an ambiguous dependency on a recoverably blocked preflight while still ensuring the operator sees the full preflight set before runtime execution.
 
-The pre-identity gate must pass before any runtime starts.
+Preflight-group operational rule before runtimes:
+
+- every selected preflight must have been attempted in the current/latest usable environment;
+- an individual runtime is eligible only if its own preflight is PASS;
+- `BLOCKED_ENVIRONMENT` on one algorithm does not invalidate pre-identity and does not prevent other PASS-preflight algorithms from being attempted in the same invocation;
+- a terminal preflight contract failure is a suite terminal failure.
 
 ### 15.2. Runtime group
 
 ```text
-runtime/<alg>            <- dataset_identity/pre + preflight/<alg>
+runtime/<alg> <- dataset_identity/pre PASS + preflight/<alg> PASS
 ```
 
-Runtime stages are independent with respect to algorithm outcome but executed sequentially in frozen algorithm order.
+Runtime stages are independent in outcome but execute sequentially in frozen algorithm order. A `FAIL_ALGORITHM` does not stop later independently READY estimator runtimes in the same invocation.
 
-A `FAIL_ALGORITHM` does not prevent later independent estimator runtimes in the same invocation from being attempted.
-
-`BLOCKED_ENVIRONMENT` for one algorithm does not prevent already-ready independent estimator runtimes for other algorithms from being attempted. However, post-runtime processing does not begin until all selected runtimes are non-recheckable terminal outcomes.
-
-### 15.3. Post-runtime input identity
+### 15.3. Post-runtime identity
 
 ```text
-dataset_identity/post    <- all selected runtime stages terminal as PASS or FAIL_ALGORITHM
+dataset_identity/post
+  operational gate: every selected runtime is PASS or FAIL_ALGORITHM
 ```
 
-The identity stage may still run when one runtime has `FAIL_ALGORITHM`; it records whether the bag remained immutable during the attempted estimator group.
+It may run even if one runtime failed, to preserve evidence that the source bag remained immutable during the attempted estimator group. It must not run while any runtime remains recoverably `BLOCKED_ENVIRONMENT`.
 
-### 15.4. Trajectory standardization
+### 15.4. Trajectories
 
 ```text
-trajectory/<alg>         <- dataset_identity/post + runtime/<alg> PASS
+trajectory/<alg> <- dataset_identity/post PASS + runtime/<alg> PASS
 ```
 
-A failed selected estimator therefore prevents a complete all-algorithm trajectory set.
+A failed selected runtime therefore prevents a complete all-algorithm trajectory set.
 
 ### 15.5. Global audits
-
-Formal global audits require all selected standardized trajectories:
 
 ```text
 audit/trajectory_timestamps <- all trajectory/<alg> PASS
@@ -558,54 +448,47 @@ audit/runtime_provenance    <- all runtime/<alg> PASS
                               + audit/trajectory_frames PASS
 ```
 
-The audit validators preserve existing evidence-layer semantics.
-
-### 15.6. Scan/map comparison
+### 15.6. Map/comparison
 
 ```text
-scan_manifest           <- all trajectory/<alg> PASS
-                           + dataset_identity/post PASS
+scan_manifest       <- all trajectory/<alg> PASS
+                       + dataset_identity/post PASS
 
-common_map_manifest     <- scan_manifest PASS
-                           + all trajectory/<alg> PASS
+common_map_manifest <- scan_manifest PASS
+                       + all trajectory/<alg> PASS
 
-unified_map/<alg>       <- common_map_manifest PASS
-                           + trajectory/<alg> PASS
+unified_map/<alg>   <- common_map_manifest PASS
+                       + trajectory/<alg> PASS
 ```
-
-Every Unified Map consumes the same strict common intersection.
 
 ### 15.7. Relative SE(3)
 
 Logical dependencies:
 
 ```text
-relative_se3            <- all trajectory/<alg> PASS
-                           + audit/trajectory_timestamps PASS
-                           + audit/trajectory_frames PASS
-                           + audit/runtime_provenance PASS
+relative_se3 <- all trajectory/<alg> PASS
+                + audit/trajectory_timestamps PASS
+                + audit/trajectory_frames PASS
+                + audit/runtime_provenance PASS
 ```
 
-Relative SE(3) does not logically depend on Unified Maps, but the V1 deterministic scheduler executes it after all Unified Maps to preserve the established Same-Bag clean-run ordering.
+It is logically independent of Unified Maps, but V1 scheduler executes it after all Unified Maps to preserve accepted clean-run ordering.
 
 ### 15.8. Summary
 
 ```text
-same_bag_summary        <- all runtime/<alg> PASS
-                           + all trajectory/<alg> PASS
-                           + all unified_map/<alg> PASS
-                           + relative_se3 PASS
-                           + audit/trajectory_timestamps PASS
-                           + audit/trajectory_frames PASS
-                           + audit/runtime_provenance PASS
-                           + audit/trajectory_coverage PASS
+same_bag_summary <- all runtime/<alg> PASS
+                    + all trajectory/<alg> PASS
+                    + all unified_map/<alg> PASS
+                    + relative_se3 PASS
+                    + all four global audits PASS
 ```
 
-The existing `same_bag_summary.py` readiness gate remains authoritative for runtime identity, runtime performance, strict Unified Map policy/counts, and trajectory availability. The orchestrator must not copy or weaken that readiness logic.
+The existing Same-Bag summary readiness gate remains authoritative for runtime identity, performance evidence, trajectory availability, strict-map policy/counts, and point count. P2 does not duplicate or weaken it.
 
-## 16. Deterministic V1 scheduling order
+## 16. Deterministic scheduling priority
 
-The dependency graph and scheduling order are separate concepts. V1 remains sequential and uses exactly this priority order when multiple stages are `READY`:
+When multiple stages are executable, V1 selects exactly in this order:
 
 ```text
 1. snapshot
@@ -626,129 +509,122 @@ The dependency graph and scheduling order are separate concepts. V1 remains sequ
 16. same_bag_summary
 ```
 
-V1 does not execute two stages concurrently.
+There is no concurrent execution in V1.
 
-## 17. Failure policy
+## 17. Stage artifact ownership and validators
 
-The suite policy is frozen as:
+The orchestrator must know which outputs belong to each stage before deciding that a missing/partial/valid state exists. Compatibility aliases/symlinks may be validated additionally but are not allowed to replace the canonical owned artifacts below.
+
+### 17.1. Setup/runtime/trajectory
+
+| Stage | Canonical owned artifacts | Minimum PASS contract |
+|---|---|---|
+| `snapshot` | `metadata/environment_snapshot.json` | valid JSON object produced for this run; do not rewrite on resume |
+| `analyze_bag` | `metrics/bag_analysis.json` | valid existing bag-analysis schema/evidence |
+| `preflight/<alg>` | `metadata/algorithms/<alg>/preflight.json` | current preflight says runnable/PASS; `BLOCKED_ENVIRONMENT` is recheckable only without runtime identity |
+| `dataset_identity/pre` | `metadata/suite/dataset_identity_pre.json` | expected SHA == observed SHA and storage/metadata fingerprints validate |
+| `runtime/<alg>` | `metadata/algorithms/<alg>/runtime_identity.json`, `metadata/run_<alg>.json`, `metrics/runtime/<alg>.json` | identity `FROZEN`, run status `PASS`, performance evidence valid; raw output remains available to trajectory stage |
+| `dataset_identity/post` | `metadata/suite/dataset_identity_post.json` | observed SHA == plan expected SHA == pre observed SHA |
+| `trajectory/<alg>` | `standardized/trajectories/<alg>.csv`, `metadata/algorithms/<alg>/trajectory_standardization.json` | trajectory parses under existing strict trajectory contract; metadata matches alg/output/sample semantics |
+
+For runtime, the presence of runtime identity plus a missing/inconsistent run-status or performance artifact is not `READY`; it is terminal invalid evidence because estimator relaunch is forbidden.
+
+### 17.2. Audit artifacts
+
+| Stage | Canonical owned artifacts | Minimum PASS contract |
+|---|---|---|
+| `audit/trajectory_timestamps` | `metrics/trajectory_timestamp_audit/<alg>.csv` + `metadata/trajectory_timestamp_audit/<alg>.json` for every selected algorithm | complete selected set, valid audit schema, no timestamp-regression contract violation; do not turn descriptive cadence into a quality threshold |
+| `audit/trajectory_frames` | `metadata/frame_audit/<alg>.json` for every selected algorithm + `metrics/trajectory_frame_audit.csv` | raw evidence available for complete selected set; evidence-layer `AVAILABLE` is valid |
+| `audit/runtime_provenance` | `metadata/runtime_provenance/<alg>.json` for every selected algorithm + `metrics/runtime_provenance.csv` | complete selected set; each formal row `status=MATCH`, `frame_contract_status=MATCH`, runtime identity evidence frozen/matched |
+| `audit/trajectory_coverage` | `metadata/trajectory_coverage/<alg>.json` for every selected algorithm + `metrics/trajectory_coverage.csv` | complete selected set and valid descriptive evidence; no hidden gap/rate threshold |
+
+If a global audit command creates only part of its owned selected-algorithm set, the stage is `FAIL_PARTIAL_ARTIFACT`; V1 does not rerun it over the partial outputs.
+
+### 17.3. Scan/map/comparison/summary artifacts
+
+| Stage | Canonical owned artifacts | Minimum PASS contract |
+|---|---|---|
+| `scan_manifest` | `standardized/map_sampling/selected_scans.csv`, `standardized/map_sampling/metadata.json` | non-empty deterministic selection; metadata agrees with frozen replay/topic/scan step |
+| `common_map_manifest` | `standardized/map_sampling/common_matched_scans.csv`, `standardized/map_sampling/common_matched_metadata.json` | existing strict common-map validator passes all selected-trajectory and selected-scan fingerprints |
+| `unified_map/<alg>` | `standardized/maps/<alg>/unified/map.ply`, `standardized/maps/<alg>/unified/metadata.json` | strict common-manifest SHA matches; policy `STRICT_COMMON_INTERSECTION`; selected>0; matched=selected; unmatched=0; point_count>0 |
+| `relative_se3` | `metrics/relative_se3/metadata.json`, `normalized_motion.csv`, `pairwise_samples.csv`, `pairwise_summary.csv`, `onset_thresholds.csv` | output dir complete; requested/eligible algorithms equal frozen selected set; blocked set empty; terminology remains `PAIRWISE_DISAGREEMENT`; ground truth `NONE` |
+| `same_bag_summary` | `reports/algorithm_io_matrix.csv`, `reports/algorithm_io_matrix.md`, `metrics/runtime_performance.csv`, `reports/same_bag_mapping_v1.json` | complete canonical package and existing readiness contract PASS |
+
+`same-bag-finalize` is not a normal P2 stage. It remains a specific append-only recovery tool for the already-documented historical premature-summary incident.
+
+## 18. Failure policy
+
+Frozen policy:
 
 ```text
 CONTINUE_INDEPENDENT_BLOCK_DEPENDENTS
 ```
 
-### 17.1. Estimator failure
+### 18.1. Runtime failure
 
-Example:
-
-```text
-runtime/fast_livo2 = PASS
-runtime/fast_lio2  = FAIL_ALGORITHM
-runtime/kiss_icp   = not yet attempted
-```
-
-The same invocation still attempts `runtime/kiss_icp` if it is independently `READY`.
-
-If the final runtime outcomes are:
+If:
 
 ```text
-fast_livo2 = PASS
-fast_lio2  = FAIL
-kiss_icp   = PASS
+fast_livo2 PASS
+fast_lio2  FAIL_ALGORITHM
+kiss_icp   not yet attempted
 ```
 
-then all comparison-wide stages that require the frozen complete algorithm set become:
+then the same invocation still attempts KISS-ICP if it is READY. The frozen selected set remains all three algorithms.
+
+After terminal outcomes such as:
 
 ```text
-BLOCKED
-reason_code = BLOCKED_DEPENDENCY
+fast_livo2 PASS
+fast_lio2  FAIL
+kiss_icp   PASS
 ```
 
-The selected algorithm set is never silently reduced to the two surviving algorithms.
+comparison-wide downstream stages are `BLOCKED_DEPENDENCY`, and overall suite is `FAIL`.
 
-The overall suite is `FAIL` because at least one terminal stage failed.
+### 18.2. Recoverable environment block
 
-### 17.2. Environment block
+`BLOCKED_ENVIRONMENT` without runtime identity may be rechecked later. Other independently READY estimator runtimes may execute in the same invocation, but no post-runtime processing begins until every runtime is PASS or FAIL_ALGORITHM.
 
-If an algorithm is `BLOCKED_ENVIRONMENT` and no runtime identity exists for it, other independent ready runtimes may execute. Post-runtime processing does not begin while any selected runtime remains recheckably blocked.
+If there is no terminal failure, overall suite is `BLOCKED` and may be resumed after the environment is repaired.
 
-If no terminal failure exists, the overall suite is `BLOCKED` and may later be resumed after the environment is repaired.
+### 18.3. Later resume after terminal failure
 
-### 17.3. Terminal fail and later resume
+Once a previous invocation has closed with a terminal `FAIL_ALGORITHM`, `FAIL_INPUT_MUTATION`, `FAIL_MANIFEST_MUTATION`, partial/stale/invalid artifact failure, or another terminal contract failure, later `suite resume` executes zero new stages and requires a new run.
 
-If the suite already contains a terminal `FAIL_ALGORITHM`, `FAIL_INPUT_MUTATION`, `FAIL_MANIFEST_MUTATION`, partial artifact failure, stale artifact failure, or other terminal contract failure, `suite resume` must not start new work. It reports the derived failure and requires a new run.
+The continue-independent policy applies during the invocation that first observes the failure; it does not authorize new experimental execution after a failed run has already been revisited later.
 
-The policy to continue independent estimators applies within the invocation in which the terminal runtime failure is first observed; it is not a license to add more experimental execution after a failed run has already been closed and later revisited.
+## 19. No-overwrite rule
 
-## 18. Artifact validation and no-overwrite rules
-
-For every `REUSABLE_IF_VALID` stage:
+For every `REUSABLE_IF_VALID` stage, status is determined from the complete owned-artifact set in Section 17.
 
 ```text
-complete + valid       -> PASS / skip
-all expected absent    -> READY when dependencies pass
-partial                -> FAIL_PARTIAL_ARTIFACT
-complete but invalid   -> FAIL_ARTIFACT_INVALID
-complete but stale     -> FAIL_ARTIFACT_STALE
+complete + valid     -> PASS / skip
+all owned absent     -> READY when dependencies/gates allow
+some owned exist     -> FAIL_PARTIAL_ARTIFACT
+complete but invalid -> FAIL_ARTIFACT_INVALID
+complete but stale   -> FAIL_ARTIFACT_STALE
 ```
 
-The orchestrator must not call a stage command when any output owned by that stage already exists but the stage validator cannot prove the complete valid contract.
+The orchestrator never invokes a stage command if any canonical artifact owned by that stage already exists but the validator cannot prove a complete accepted contract.
 
-This prevents an existing evaluator that normally writes directly to a path from overwriting historical evidence during `resume`.
+This rule is especially important for current evaluators that can otherwise write directly to fixed output paths.
 
-### 18.1. Unified Map validator
+## 20. Runtime identity invariant
 
-At minimum, each Unified Map stage requires:
+> Once an estimator runtime identity exists in a run, P2 never launches that estimator again in that run.
 
-```text
-standardized/maps/<alg>/unified/map.ply
-standardized/maps/<alg>/unified/metadata.json
-```
+If identity exists but associated status/evidence is inconsistent, the runtime stage fails closed. It is never repaired by estimator re-execution.
 
-and validates:
+## 21. Append-only event ledger
 
-```text
-scan_set_policy == STRICT_COMMON_INTERSECTION
-common manifest SHA matches validated common-map evidence
-selected_scan_count > 0
-matched_scan_count == selected_scan_count
-unmatched_scan_count == 0
-point_count > 0
-trajectory/common-scan fingerprints remain valid
-```
-
-If `map.ply` exists without metadata, or metadata exists without the map, the stage is terminal `FAIL_PARTIAL_ARTIFACT`. V1 does not regenerate over the partial artifact.
-
-### 18.2. Canonical summary
-
-If canonical summary outputs already exist, the stage validator either proves them to be the complete accepted canonical package or fails closed. V1 orchestrator does not automatically invoke historical append-only finalization logic as a normal clean-run recovery mechanism.
-
-`same-bag-finalize` remains a specific recovery tool for the already-documented historical premature-summary incident, not a general suite stage.
-
-## 19. Runtime identity rule
-
-The strongest resume invariant is:
-
-> Once an estimator runtime identity exists in a run, the orchestrator never launches that estimator again in that run.
-
-The runtime identity remains:
-
-```text
-metadata/algorithms/<algorithm>/runtime_identity.json
-```
-
-The existing execution contract already treats this artifact as write-once. P2 must preserve that contract.
-
-If a runtime identity exists but the associated run-status artifact is missing or inconsistent, the stage is not retried. It is `FAIL_ARTIFACT_INVALID` and requires a new run.
-
-## 20. Append-only event ledger
-
-Event directory:
+Directory:
 
 ```text
 metadata/suite/events/
 ```
 
-Event filenames are six-digit monotonically increasing integers:
+Filenames:
 
 ```text
 000001.json
@@ -756,15 +632,13 @@ Event filenames are six-digit monotonically increasing integers:
 ...
 ```
 
-Each event is created with exclusive-create semantics and never replaced.
-
-Event schema:
+Schema:
 
 ```text
 lio_benchmark_suite_event/v1
 ```
 
-Required fields:
+Required fields include:
 
 ```json
 {
@@ -794,71 +668,62 @@ SUITE_STOP_REQUESTED
 SUITE_INVOCATION_FINISHED
 ```
 
-Events may include diagnostic fields such as child process PID or detail text, but those fields are not used as artifact-truth state.
+Files use exclusive-create semantics and are never overwritten. Events are lineage only.
 
-## 21. Exclusive executor lock
+## 22. Exclusive executor lock
 
-The lock path is:
+Path:
 
 ```text
 metadata/suite/suite.lock
 ```
 
-Executor commands (`suite run` after initialization and `suite resume`) acquire:
+Executor commands acquire:
 
 ```text
 fcntl.flock(LOCK_EX | LOCK_NB)
 ```
 
-Only one executor may act on a suite-managed run at a time.
-
-If lock acquisition fails:
+A second executor performs no work and reports:
 
 ```text
-status = BLOCKED
-reason_code = BLOCKED_EXECUTOR_LOCKED
+BLOCKED / BLOCKED_EXECUTOR_LOCKED
 ```
 
-The process does not execute any stage.
+Kernel lock ownership, not lock-file existence, defines active execution. Process crash releases the lock automatically.
 
-The lock is kernel-owned. If the executor process exits or crashes, the lock is released automatically. The file's existence alone never means the suite is running.
+`status` never acquires the exclusive executor lock and never creates a lock file. It may open an already-existing lock file without creation and perform a non-mutating/nonblocking probe to detect another owner.
 
-`suite status` never acquires the exclusive lock and never writes to the run. It may attempt a nonblocking lock probe only to determine whether another process currently holds the executor lock.
+## 23. RUNNING derivation
 
-## 22. `RUNNING` derivation
+A historical unmatched `STAGE_STARTED` event is not enough.
 
-A stale unmatched `STAGE_STARTED` event does not imply `RUNNING`.
+A stage is RUNNING only if:
 
-A stage is `RUNNING` only when both are true:
+1. another executor currently owns the suite lock; and
+2. the latest active invocation identifies that stage as started without terminal stage event.
 
-1. another executor currently holds the suite lock;
-2. the latest active invocation contains a `STAGE_STARTED` event for that stage without a corresponding terminal stage event.
+After executor crash/lock release, status falls back to artifact-derived state; unmatched events remain lineage only.
 
-If the executor crashed and released the lock, status is re-derived from artifacts. The unmatched historical event remains lineage but does not create a permanent `RUNNING` state.
+## 24. Graceful interruption
 
-## 23. Graceful interruption contract
+First SIGINT/SIGTERM requests stage-boundary stop:
 
-The first SIGINT or SIGTERM received by the suite executor requests a stage-boundary stop.
+1. set a stop-request flag and preserve a `SUITE_STOP_REQUESTED` event (the handler may defer file I/O until safe Python control returns);
+2. do not start another stage;
+3. allow currently active child stage to finish normally;
+4. validate/record that stage result;
+5. append `SUITE_INVOCATION_FINISHED` with `INTERRUPTED_AT_STAGE_BOUNDARY`;
+6. release lock;
+7. exit `130` for SIGINT or `143` for SIGTERM.
 
-Rules:
+V1 prioritizes artifact integrity over immediate termination. Ctrl-C during a long estimator means “finish this estimator attempt, then stop,” not “kill it halfway and leave ambiguous execution evidence.”
 
-1. record `SUITE_STOP_REQUESTED` append-only;
-2. do not start another stage after the current stage finishes;
-3. allow the currently active child stage to finish normally so it either produces a complete valid artifact or a normal stage failure;
-4. record the resulting stage event;
-5. record `SUITE_INVOCATION_FINISHED` with `outcome=INTERRUPTED_AT_STAGE_BOUNDARY`;
-6. release the lock;
-7. exit with code `130` for SIGINT or `143` for SIGTERM.
+`SIGKILL`, power loss, and kernel crash cannot be stage-boundary safe. Next `status/resume` validates whatever artifacts remain; partial/inconsistent evidence fails closed under Section 19.
 
-V1 intentionally prioritizes artifact integrity over immediate termination. A Ctrl-C received during a long estimator requests stop after that estimator attempt completes; it does not kill the estimator halfway through and leave ambiguous partial runtime evidence.
+## 25. CLI contract
 
-A later `suite resume` re-derives state and continues from the next safe stage.
-
-Hard process termination (`SIGKILL`, power loss, kernel crash) cannot be made stage-boundary safe. On the next `status`/`resume`, existing artifacts are validated. Partial or inconsistent artifacts fail closed according to Section 18.
-
-## 24. CLI contract
-
-### 24.1. `suite run`
+### 25.1. `suite run`
 
 ```bash
 lio-benchmark suite run \
@@ -866,81 +731,75 @@ lio-benchmark suite run \
   --run-id <new-run-id>
 ```
 
-Required behavior:
+It must:
 
-- validate config with existing manifest validation;
-- require frozen dataset content SHA;
+- validate config through existing manifest validation;
+- require frozen dataset SHA;
 - refuse an existing run directory;
-- initialize the run using existing run-manifest semantics;
-- create `metadata/suite/plan.json` exactly once;
-- acquire suite lock;
+- initialize using existing run-manifest semantics;
+- create plan once;
+- acquire lock;
 - execute until PASS, recoverable BLOCKED, terminal FAIL, or graceful interruption;
-- print the run path and final derived suite state.
+- print run path and derived final state.
 
-No algorithm/replay/calibration override flags are accepted.
+No algorithm/replay/calibration overrides are accepted.
 
-If run initialization succeeds but plan creation itself fails before any stage starts, the run is not adopted or repaired by V1. The command fails closed and the user creates a new run ID.
+If run initialization succeeds but plan creation fails before any stage starts, V1 does not adopt/repair that run; use a new run ID.
 
-### 24.2. `suite status`
+### 25.2. `suite status`
 
 ```bash
 lio-benchmark suite status --run <run>
+lio-benchmark suite status --run <run> --json
 ```
 
-Optional output-format flag:
+It is strictly read-only: no directories/events/preflight refresh/repair/ROS/subprocess stages. A run without `metadata/suite/plan.json` fails as “not a suite-managed run”; V1 does not adopt historical runs.
 
-```bash
---json
-```
+JSON status exposes stage ID, state, reason code, dependencies, recovery policy, and artifact references.
 
-Status is strictly read-only. It must not:
-
-- create directories;
-- create events;
-- refresh preflight;
-- validate by mutating outputs;
-- repair artifacts;
-- acquire the exclusive executor lock;
-- run ROS;
-- execute subprocess stages.
-
-If the run has no suite plan, status fails with a clear "not a suite-managed run" error rather than attempting to adopt a historical run.
-
-### 24.3. `suite resume`
+### 25.3. `suite resume`
 
 ```bash
 lio-benchmark suite resume --run <run>
 ```
 
-Behavior:
+It must:
 
-- require existing immutable plan;
-- validate plan/manifest fingerprint;
-- acquire exclusive lock;
-- re-derive all stage states from artifacts;
-- if overall suite already `PASS`, execute zero stages and return success;
-- if any terminal `FAIL` already exists, execute zero stages and report that failure;
-- otherwise execute only `READY` stages according to deterministic order;
-- never rerun an estimator with existing runtime identity;
-- preserve all previous events/artifacts.
+- require/validate immutable plan and manifest SHA;
+- acquire lock;
+- re-derive all stages;
+- execute zero stages when suite already PASS;
+- execute zero stages when a previous invocation already left terminal FAIL;
+- otherwise execute only READY stages by Section 16;
+- never rerun an estimator with runtime identity;
+- preserve all prior artifacts/events.
 
-## 25. CLI exit codes
+## 26. Exit codes
 
-Executor commands use:
+Executor commands:
 
 ```text
-0   = suite PASS (including already-complete PASS with zero execution)
-1   = terminal suite FAIL
-2   = recoverable suite BLOCKED
-130 = SIGINT graceful stage-boundary interruption
-143 = SIGTERM graceful stage-boundary interruption
+0   PASS, including already-complete PASS with zero stage execution
+1   terminal FAIL
+2   recoverable BLOCKED
+130 SIGINT stage-boundary interruption
+143 SIGTERM stage-boundary interruption
 ```
 
-`suite status` returns `0` when inspection itself succeeds regardless of whether the derived suite state is PASS/BLOCKED/FAIL. Machine consumers use `--json` to read the state.
+`status` returns `0` if inspection itself succeeds regardless of derived suite state; machine consumers use `--json`.
 
-## 26. Human-readable status view
+## 27. Overall suite-state priority
 
-Example:
+1. any terminal stage FAIL -> overall `FAIL`;
+2. else active external executor lock -> `RUNNING`;
+3. else all required stages PASS -> `PASS`;
+4. else any recoverable blocking condition -> `BLOCKED`;
+5. else at least one stage READY -> `READY`;
+6. else `PENDING`.
+
+`BLOCKED_DEPENDENCY` caused by an upstream terminal failure coexists with that upstream FAIL, so overall remains FAIL.
+
+## 28. Human-readable status example
 
 ```text
 Benchmark Suite
@@ -953,27 +812,21 @@ Stage                                      Status
 ────────────────────────────────────────────────────────
 snapshot                                   PASS
 analyze_bag                                PASS
-dataset_identity/pre                       PASS
-
 preflight/fast_livo2                       PASS
 preflight/fast_lio2                        PASS
 preflight/kiss_icp                         PASS
-
+dataset_identity/pre                       PASS
 runtime/fast_livo2                         PASS
 runtime/fast_lio2                          PASS
 runtime/kiss_icp                           PASS
-
 dataset_identity/post                      PASS
-
 trajectory/fast_livo2                      PASS
 trajectory/fast_lio2                       PASS
 trajectory/kiss_icp                        PASS
-
 audit/trajectory_timestamps                PASS
 audit/trajectory_frames                    PASS
 audit/runtime_provenance                   PASS
-audit/trajectory_coverage                   PASS
-
+audit/trajectory_coverage                  PASS
 scan_manifest                              PASS
 common_map_manifest                        PASS
 unified_map/fast_livo2                     PASS
@@ -985,26 +838,9 @@ same_bag_summary                           PASS
 SUITE                                      PASS
 ```
 
-The JSON view includes stage ID, state, reason code, dependencies, recovery policy, and artifact evidence references.
+## 29. Delegation to existing capabilities
 
-## 27. Overall suite-state derivation
-
-Priority:
-
-1. if any stage is terminal `FAIL`, overall `FAIL`;
-2. else if another executor currently owns the lock, overall `RUNNING`;
-3. else if every required stage is `PASS`, overall `PASS`;
-4. else if any stage is recoverably `BLOCKED`, overall `BLOCKED`;
-5. else if at least one stage is `READY`, overall `READY`;
-6. otherwise overall `PENDING`.
-
-`BLOCKED_DEPENDENCY` caused by a terminal failed dependency coexists with the upstream `FAIL`, so overall state remains `FAIL` by priority.
-
-## 28. Delegation to existing commands
-
-The orchestrator must delegate actual work to already-established benchmark capabilities rather than reimplementing them.
-
-The profile maps stage IDs to the existing command surfaces equivalent to:
+P2 schedules existing capabilities equivalent to:
 
 ```text
 snapshot
@@ -1023,113 +859,98 @@ compare relative-se3
 summarize same-bag
 ```
 
-The implementation may call existing Python handlers/libraries through a thin internal runner when doing so preserves exactly the same command contract and evidence outputs. It must not fork a second implementation of the evaluator logic.
+Implementation may use existing Python handlers/libraries through a thin internal runner when it preserves identical command/evidence semantics. It must not fork a second evaluator implementation. Each delegated command is recorded in `STAGE_STARTED` lineage.
 
-Every delegated stage command is recorded in its `STAGE_STARTED` event.
+## 30. Compatibility
 
-## 29. Compatibility
+P2 is additive. Existing CLI behavior remains valid. Historical non-suite runs remain usable by existing tools but are not automatically adopted. The accepted Same-Bag full-bag run and P1 MID360 intake artifacts are untouched.
 
-Existing public commands remain valid and behavior-compatible.
+## 31. Repository acceptance
 
-P2 is additive:
+Repository acceptance is ROS-estimator-independent and must cover:
 
-```text
-lio-benchmark suite run
-lio-benchmark suite status
-lio-benchmark suite resume
-```
+### Plan
 
-Historical non-suite runs remain readable by existing tools but are not automatically adopted by the orchestrator.
+- deterministic stage graph/order;
+- algorithm order preserved;
+- plan non-overwritable;
+- manifest mutation detected;
+- dataset SHA required/frozen;
+- unsupported profile fails closed.
 
-The accepted Same-Bag Mapping V1 full-bag run and MID360 Bag Intake V1 artifacts remain untouched.
-
-## 30. Repository acceptance contract
-
-Repository acceptance must be achievable without ROS estimator execution and must cover the orchestration logic with pure-Python fixtures/mocks where appropriate.
-
-Required contracts include:
-
-### 30.1. Plan
-
-- plan stage graph is deterministic;
-- selected algorithm order is preserved;
-- plan is non-overwritable;
-- manifest mutation after plan creation is detected;
-- dataset SHA is required and frozen;
-- unsupported suite profile fails closed.
-
-### 30.2. Status derivation
+### Status/artifact validation
 
 - status is read-only;
-- valid completed artifact -> PASS;
-- absent output + satisfied dependencies -> READY;
-- partial output -> FAIL_PARTIAL_ARTIFACT;
-- invalid/stale output -> FAIL;
+- complete valid artifacts -> PASS;
+- absent owned outputs + ready dependencies -> READY;
+- partial -> FAIL_PARTIAL_ARTIFACT;
+- invalid/stale -> FAIL;
 - dependency failure -> BLOCKED_DEPENDENCY;
-- raw frame audit `AVAILABLE` is accepted as evidence while runtime provenance must provide semantic `MATCH`;
-- descriptive coverage values never become hidden pass/fail quality thresholds.
+- frame evidence `AVAILABLE` accepted while runtime provenance semantic status must be MATCH;
+- coverage values remain descriptive rather than threshold gates;
+- Relative SE(3) requires complete frozen selected set for formal suite PASS.
 
-### 30.3. Runtime safety
+### Runtime safety/failure policy
 
-- existing runtime identity always prevents estimator relaunch;
-- PASS estimator is skipped on resume;
-- FAIL_ALGORITHM is terminal and never rerun;
-- BLOCKED_ENVIRONMENT without runtime identity is recheckable;
-- one runtime failure does not stop later independently ready estimators in the same invocation;
-- failed algorithm is never removed from the frozen selected set;
-- global comparison stages block when the selected set is incomplete.
+- any existing runtime identity prevents relaunch;
+- PASS estimator skipped on resume;
+- FAIL_ALGORITHM terminal and never rerun;
+- BLOCKED_ENVIRONMENT without identity recheckable;
+- one runtime failure does not stop later independently READY runtimes in same invocation;
+- selected algorithm set never shrinks;
+- global stages block on incomplete selected set;
+- later resume after terminal failed invocation executes zero work.
 
-### 30.4. Dataset identity
+### Dataset identity
 
-- pre identity mismatch prevents all estimator starts;
-- post identity mismatch blocks all downstream stages and makes the suite FAIL;
-- pre/post identity artifacts are write-once;
-- expected identity comes from frozen dataset contract.
+- missing dataset SHA blocks suite before estimator;
+- pre mismatch prevents all estimator starts;
+- post mismatch blocks downstream and fails suite;
+- pre/post records write-once;
+- post does not run while any runtime is recoverably blocked.
 
-### 30.5. Resume
+### Resume/no-overwrite
 
-- completed `REUSABLE_IF_VALID` stage executes zero commands;
-- missing safe post-processing stage is executed on resume;
-- completed estimator executes zero estimator commands on resume;
-- terminal failed suite executes zero new commands on later resume;
-- partial artifact is never auto-overwritten.
+- completed stage executes zero command;
+- missing safe post-processing stage executes on resume;
+- completed estimator executes zero estimator commands;
+- partial output never auto-overwritten;
+- canonical summary never generated prematurely.
 
-### 30.6. Events and lock
+### Events/lock/RUNNING
 
-- event filenames are monotonic and append-only;
-- event overwrite is refused;
-- event PASS cannot override invalid artifact evidence;
-- second executor is blocked by `flock`;
-- stale unmatched start event without lock ownership does not produce RUNNING;
-- status performs no writes.
+- event names monotonic and append-only;
+- overwrite refused;
+- event success cannot override invalid artifact;
+- second executor blocked by flock;
+- stale unmatched event without lock is not RUNNING;
+- status performs zero writes.
 
-### 30.7. Graceful interruption
+### Graceful interruption
 
-- first SIGINT/SIGTERM requests stop-after-current-stage;
-- no subsequent stage begins;
-- completed current-stage evidence remains valid;
-- resume starts from the next safe stage;
-- already-completed estimator is not re-executed.
+- first signal requests stop-after-current-stage;
+- no later stage begins;
+- current stage completes/validates;
+- resume begins from next safe stage;
+- completed estimator is not re-executed.
 
-### 30.8. Compatibility
+### Compatibility
 
-- existing Core Contracts remain green;
-- legacy CLI parser and existing subcommands remain compatible;
-- no estimator, map, or scientific threshold is silently changed by P2.
+- all existing Core Contracts remain green;
+- legacy CLI remains compatible;
+- no estimator/map/scientific threshold changes.
 
-Repository completion marker:
+Repository marker:
 
 ```text
 BENCHMARK_SUITE_ORCHESTRATOR_V1_REPOSITORY_ACCEPTANCE=PASS
 ```
 
-## 31. Target-machine acceptance strategy
+## 32. Target-machine acceptance
 
-P2 target acceptance should prove orchestration and recovery before spending another full 623-second three-estimator run.
+Use a new target-local 45-second smoke config derived from the already accepted MID360 Bag Intake V1 `dataset.json` through `dataset_file`.
 
-Use one new target-local smoke config derived from the already accepted MID360 Bag Intake V1 dataset contract.
-
-Frozen smoke replay:
+Frozen target profile:
 
 ```text
 rate = 1.0
@@ -1139,50 +960,33 @@ algorithms = fast_livo2, fast_lio2, kiss_icp
 execution = sequential
 ```
 
-The target config must use the accepted `dataset.json` through `dataset_file`, so the suite has a real non-null bag content SHA.
+### 32.1. Controlled interruption
 
-Target acceptance is split into three checks on one new smoke run.
+Start `suite run`. Once the first estimator has a `STAGE_STARTED` event, send SIGINT to the suite executor.
 
-### 31.1. Fresh-run orchestration + controlled interruption
+Required behavior:
 
-Start:
+- active estimator finishes normally;
+- runtime identity/status freeze normally;
+- stop-request event is appended;
+- no next stage starts after current stage;
+- executor exits 130;
+- run is resumable;
+- record SHA of completed estimator runtime identity.
 
-```bash
-lio-benchmark suite run \
-  --config <smoke-config> \
-  --run-id <unique-run-id>
-```
+### 32.2. Resume to smoke PASS
 
-During the first estimator runtime, request SIGINT after its `STAGE_STARTED` event is visible.
+Run `suite resume`.
 
-Expected behavior:
+Required behavior:
 
-- the active estimator is allowed to finish normally;
-- its runtime identity and run status freeze normally;
-- `SUITE_STOP_REQUESTED` is appended;
-- no next stage starts after the current stage finishes;
-- executor exits `130`;
-- run remains cleanly resumable;
-- the completed estimator runtime identity SHA is recorded for the next check.
-
-### 31.2. Resume to full smoke PASS
-
-Run:
-
-```bash
-lio-benchmark suite resume --run <run>
-```
-
-Expected behavior:
-
-- the completed estimator is skipped;
-- its runtime identity remains byte-for-byte unchanged;
-- remaining estimator runtimes execute sequentially exactly once;
-- dataset post-identity matches pre-identity and accepted P1 bag hash;
-- all formal downstream stages execute;
-- strict common-map and Unified Map contracts pass;
+- completed estimator skipped and runtime-identity SHA unchanged;
+- remaining estimators execute sequentially exactly once;
+- dataset post identity equals pre identity and accepted frozen bag SHA;
+- all formal audits/maps/Relative SE(3)/summary complete;
+- strict common-map contract passes;
 - Relative SE(3) remains descriptive;
-- canonical Same-Bag summary passes its existing readiness gate;
+- canonical summary readiness passes;
 - suite reaches PASS.
 
 Machine marker:
@@ -1191,11 +995,11 @@ Machine marker:
 BENCHMARK_SUITE_ORCHESTRATOR_V1_TARGET_CONTRACT=PASS
 ```
 
-### 31.3. Resume an already-complete suite
+### 32.3. Resume already-complete suite
 
 Run `suite resume` again.
 
-Expected behavior:
+Required evidence:
 
 ```text
 ESTIMATOR_EXECUTED=0
@@ -1203,31 +1007,23 @@ STAGE_REEXECUTED=0
 SUITE_ALREADY_COMPLETE=PASS
 ```
 
-No scientific artifact is rewritten. The only permitted new evidence is invocation-level append-only suite event lineage documenting that the already-complete run was inspected and no stage execution was needed.
+No scientific artifact is rewritten. Only invocation-level append-only lineage may be added to record the no-op resume; it must not create new scientific stage outputs.
 
-## 32. Full-bag promotion after P2 acceptance
+## 33. Full-bag promotion
 
-A new automated 622.99-second full-bag run is deliberately not required for the first P2 target acceptance.
+A new 622.99-second × three-estimator automated run is deliberately not required for initial P2 code acceptance. After 45-second target acceptance is frozen, a later promotion may execute the already accepted full-bag Same-Bag profile through `suite run` using the same frozen MID360 dataset contract.
 
-After P2 smoke acceptance is frozen, the next promotion step may run the accepted full-bag Same-Bag Mapping V1 configuration through `suite run` using the same frozen MID360 dataset contract.
+## 34. Stop condition
 
-That promotion is evidence that orchestration scales to the full accepted baseline; it is not part of the code-completion gate for P2 V1.
-
-## 33. Stop condition
-
-Implementation work for this spec stops when:
+Implementation stops at:
 
 ```text
 BENCHMARK_SUITE_ORCHESTRATOR_V1_REPOSITORY_ACCEPTANCE = PASS
 BENCHMARK_SUITE_ORCHESTRATOR_V1_TARGET_MACHINE_ACCEPTANCE = PENDING
 ```
 
-At that point the repository must contain a target-machine verification runbook and a Codex handoff prompt for the 45-second controlled-interruption/resume acceptance.
+At that point the repository contains a target-machine verification runbook and Codex handoff for Section 32. No P3 visualization/README work and no new algorithm adapter work begins in P2.
 
-No P3 visualization/README work and no new algorithm adapter work begins as part of P2.
+## 35. Final invariant
 
-## 34. Final V1 invariant
-
-The defining invariant of P2 is:
-
-> Given one frozen benchmark configuration and one frozen bag content identity, Benchmark Suite Orchestrator V1 can execute the Same-Bag Mapping V1 stage graph, survive a stage-boundary interruption, and resume using only validated artifact-derived state, while never launching an estimator again after that estimator has established a runtime identity in the run.
+> Given one frozen benchmark configuration and one frozen bag content identity, Benchmark Suite Orchestrator V1 can execute the Same-Bag Mapping V1 stage graph, survive a stage-boundary interruption, and resume using validated artifact-derived state, while never launching an estimator again after that estimator has established a runtime identity in the run.
