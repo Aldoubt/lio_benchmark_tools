@@ -2,7 +2,7 @@
 """Offline phase-aware diagnostic analysis for standardized LIO benchmark runs.
 
 The module deliberately keeps trajectory comparisons relative to a selected
-baseline. It does not report ATE/RPE without independent ground truth.
+baseline.  It does not report ATE/RPE without independent ground truth.
 """
 from __future__ import annotations
 
@@ -274,26 +274,27 @@ def _segment_duration(samples: list[dict[str, Any]], segment: tuple[int, int, st
 
 
 def _merge_short_states(samples: list[dict[str, Any]], min_duration: float, step: float) -> None:
+    # Iterative because merging one short island can create a longer neighbor.
     for _ in range(max(1, len(samples))):
         segments = _segments(samples)
-        target = next((segment for segment in segments if _segment_duration(samples, segment, step) < min_duration), None)
+        target = next((seg for seg in segments if _segment_duration(samples, seg, step) < min_duration), None)
         if target is None or len(segments) == 1:
             return
-        index = segments.index(target)
-        left = segments[index - 1] if index > 0 else None
-        right = segments[index + 1] if index + 1 < len(segments) else None
+        idx = segments.index(target)
+        left = segments[idx - 1] if idx > 0 else None
+        right = segments[idx + 1] if idx + 1 < len(segments) else None
         if left and right and left[2] == right[2]:
             replacement = left[2]
         elif left is None:
-            replacement = right[2]
+            replacement = right[2]  # type: ignore[index]
         elif right is None:
             replacement = left[2]
         else:
             left_duration = _segment_duration(samples, left, step)
             right_duration = _segment_duration(samples, right, step)
             replacement = left[2] if left_duration >= right_duration else right[2]
-        for sample_index in range(target[0], target[1] + 1):
-            samples[sample_index]["state"] = replacement
+        for index in range(target[0], target[1] + 1):
+            samples[index]["state"] = replacement
 
 
 def build_phases(
@@ -309,15 +310,26 @@ def build_phases(
     step = 1.0 / hz
     motion_count = max(1, int(math.ceil(params["sustained_motion_s"] * hz)))
     moving = [sample["speed_mps"] >= params["stationary_speed_mps"] for sample in samples]
-    motion_start = len(samples)
-    for index in range(0, len(samples) - motion_count + 1):
-        if all(moving[index : index + motion_count]):
-            motion_start = index
-            break
+    sustained_windows = [
+        index
+        for index in range(0, len(samples) - motion_count + 1)
+        if all(moving[index : index + motion_count])
+    ]
+    if sustained_windows:
+        motion_start: int | None = sustained_windows[0]
+        motion_end: int | None = min(len(samples) - 1, sustained_windows[-1] + motion_count - 1)
+    else:
+        motion_start = None
+        motion_end = None
+
     turn_threshold = math.radians(params["turn_yaw_rate_deg_s"])
     for index, sample in enumerate(samples):
-        if index < motion_start:
-            state = "INITIALIZATION"
+        if motion_start is None or motion_end is None:
+            state = "STATIONARY"
+        elif index < motion_start:
+            state = "PRE_MOTION_STATIC"
+        elif index > motion_end:
+            state = "POST_MOTION_STATIC"
         elif sample["speed_mps"] < params["stationary_speed_mps"]:
             state = "STATIONARY"
         elif abs(sample["yaw_rate_rad_s"]) > turn_threshold:
@@ -328,13 +340,17 @@ def build_phases(
             state = "STRAIGHT"
         sample["state"] = state
         sample["return_near_start"] = bool(
-            index >= motion_start and sample["distance_to_start_m"] <= params["near_start_radius_m"]
+            motion_start is not None
+            and motion_end is not None
+            and motion_start <= index <= motion_end
+            and sample["distance_to_start_m"] <= params["near_start_radius_m"]
         )
     _merge_short_states(samples, params["min_phase_duration_s"], step)
 
     phases: list[dict[str, Any]] = []
     for number, (start_i, end_i, state) in enumerate(_segments(samples)):
         start_s = float(samples[start_i]["timestamp_s"])
+        # Use the next sample boundary when possible; the final phase ends at the trajectory end.
         end_s = (
             float(samples[end_i + 1]["timestamp_s"])
             if end_i + 1 < len(samples)
@@ -360,15 +376,15 @@ def _initial_yaw_translation(
     baseline: list[dict[str, float]], candidate: list[dict[str, float]], start: float
 ) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
     base = _trajectory_arrays(baseline)
-    candidate_arrays = _trajectory_arrays(candidate)
+    cand = _trajectory_arrays(candidate)
     base_yaw = float(_interp(base, "yaw_rad", np.asarray([start]))[0])
-    candidate_yaw = float(_interp(candidate_arrays, "yaw_rad", np.asarray([start]))[0])
-    delta = base_yaw - candidate_yaw
+    cand_yaw = float(_interp(cand, "yaw_rad", np.asarray([start]))[0])
+    delta = base_yaw - cand_yaw
     c, s = math.cos(delta), math.sin(delta)
     rotation = np.asarray([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     base_start = np.asarray([_interp(base, key, np.asarray([start]))[0] for key in ("x_m", "y_m", "z_m")])
-    candidate_start = np.asarray([_interp(candidate_arrays, key, np.asarray([start]))[0] for key in ("x_m", "y_m", "z_m")])
-    translation = base_start - rotation @ candidate_start
+    cand_start = np.asarray([_interp(cand, key, np.asarray([start]))[0] for key in ("x_m", "y_m", "z_m")])
+    translation = base_start - rotation @ cand_start
     return rotation, translation, {"yaw_delta_rad": delta}
 
 
@@ -380,10 +396,10 @@ def compute_phase_trajectory_metrics(
     resample_hz: float,
 ) -> dict[str, Any]:
     base = _trajectory_arrays(baseline)
-    candidate_arrays = _trajectory_arrays(candidate)
+    cand = _trajectory_arrays(candidate)
     phase_start, phase_end = float(phase["start_s"]), float(phase["end_s"])
-    common_start = max(phase_start, float(base["timestamp_s"][0]), float(candidate_arrays["timestamp_s"][0]))
-    common_end = min(phase_end, float(base["timestamp_s"][-1]), float(candidate_arrays["timestamp_s"][-1]))
+    common_start = max(phase_start, float(base["timestamp_s"][0]), float(cand["timestamp_s"][0]))
+    common_end = min(phase_end, float(base["timestamp_s"][-1]), float(cand["timestamp_s"][-1]))
     phase_duration = max(1e-9, phase_end - phase_start)
     if common_end <= common_start:
         return {
@@ -401,18 +417,17 @@ def compute_phase_trajectory_metrics(
     step = 1.0 / resample_hz
     sample_count = max(2, int(math.floor((common_end - common_start) / step)) + 1)
     times = np.linspace(common_start, common_end, sample_count)
-    alignment_start = max(float(base["timestamp_s"][0]), float(candidate_arrays["timestamp_s"][0]))
-    rotation, translation, _ = _initial_yaw_translation(baseline, candidate, alignment_start)
+    rotation, translation, _ = _initial_yaw_translation(baseline, candidate, max(float(base["timestamp_s"][0]), float(cand["timestamp_s"][0])))
     base_pos = np.column_stack([_interp(base, key, times) for key in ("x_m", "y_m", "z_m")])
-    candidate_pos = np.column_stack([_interp(candidate_arrays, key, times) for key in ("x_m", "y_m", "z_m")])
-    candidate_aligned = (rotation @ candidate_pos.T).T + translation
-    error_vec = candidate_aligned - base_pos
+    cand_pos = np.column_stack([_interp(cand, key, times) for key in ("x_m", "y_m", "z_m")])
+    cand_aligned = (rotation @ cand_pos.T).T + translation
+    error_vec = cand_aligned - base_pos
     errors = np.linalg.norm(error_vec, axis=1)
     z_errors = error_vec[:, 2]
-    candidate_times_in_phase = candidate_arrays["timestamp_s"][(candidate_arrays["timestamp_s"] >= common_start) & (candidate_arrays["timestamp_s"] <= common_end)]
+    candidate_times_in_phase = cand["timestamp_s"][(cand["timestamp_s"] >= common_start) & (cand["timestamp_s"] <= common_end)]
     gaps = np.diff(candidate_times_in_phase)
-    roll = _interp(candidate_arrays, "roll_rad", times)
-    pitch = _interp(candidate_arrays, "pitch_rad", times)
+    roll = _interp(cand, "roll_rad", times)
+    pitch = _interp(cand, "pitch_rad", times)
     return {
         "samples": int(sample_count),
         "coverage_ratio": float(min(1.0, (common_end - common_start) / phase_duration)),
@@ -420,7 +435,7 @@ def compute_phase_trajectory_metrics(
         "relative_position_rmse_m": float(np.sqrt(np.mean(errors**2))),
         "relative_position_p95_m": float(np.percentile(errors, 95)),
         "relative_z_rmse_m": float(np.sqrt(np.mean(z_errors**2))),
-        "z_change_m": float(candidate_aligned[-1, 2] - candidate_aligned[0, 2]),
+        "z_change_m": float(cand_aligned[-1, 2] - cand_aligned[0, 2]),
         "roll_range_deg": float(math.degrees(float(np.max(roll) - np.min(roll)))),
         "pitch_range_deg": float(math.degrees(float(np.max(pitch) - np.min(pitch)))),
         "metric_class": METRIC_CLASS,
@@ -536,8 +551,7 @@ def _markdown_report(result: dict[str, Any]) -> str:
         for phase_id, values in item["phases"].items():
             trajectory = values["trajectory"]
             resource = values["resource"]
-            def fmt(value: Any) -> str:
-                return "" if value is None else f"{float(value):.3f}"
+            fmt = lambda value: "" if value is None else f"{float(value):.3f}"
             lines.append(
                 f"| {phase_id} | {fmt(trajectory.get('relative_position_rmse_m'))} | {fmt(trajectory.get('relative_z_rmse_m'))} | {fmt(trajectory.get('z_change_m'))} | {fmt(resource.get('cpu_p95_percent'))} | {fmt(resource.get('rss_growth_mib'))} |"
             )
@@ -601,21 +615,20 @@ def run_phase_analysis(
         if not offset_evidence and evidence.get("clock_to_trajectory_offset"):
             offset_evidence = evidence["clock_to_trajectory_offset"]
         phase_results: dict[str, Any] = {}
-        outside = (
-            sum(
-                float(item["trajectory_time_s"]) < float(phases[0]["start_s"])
-                or float(item["trajectory_time_s"]) > float(phases[-1]["end_s"])
-                for item in aligned_resources
-            )
-            if phases
-            else 0
-        )
+        outside = sum(
+            float(item["trajectory_time_s"]) < float(phases[0]["start_s"])
+            or float(item["trajectory_time_s"]) > float(phases[-1]["end_s"])
+            for item in aligned_resources
+        ) if phases else 0
         for phase in phases:
             trajectory_metrics = compute_phase_trajectory_metrics(
                 baseline_rows, candidate_rows, phase, resample_hz=params["resample_hz"]
             )
             resource_metrics = aggregate_resource_phase(aligned_resources, phase)
-            resource_metrics["availability"] = "unavailable" if mode == "trajectory-only" else "available"
+            if mode == "trajectory-only":
+                resource_metrics["availability"] = "unavailable"
+            else:
+                resource_metrics["availability"] = "available"
             resource_metrics["time_alignment_mode"] = mode
             phase_results[phase["id"]] = {"trajectory": trajectory_metrics, "resource": resource_metrics}
         algorithms[algorithm] = {
@@ -678,16 +691,7 @@ def main() -> int:
     args = parser.parse_args()
     parameters = dict(args.phase_param)
     result = run_phase_analysis(args.run, baseline=args.baseline, phase_parameters=parameters)
-    print(
-        json.dumps(
-            {
-                "output": str((args.run / "metrics/phase_analysis.json").resolve()),
-                "time_alignment_mode": result["time_alignment_mode"],
-                "phases": len(result["phases"]),
-            },
-            ensure_ascii=False,
-        )
-    )
+    print(json.dumps({"output": str((args.run / 'metrics/phase_analysis.json').resolve()), "time_alignment_mode": result["time_alignment_mode"], "phases": len(result["phases"])}, ensure_ascii=False))
     return 0
 
 
