@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Enhance reconstructed-map comparison with health gating and shared scales.
+"""Enhance reconstructed-map comparison with quantitative map consistency.
 
-The raw maps are produced by visualize_baseline_maps.py from the same LiDAR
-samples and each standardized trajectory.  This script does not rebuild the
-maps.  It reads those PLY files and produces presentation/diagnostic grids
-whose panels share projection limits and a common Z color scale.
+The raw maps are produced from the same LiDAR samples and each standardized
+trajectory. This stage does not rebuild maps. It reads current-run PLY files,
+computes baseline-relative map-consistency diagnostics and renders shared-scale
+health-gated plus all-run comparison grids.
 """
 from __future__ import annotations
 
@@ -15,6 +15,18 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from map_consistency import (
+    MAP_SYMMETRIC_NN_P95_MAX_M,
+    MAP_VOXEL_IOU_MIN,
+    MAP_Z_SPAN_RATIO_LIMIT,
+    ROBUST_HIGH_PERCENTILE,
+    ROBUST_LOW_PERCENTILE,
+    map_health_flags,
+    robust_extent_xyz,
+    symmetric_nn_metrics,
+    voxel_iou,
+)
 
 
 LABELS = {
@@ -47,14 +59,24 @@ def health_valid(item: dict[str, Any]) -> bool:
 def choose_map_sets(
     algorithms: list[str],
     health: dict[str, dict[str, Any]],
+    map_metrics: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Return paper-facing health-valid algorithms and the all-run diagnostic set."""
+    """Return selection-facing and all-run map sets.
+
+    Before map metrics exist this behaves like the original trajectory-health
+    gate. Once map metrics are available, an explicit map-health failure also
+    removes the algorithm from the primary view while `*_all` retains it.
+    """
     all_algorithms = list(algorithms)
-    primary = [
-        algorithm
-        for algorithm in all_algorithms
-        if health_valid(health.get(algorithm, {}))
-    ]
+    primary = []
+    for algorithm in all_algorithms:
+        if not health_valid(health.get(algorithm, {})):
+            continue
+        if map_metrics is not None:
+            item = map_metrics.get(algorithm, {})
+            if item.get("map_health_pass") is False:
+                continue
+        primary.append(algorithm)
     return primary, all_algorithms
 
 
@@ -79,7 +101,7 @@ def shared_projection_limits(
 
 
 def read_ply(path: Path) -> np.ndarray:
-    """Read the fixed x/y/z/intensity binary PLY written by visualize_baseline_maps."""
+    """Read the fixed x/y/z/intensity binary PLY written by the map builder."""
     path = Path(path)
     with path.open("rb") as stream:
         vertex_count = None
@@ -113,6 +135,7 @@ def _plot_grid(
     clouds: dict[str, np.ndarray],
     algorithms: list[str],
     health: dict[str, dict[str, Any]],
+    map_metrics: dict[str, dict[str, Any]],
     *,
     projection: str,
     title: str,
@@ -166,7 +189,11 @@ def _plot_grid(
             norm=normalizer,
             rasterized=True,
         )
-        suffix = "" if health_valid(health.get(algorithm, {})) else " [health-fail]"
+        suffix = ""
+        if not health_valid(health.get(algorithm, {})):
+            suffix = " [trajectory-health-fail]"
+        elif map_metrics.get(algorithm, {}).get("map_health_pass") is False:
+            suffix = " [map-health-fail]"
         axis.set_title(LABELS.get(algorithm, algorithm) + suffix)
         axis.set_xlim(*x_limits)
         axis.set_ylim(*y_limits)
@@ -196,13 +223,33 @@ def build_metrics(
     algorithms: list[str],
     health: dict[str, dict[str, Any]],
     visualization: dict[str, Any],
+    *,
+    baseline: str,
+    comparison_voxel_m: float,
 ) -> dict[str, dict[str, Any]]:
+    if baseline not in clouds:
+        raise ValueError(f"baseline map is unavailable: {baseline}")
     comparisons = visualization.get("trajectory_comparison") or {}
+    baseline_cloud = clouds[baseline]
     result: dict[str, dict[str, Any]] = {}
+
     for algorithm in algorithms:
         cloud = clouds[algorithm]
         relative = comparisons.get(algorithm) or {}
         health_item = health.get(algorithm, {})
+        if algorithm == baseline:
+            iou = 1.0
+            nn = {
+                "mean_m": 0.0,
+                "rmse_m": 0.0,
+                "p95_m": 0.0,
+                "max_m": 0.0,
+                "samples_reference": min(len(baseline_cloud), 50_000),
+                "samples_candidate": min(len(baseline_cloud), 50_000),
+            }
+        else:
+            iou = voxel_iou(baseline_cloud, cloud, comparison_voxel_m)
+            nn = symmetric_nn_metrics(baseline_cloud, cloud)
         result[algorithm] = {
             "label": LABELS.get(algorithm, algorithm),
             "status": health_item.get("status"),
@@ -211,10 +258,25 @@ def build_metrics(
             "available": True,
             "map_points": int(len(cloud)),
             "extent_xyz_m": np.ptp(cloud[:, :3], axis=0).tolist(),
+            "robust_extent_xyz_m": robust_extent_xyz(cloud).tolist(),
+            "baseline_voxel_iou": float(iou),
+            "comparison_voxel_m": float(comparison_voxel_m),
+            "symmetric_nn_mean_m": nn["mean_m"],
+            "symmetric_nn_rmse_m": nn["rmse_m"],
+            "symmetric_nn_p95_m": nn["p95_m"],
+            "symmetric_nn_max_m": nn["max_m"],
+            "symmetric_nn_samples_reference": nn["samples_reference"],
+            "symmetric_nn_samples_candidate": nn["samples_candidate"],
             "relative_rmse_m": relative.get("rmse_m"),
             "relative_p95_m": relative.get("p95_m"),
             "ply": f"{algorithm}_map.ply",
         }
+
+    baseline_metrics = result[baseline]
+    for algorithm, item in result.items():
+        flags = [] if algorithm == baseline else map_health_flags(item, baseline_metrics)
+        item["map_health_flags"] = flags
+        item["map_health_pass"] = not flags
     return result
 
 
@@ -224,11 +286,13 @@ def _write_metrics_markdown(path: Path, metrics: dict[str, Any]) -> None:
         "",
         f"- Baseline: `{metrics['baseline']}`",
         f"- Metric class: `{METRIC_CLASS}`",
-        "- Primary figures are health-gated; `*_all` retains failed/crashed trajectories when a map exists.",
-        "- Every panel in one figure shares projection limits and one Z color scale.",
+        f"- Robust extent: `P{ROBUST_HIGH_PERCENTILE:g}-P{ROBUST_LOW_PERCENTILE:g}` per axis.",
+        f"- Occupancy comparison voxel: `{metrics['comparison_voxel_m']:.3f} m`.",
+        "- Primary figures require trajectory health and map health; `*_all` retains every reconstructable map.",
+        "- Symmetric nearest-neighbour metrics use deterministic bounded samples.",
         "",
-        "| Algorithm | Status | Health | Map points | X extent (m) | Y extent (m) | Z extent (m) | Rel RMSE (m) | Rel P95 (m) |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|",
+        "| Algorithm | Status | Traj health | Map health | Map points | Raw Z span (m) | Robust Z span (m) | Voxel IoU | Sym NN RMSE (m) | Sym NN P95 (m) | Rel RMSE (m) | Rel P95 (m) |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
 
     def number(value: Any) -> str:
@@ -237,14 +301,23 @@ def _write_metrics_markdown(path: Path, metrics: dict[str, Any]) -> None:
     for algorithm in metrics["all_algorithms"]:
         item = metrics["algorithms"][algorithm]
         extent = item["extent_xyz_m"]
-        health = (
+        robust = item["robust_extent_xyz_m"]
+        trajectory_health = (
             "normal"
             if item["health_pass"]
             else ";".join(item["health_flags"]) or "needs_review"
         )
+        map_health = (
+            "normal"
+            if item["map_health_pass"]
+            else ";".join(item["map_health_flags"])
+        )
         lines.append(
-            f"| {item['label']} | {item['status']} | {health} | {item['map_points']} | "
-            f"{extent[0]:.3f} | {extent[1]:.3f} | {extent[2]:.3f} | "
+            f"| {item['label']} | {item['status']} | {trajectory_health} | {map_health} | "
+            f"{item['map_points']} | {extent[2]:.3f} | {robust[2]:.3f} | "
+            f"{number(item.get('baseline_voxel_iou'))} | "
+            f"{number(item.get('symmetric_nn_rmse_m'))} | "
+            f"{number(item.get('symmetric_nn_p95_m'))} | "
             f"{number(item.get('relative_rmse_m'))} | {number(item.get('relative_p95_m'))} |"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -273,12 +346,24 @@ def main() -> int:
     ]
     if not algorithms:
         raise ValueError(f"no reconstructed map PLY files found in {output}")
+    if args.baseline not in algorithms:
+        raise ValueError(f"baseline map is unavailable: {args.baseline}")
 
     clouds = {
         algorithm: read_ply(output / f"{algorithm}_map.ply")
         for algorithm in algorithms
     }
-    primary, all_algorithms = choose_map_sets(algorithms, health)
+    reconstruction_voxel = float(visualization.get("voxel_m") or 0.12)
+    comparison_voxel_m = max(0.5, 4.0 * reconstruction_voxel)
+    algorithm_metrics = build_metrics(
+        clouds,
+        algorithms,
+        health,
+        visualization,
+        baseline=args.baseline,
+        comparison_voxel_m=comparison_voxel_m,
+    )
+    primary, all_algorithms = choose_map_sets(algorithms, health, algorithm_metrics)
     if args.baseline in all_algorithms and args.baseline not in primary:
         primary.insert(0, args.baseline)
 
@@ -287,22 +372,25 @@ def main() -> int:
         clouds,
         primary,
         health,
+        algorithm_metrics,
         projection="xy",
-        title="Map comparison XY — health-valid algorithms, shared axes/Z scale",
+        title="Map comparison XY — trajectory+map-health valid, shared axes/Z scale",
     )
     _plot_grid(
         output / "map_comparison_xz.png",
         clouds,
         primary,
         health,
+        algorithm_metrics,
         projection="xz",
-        title="Map comparison XZ — health-valid algorithms, shared axes/Z scale",
+        title="Map comparison XZ — trajectory+map-health valid, shared axes/Z scale",
     )
     _plot_grid(
         output / "map_comparison_xy_all.png",
         clouds,
         all_algorithms,
         health,
+        algorithm_metrics,
         projection="xy",
         title="Map comparison XY — all available algorithms",
     )
@@ -311,23 +399,26 @@ def main() -> int:
         clouds,
         all_algorithms,
         health,
+        algorithm_metrics,
         projection="xz",
         title="Map comparison XZ — all available algorithms",
     )
 
     metrics = {
-        "schema_version": 1,
+        "schema_version": 2,
         "baseline": args.baseline,
         "metric_class": METRIC_CLASS,
         "primary_algorithms": primary,
         "all_algorithms": all_algorithms,
         "shared_scale": True,
-        "algorithms": build_metrics(
-            clouds,
-            all_algorithms,
-            health,
-            visualization,
-        ),
+        "comparison_voxel_m": comparison_voxel_m,
+        "robust_extent_percentiles": [ROBUST_LOW_PERCENTILE, ROBUST_HIGH_PERCENTILE],
+        "map_health_thresholds": {
+            "robust_z_span_ratio_max": MAP_Z_SPAN_RATIO_LIMIT,
+            "baseline_voxel_iou_min": MAP_VOXEL_IOU_MIN,
+            "symmetric_nn_p95_max_m": MAP_SYMMETRIC_NN_P95_MAX_M,
+        },
+        "algorithms": algorithm_metrics,
     }
     (output / "map_comparison_metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2) + "\n",
@@ -341,6 +432,7 @@ def main() -> int:
                 "output": str(output),
                 "primary_algorithms": len(primary),
                 "all_algorithms": len(all_algorithms),
+                "comparison_voxel_m": comparison_voxel_m,
             },
             ensure_ascii=False,
         )
