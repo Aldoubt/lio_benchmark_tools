@@ -76,10 +76,11 @@ benchmark_base/bin/lio-benchmark compare \
   --voxel 0.12
 ```
 
-The map path has two steps:
+The map path has three bounded steps:
 
-1. `visualize_baseline_maps.py` reconstructs a PLY for each selected algorithm from the same raw LiDAR samples, the manifest LiDAR-to-IMU extrinsic, and that algorithm's standardized trajectory.
-2. `enhance_map_comparison.py` reads those current-run PLYs and creates health-gated/shared-scale comparison figures.
+1. `reconstruct_comparison_maps.py` discovers every current-run algorithm that has a standardized CSV, including a failed/crashed partial trajectory when one exists. It passes that explicit list to the existing `visualize_baseline_maps.py` reconstruction math.
+2. `visualize_baseline_maps.py` reconstructs each PLY from the same raw LiDAR samples, the manifest LiDAR-to-IMU extrinsic, and the corresponding standardized trajectory.
+3. `enhance_map_comparison.py` reads those current-run PLYs and creates health-gated/shared-scale comparison figures. Primary figures contain only health-valid algorithms; `*_all` retains every available reconstructed partial/failure map for diagnosis.
 
 Outputs under `figures/fast_livo2_baseline_maps/` include:
 
