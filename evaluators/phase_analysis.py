@@ -443,10 +443,15 @@ def compute_phase_trajectory_metrics(
 
 
 def aggregate_resource_phase(
-    aligned_resources: list[dict[str, Any]], phase: dict[str, Any]
+    aligned_resources: list[dict[str, Any]], phase: dict[str, Any], *, include_end: bool = True
 ) -> dict[str, Any]:
     start, end = float(phase["start_s"]), float(phase["end_s"])
-    selected = [item for item in aligned_resources if start <= float(item["trajectory_time_s"]) <= end]
+    selected = [
+        item
+        for item in aligned_resources
+        if start <= float(item["trajectory_time_s"])
+        and (float(item["trajectory_time_s"]) <= end if include_end else float(item["trajectory_time_s"]) < end)
+    ]
     if not selected:
         return {
             "resource_samples": 0,
@@ -620,11 +625,15 @@ def run_phase_analysis(
             or float(item["trajectory_time_s"]) > float(phases[-1]["end_s"])
             for item in aligned_resources
         ) if phases else 0
-        for phase in phases:
+        for phase_index, phase in enumerate(phases):
             trajectory_metrics = compute_phase_trajectory_metrics(
                 baseline_rows, candidate_rows, phase, resample_hz=params["resample_hz"]
             )
-            resource_metrics = aggregate_resource_phase(aligned_resources, phase)
+            resource_metrics = aggregate_resource_phase(
+                aligned_resources,
+                phase,
+                include_end=phase_index == len(phases) - 1,
+            )
             if mode == "trajectory-only":
                 resource_metrics["availability"] = "unavailable"
             else:
