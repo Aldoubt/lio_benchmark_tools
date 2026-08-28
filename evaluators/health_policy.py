@@ -1,0 +1,38 @@
+"""Pure health-gating helpers shared by benchmark summarizers."""
+from __future__ import annotations
+
+from typing import Any
+
+
+FULL_BAG_MIN_COVERAGE_RATIO = 0.98
+SMOKE_STARTUP_MARGIN_S = 5.0
+
+
+def expected_trajectory_duration_s(run_result: dict[str, Any], manifest_duration_s: float | None) -> float | None:
+    """Return the requested playback duration relevant to this algorithm run."""
+    smoke = run_result.get("smoke_duration_s")
+    if smoke is not None:
+        value = float(smoke)
+        return value if value > 0.0 else None
+    if manifest_duration_s is None:
+        return None
+    value = float(manifest_duration_s)
+    return value if value > 0.0 else None
+
+
+def trajectory_short(
+    actual_duration_s: float | None,
+    run_result: dict[str, Any],
+    manifest_duration_s: float | None,
+) -> bool:
+    """Judge incomplete coverage without comparing a short smoke to the full bag duration."""
+    if actual_duration_s is None:
+        return False
+    expected = expected_trajectory_duration_s(run_result, manifest_duration_s)
+    if expected is None:
+        return False
+    if run_result.get("smoke_duration_s") is not None:
+        minimum = max(0.0, expected - SMOKE_STARTUP_MARGIN_S)
+    else:
+        minimum = expected * FULL_BAG_MIN_COVERAGE_RATIO
+    return float(actual_duration_s) < minimum
