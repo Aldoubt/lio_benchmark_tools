@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from health_policy import expected_trajectory_duration_s, trajectory_short
+from health_policy import expected_trajectory_duration_s, nominal_stable_path_length_m, trajectory_short
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,8 +26,15 @@ def test_full_bag_keeps_strict_coverage_ratio():
     assert trajectory_short(600.0, run_result, manifest_duration_s=622.994) is True
 
 
+def test_nominal_path_ignores_missing_nonfinite_and_diverged_values():
+    values = [None, 40.72, float("nan"), 40.52, 41.67, 5000.0]
+    assert nominal_stable_path_length_m(values) == 40.72
+    assert nominal_stable_path_length_m([None, float("nan"), 5000.0]) is None
+
+
 def test_smoke_summarizer_delegates_to_shared_policy():
     source = (ROOT / "evaluators/summarize_smoke_run.py").read_text(encoding="utf-8")
-    assert "from health_policy import trajectory_short" in source
+    assert "from health_policy import nominal_stable_path_length_m, trajectory_short" in source
     assert 'trajectory_short(metrics.get("duration_s"), result, expected_duration_s)' in source
+    assert 'nominal_stable_path_length_m(' in source
     assert 'metrics["duration_s"] < expected_duration_s * 0.98' not in source
