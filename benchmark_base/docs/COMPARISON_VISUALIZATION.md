@@ -48,9 +48,17 @@ benchmark_base/bin/lio-benchmark visualize \
 
 `resource_curves.png` keeps the full process-tree time series for CPU, RSS and thread count. CPU 100% means one logical CPU core. Do not interpret a low average CPU value as efficiency when the corresponding trajectory has failed or terminated early.
 
-`resource_summary.png` keeps all algorithms and marks rows with trajectory health failures. `resource_summary_valid.png` excludes those health-fail algorithms for selection-oriented comparison. Mean and peak CPU are drawn as side-by-side bars rather than overlaid bars, and every panel uses algorithm labels on the x-axis.
+`resource_summary.png` keeps all algorithms and marks rows with trajectory health failures. `resource_summary_valid.png` excludes those health-fail algorithms for selection-oriented comparison. Every panel uses algorithm labels on the x-axis.
 
-Peak CPU is intentionally retained because it describes scheduler demand, but for bursty algorithms it can be much larger than the typical load. The time-series curve should be consulted together with the mean/peak summary; a future resource schema may add median/P95 CPU and bag/sensor time so bursts can be tied to specific trajectory segments.
+The summary CPU panel reports three statistics derived from the recorded `sample_history`:
+
+- `median_cpu_percent`: typical process-tree scheduler demand.
+- `mean_cpu_percent`: average demand across the run.
+- `p95_cpu_percent`: sustained high-load envelope that is less sensitive to a single instantaneous spike than peak CPU.
+
+The raw `peak_cpu_percent` remains in `resource_summary.json` and `resource_summary.csv` for scheduler/headroom diagnosis, but it is intentionally not used as a summary bar because bursty algorithms can compress the scale for every other algorithm. This is especially important for KISS-ICP-like workloads where a short multi-core burst may coexist with a much lower typical load.
+
+Resource samples are still keyed by algorithm elapsed time. They must not yet be interpreted as exact bag/sensor-time-aligned phases. The next phase-analysis layer should add or derive bag/sensor time before claiming that CPU/RSS bursts occur at the same physical trajectory segment across algorithms.
 
 ## Optional map reconstruction
 
