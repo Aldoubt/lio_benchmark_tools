@@ -1,5 +1,4 @@
 import inspect
-from pathlib import Path
 
 import manual_run_controller as module
 
@@ -53,7 +52,7 @@ def test_prepare_starts_clock_recorder_after_base_prepare(tmp_path):
     controller_class = module._make_manual_controller_class(FakeBase)
     controller = controller_class(tmp_path, "demo")
     assert controller.prepare() == {"snapshot": True}
-    assert events[:2] == ["base_prepare", "clock_anchor_recorder"]
+    assert events[:2] == ["base_prepare", "clock_anchor"]
 
 
 def test_finalize_stops_bag_then_clock_before_base_finalize(tmp_path):
@@ -67,7 +66,7 @@ def test_finalize_stops_bag_then_clock_before_base_finalize(tmp_path):
         def __init__(self, *_args, **_kwargs):
             self._output_dir = tmp_path
             self._processes = {
-                "clock_anchor_recorder": Process(),
+                "clock_anchor": Process(),
                 "bag_play": Process(),
             }
             self._bag_process = self._processes["bag_play"]
@@ -86,7 +85,7 @@ def test_finalize_stops_bag_then_clock_before_base_finalize(tmp_path):
     controller_class = module._make_manual_controller_class(FakeBase)
     controller = controller_class(tmp_path, "demo")
     controller._finalize(bag_state="stopped")
-    assert events[:3] == ["bag_play", "clock_anchor_recorder", "base"]
+    assert events[:3] == ["bag_play", "clock_anchor", "base"]
 
 
 def test_queue_defaults_to_clock_anchor_aware_controller():
