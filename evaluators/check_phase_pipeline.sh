@@ -17,6 +17,7 @@ python3 -m py_compile \
   evaluators/manual_run_controller_base.py \
   evaluators/summarize_smoke_run.py \
   evaluators/current_run_report.py \
+  evaluators/reconstruct_comparison_maps.py \
   evaluators/enhance_map_comparison.py \
   benchmark_base/lio_benchmark/entry.py \
   benchmark_base/lio_benchmark/postprocess.py
@@ -37,7 +38,8 @@ python3 -m pytest -q \
   tests/test_entry.py \
   tests/test_postprocess.py \
   tests/test_current_run_report.py \
-  tests/test_map_comparison_enhancement.py
+  tests/test_map_comparison_enhancement.py \
+  tests/test_map_reconstruction_selection.py
 
 cat <<'EOF'
 
@@ -60,7 +62,8 @@ Current-run comparison/report behavior:
   - whole-run baseline-relative RMSE/P95 are recomputed from current standardized CSVs
   - healthy algorithms are not excluded by historical hard-coded recommendations
   - missing current-run map metadata is reported as N/A rather than backfilled
-  - compare --with-maps adds health-gated XY/XZ map grids plus *_all diagnostics with shared axes/Z scale
+  - compare --with-maps reconstructs every available standardized trajectory, including failed/crashed partial trajectories for *_all diagnostics
+  - primary map figures are health-gated; XY/XZ panels use shared axes and a shared Z color scale
 
 Smoke coverage policy:
   - short smoke runs are compared with smoke_duration_s and allow a 5 s startup margin
