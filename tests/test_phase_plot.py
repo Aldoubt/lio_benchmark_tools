@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from plot_phase_analysis import _motion_phase_ids, _selected_algorithms, plot_phase_analysis
+from plot_phase_analysis import _motion_phase_ids, _selected_algorithms, _series, plot_phase_analysis
 
 
 def test_plot_phase_analysis_writes_all_contract_figures(tmp_path):
@@ -62,3 +62,50 @@ def test_plot_phase_analysis_writes_all_contract_figures(tmp_path):
     assert all(path.is_file() and path.stat().st_size > 1000 for path in paths)
     assert _selected_algorithms(result) == ["fast_livo2", "candidate"]
     assert _motion_phase_ids(result) == ["phase_001"]
+
+
+def test_empty_primary_selection_does_not_fall_back_to_failures():
+    result = {
+        "phases": [{"id": "phase_000", "state": "STRAIGHT"}],
+        "algorithms": {
+            "failed": {
+                "selection_eligible": False,
+                "phases": {"phase_000": {"trajectory": {"relative_position_rmse_m": 999.0}}},
+            }
+        },
+    }
+    assert _selected_algorithms(result) == []
+    assert _series(
+        result,
+        "trajectory",
+        "relative_position_rmse_m",
+        algorithms=[],
+        phase_ids=["phase_000"],
+    ) == {}
+
+
+def test_resource_figures_are_written_when_phase_resources_exist(tmp_path):
+    run = tmp_path / "run"
+    (run / "metrics").mkdir(parents=True)
+    result = {
+        "baseline": "fast_livo2",
+        "metric_class": "relative-to-baseline/diagnostic/non-ground-truth",
+        "time_alignment_mode": "strict/clock-anchored",
+        "phases": [{"id": "phase_000", "state": "STRAIGHT", "start_s": 0.0, "end_s": 2.0}],
+        "algorithms": {
+            "fast_livo2": {
+                "selection_eligible": True,
+                "phases": {
+                    "phase_000": {
+                        "trajectory": {"relative_position_rmse_m": 0.0, "z_change_m": 0.0},
+                        "resource": {"cpu_p95_percent": 100.0, "rss_growth_mib": 5.0},
+                    }
+                },
+            }
+        },
+        "warnings": [],
+    }
+    (run / "metrics" / "phase_analysis.json").write_text(json.dumps(result), encoding="utf-8")
+    names = {path.name for path in plot_phase_analysis(run)}
+    assert "cpu_by_phase.png" in names
+    assert "rss_growth_by_phase.png" in names
