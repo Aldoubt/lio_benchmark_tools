@@ -1,7 +1,8 @@
 """Pure health-gating helpers shared by benchmark summarizers."""
 from __future__ import annotations
 
-from typing import Any
+import math
+from typing import Any, Iterable
 
 
 FULL_BAG_MIN_COVERAGE_RATIO = 0.98
@@ -45,3 +46,19 @@ def trajectory_short(
     else:
         minimum = expected * FULL_BAG_MIN_COVERAGE_RATIO
     return float(actual_duration_s) < minimum
+
+
+def nominal_stable_path_length_m(values: Iterable[float | None]) -> float | None:
+    """Return the median plausible path length, ignoring missing/invalid/diverged values."""
+    stable = []
+    for raw in values:
+        if raw is None:
+            continue
+        value = float(raw)
+        if not math.isfinite(value) or value < 0.0 or value > 1000.0:
+            continue
+        stable.append(value)
+    if not stable:
+        return None
+    stable.sort()
+    return stable[len(stable) // 2]
