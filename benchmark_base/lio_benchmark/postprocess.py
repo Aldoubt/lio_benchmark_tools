@@ -66,9 +66,18 @@ def build_stage_commands(
                 "--point-step", point_step,
                 "--voxel", voxel,
             ))
+            commands.append(_python(
+                "enhance_map_comparison.py",
+                "--run", run,
+                "--baseline", baseline,
+            ))
 
     if stage in {"report", "compare"}:
-        command = _python("generate_comprehensive_report.py", "--run", run)
+        command = _python(
+            "current_run_report.py",
+            "--run", run,
+            "--baseline", baseline,
+        )
         if no_plot:
             command.append("--no-plot")
         commands.append(command)
