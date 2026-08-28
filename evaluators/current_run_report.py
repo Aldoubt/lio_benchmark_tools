@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """Generate a comprehensive report using only the current run's artifacts.
 
-This replaces the historical ten-algorithm prose template in the active
-post-processing pipeline.  All trajectory/resource values come from the
-current run, and baseline-relative trajectory metrics are recomputed from the
-current standardized CSV trajectories.
-
-Without independent ground truth these metrics remain
+All trajectory/resource/map/diagnostic values come from the selected run.
+Without independent ground truth, baseline-relative quantities remain
 relative-to-baseline/diagnostic/non-ground-truth and are not ATE/RPE.
 """
 from __future__ import annotations
@@ -81,6 +77,12 @@ def _map_items(run: Path) -> dict[str, dict[str, Any]]:
     }
 
 
+def _trajectory_diagnostics(run: Path) -> dict[str, dict[str, Any]]:
+    payload = load_json(run / "metrics" / "trajectory_discontinuity.json", {}) or {}
+    items = payload.get("algorithms") or {}
+    return items if isinstance(items, dict) else {}
+
+
 def _relative_metrics(
     run: Path,
     algorithms: list[str],
@@ -130,7 +132,7 @@ def _best_algorithm(
 ) -> str | None:
     candidates: list[tuple[float, str]] = []
     for row in rows:
-        if not row["health_pass"]:
+        if not row.get("recommendation_eligible", row.get("health_pass", False)):
             continue
         if exclude_baseline and row["algorithm"] == baseline:
             continue
@@ -155,15 +157,23 @@ def build_report(run: Path, baseline: str = "fast_livo2") -> dict[str, Any]:
     algorithms = [str(item["algorithm"]) for item in comparison_items]
     relative = _relative_metrics(run, algorithms, baseline)
     maps = _map_items(run)
+    discontinuities = _trajectory_diagnostics(run)
 
     rows: list[dict[str, Any]] = []
     for item in comparison_items:
         algorithm = str(item["algorithm"])
         trajectory = item.get("trajectory") or {}
         resource = item.get("resource_monitor") or item.get("resource") or {}
-        valid = health_valid(item)
+        trajectory_valid = health_valid(item)
         map_item = dict(maps.get(algorithm) or {})
         map_item.setdefault("available", bool(map_item))
+        map_health_pass = (
+            bool(map_item.get("map_health_pass"))
+            if map_item.get("available") and "map_health_pass" in map_item
+            else None
+        )
+        map_health_flags = list(map_item.get("map_health_flags") or [])
+        recommendation_eligible = trajectory_valid and map_health_pass is not False
         rows.append(
             {
                 "algorithm": algorithm,
@@ -171,8 +181,11 @@ def build_report(run: Path, baseline: str = "fast_livo2") -> dict[str, Any]:
                 "group": _algorithm_config(manifest, algorithm).get("group"),
                 "status": item.get("status"),
                 "health_flags": list(item.get("health_flags") or []),
-                "health_pass": valid,
-                "recommendation_eligible": valid,
+                "health_pass": trajectory_valid,
+                "trajectory_health_pass": trajectory_valid,
+                "map_health_pass": map_health_pass,
+                "map_health_flags": map_health_flags,
+                "recommendation_eligible": recommendation_eligible,
                 "trajectory": trajectory,
                 "resource": resource,
                 "relative_to_baseline": relative.get(
@@ -184,17 +197,25 @@ def build_report(run: Path, baseline: str = "fast_livo2") -> dict[str, Any]:
                     },
                 ),
                 "map": map_item,
+                "trajectory_diagnostics": dict(discontinuities.get(algorithm) or {}),
             }
         )
 
     full_slam_candidates = [
         row["algorithm"]
         for row in rows
-        if row["health_pass"] and row.get("group") == "full_slam"
+        if row["recommendation_eligible"] and row.get("group") == "full_slam"
     ]
     recommendations = {
         "health_valid_algorithms": [
-            row["algorithm"] for row in rows if row["health_pass"]
+            row["algorithm"] for row in rows if row["trajectory_health_pass"]
+        ],
+        "map_consistent_algorithms": [
+            row["algorithm"]
+            for row in rows
+            if row["trajectory_health_pass"]
+            and row["map"].get("available")
+            and row["map_health_pass"] is True
         ],
         "closest_to_baseline": _best_algorithm(
             rows,
@@ -223,13 +244,13 @@ def build_report(run: Path, baseline: str = "fast_livo2") -> dict[str, Any]:
         ),
         "full_slam_candidates": full_slam_candidates,
         "not_recommended_this_run": [
-            row["algorithm"] for row in rows if not row["health_pass"]
+            row["algorithm"] for row in rows if not row["recommendation_eligible"]
         ],
     }
 
     dataset = manifest.get("dataset") or {}
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "report_type": "current_run_comprehensive_lio_comparison",
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "run": str(run),
@@ -246,10 +267,13 @@ def build_report(run: Path, baseline: str = "fast_livo2") -> dict[str, Any]:
             "comparison_dashboard": str(run / "figures" / "comparison_dashboard"),
             "resource_curves": str(run / "figures" / "resource_curves"),
             "map_comparison": str(run / "figures" / "fast_livo2_baseline_maps"),
+            "trajectory_discontinuity": str(run / "figures" / "trajectory_discontinuity"),
         },
         "limitations": [
             "No independent ground truth: baseline-relative metrics are diagnostic, not ATE/RPE or absolute accuracy.",
             "Map comparison uses the same raw LiDAR input reconstructed with each standardized trajectory; it is a trajectory-induced map-consistency proxy, not native mapper quality.",
+            "Map-health thresholds are conservative current-run diagnostics and are reported separately from trajectory lifecycle/health.",
+            "Trajectory discontinuity events are diagnostic; a loop-closure correction can be a legitimate pose jump and does not automatically fail trajectory health.",
         ],
     }
 
@@ -273,30 +297,61 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## 当前 run 数据",
         "",
-        "| Algorithm | Status | Health | Duration (s) | Path (m) | Z range (m) | Mean CPU (%) | Peak RSS (MiB) | Rel. RMSE (m) | Rel. P95 (m) | Map points |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Algorithm | Status | Traj health | Eligible | Duration (s) | Path (m) | Z range (m) | Mean CPU (%) | Peak RSS (MiB) | Rel. RMSE (m) | Rel. P95 (m) |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in report["algorithms"]:
         trajectory = row["trajectory"]
         resource = row["resource"]
         relative = row["relative_to_baseline"]
-        map_item = row["map"]
         health = (
             "normal"
-            if row["health_pass"]
+            if row["trajectory_health_pass"]
             else ";".join(row["health_flags"]) or "needs_review"
         )
-        map_points = map_item.get("map_points") if map_item.get("available") else None
         lines.append(
             f"| {row['label']} | {row['status']} | {health} | "
+            f"{'yes' if row['recommendation_eligible'] else 'no'} | "
             f"{_format(trajectory.get('duration_s'), 2)} | "
             f"{_format(trajectory.get('path_length_m'), 2)} | "
             f"{_format(trajectory.get('z_range_m'), 3)} | "
             f"{_format(resource.get('mean_cpu_percent'), 1)} | "
             f"{_format(resource.get('peak_rss_mib'), 1)} | "
             f"{_format(relative.get('rmse_m'), 3)} | "
-            f"{_format(relative.get('p95_m'), 3)} | "
-            f"{_format(map_points, 0)} |"
+            f"{_format(relative.get('p95_m'), 3)} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## 地图一致性与轨迹跳变诊断",
+            "",
+            "| Algorithm | Map health | Robust Z span (m) | Voxel IoU | Sym NN P95 (m) | Pos jumps | Yaw jumps | Max Δpos (m) | Max Δyaw (deg) |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in report["algorithms"]:
+        map_item = row["map"]
+        diagnostics = row["trajectory_diagnostics"]
+        robust = map_item.get("robust_extent_xyz_m") or []
+        robust_z = robust[2] if len(robust) >= 3 else None
+        if not map_item.get("available"):
+            map_health = "N/A"
+        elif row["map_health_pass"] is True:
+            map_health = "normal"
+        elif row["map_health_pass"] is False:
+            map_health = ";".join(row["map_health_flags"]) or "needs_review"
+        else:
+            map_health = "legacy/unscored"
+        lines.append(
+            f"| {row['label']} | {map_health} | "
+            f"{_format(robust_z, 3)} | "
+            f"{_format(map_item.get('baseline_voxel_iou'), 3)} | "
+            f"{_format(map_item.get('symmetric_nn_p95_m'), 3)} | "
+            f"{diagnostics.get('position_jump_count', 'N/A')} | "
+            f"{diagnostics.get('yaw_jump_count', 'N/A')} | "
+            f"{_format(diagnostics.get('max_position_step_m'), 3)} | "
+            f"{_format(diagnostics.get('max_yaw_step_deg'), 3)} |"
         )
 
     recommendations = report["recommendations"]
@@ -306,22 +361,24 @@ def render_markdown(report: dict[str, Any]) -> str:
             "## 数据驱动候选视图",
             "",
             f"- 与 `{report['baseline']}` 最接近（排除 baseline）：`{recommendations.get('closest_to_baseline') or 'N/A'}`",
-            f"- 健康算法中最低 Z range：`{recommendations.get('lowest_z_range') or 'N/A'}`",
-            f"- 健康算法中最低平均 CPU：`{recommendations.get('lowest_mean_cpu') or 'N/A'}`",
-            f"- 健康算法中最低峰值 RSS：`{recommendations.get('lowest_peak_rss') or 'N/A'}`",
-            "- 健康 full-SLAM 候选：`"
+            f"- 当前地图一致性通过：`{', '.join(recommendations.get('map_consistent_algorithms') or []) or 'N/A'}`",
+            f"- 候选中最低 Z range：`{recommendations.get('lowest_z_range') or 'N/A'}`",
+            f"- 候选中最低平均 CPU：`{recommendations.get('lowest_mean_cpu') or 'N/A'}`",
+            f"- 候选中最低峰值 RSS：`{recommendations.get('lowest_peak_rss') or 'N/A'}`",
+            "- 当前 full-SLAM 候选：`"
             + (", ".join(recommendations.get("full_slam_candidates") or []) or "N/A")
             + "`",
-            "- 本轮 health-fail：`"
+            "- 本轮不进入推荐集：`"
             + (", ".join(recommendations.get("not_recommended_this_run") or []) or "none")
             + "`",
             "",
             "这些维度是不同工程目标下的筛选视图，不构成绝对精度总排名。",
             "",
-            "## 建图可视化",
+            "## 可视化",
             "",
-            "- 执行 `compare --with-maps` 后，统一尺度 XY/XZ 主图和 `*_all` 诊断图位于 `figures/fast_livo2_baseline_maps/`。",
-            "- `Map points` 为 N/A 时表示当前 run 尚未生成地图重建产物；报告不会回填历史 run 的地图数据。",
+            "- `figures/fast_livo2_baseline_maps/`：统一尺度 XY/XZ 地图主图与 `*_all` 失败诊断图。",
+            "- `figures/trajectory_discontinuity/`：逐样本位置/航向跳变随 rosbag 时间的诊断图。",
+            "- `metrics/trajectory_discontinuity/<algorithm>.csv`：后续交互前端可直接使用的带时间戳逐步诊断序列。",
             "",
             "## 限制",
             "",
@@ -346,7 +403,9 @@ def write_outputs(run: Path, report: dict[str, Any]) -> None:
     fields = [
         "algorithm",
         "status",
-        "health",
+        "trajectory_health",
+        "map_health",
+        "recommendation_eligible",
         "relative_rmse_m",
         "relative_p95_m",
         "duration_s",
@@ -355,6 +414,13 @@ def write_outputs(run: Path, report: dict[str, Any]) -> None:
         "mean_cpu_percent",
         "peak_rss_mib",
         "map_points",
+        "robust_z_span_m",
+        "baseline_voxel_iou",
+        "symmetric_nn_p95_m",
+        "position_jump_count",
+        "yaw_jump_count",
+        "max_position_step_m",
+        "max_yaw_step_deg",
     ]
     with (reports / "comprehensive_comparison.csv").open(
         "w", newline="", encoding="utf-8"
@@ -362,15 +428,28 @@ def write_outputs(run: Path, report: dict[str, Any]) -> None:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         for row in report["algorithms"]:
+            map_item = row["map"]
+            diagnostics = row["trajectory_diagnostics"]
+            robust = map_item.get("robust_extent_xyz_m") or []
             writer.writerow(
                 {
                     "algorithm": row["algorithm"],
                     "status": row["status"],
-                    "health": (
+                    "trajectory_health": (
                         "normal"
-                        if row["health_pass"]
+                        if row["trajectory_health_pass"]
                         else ";".join(row["health_flags"])
                     ),
+                    "map_health": (
+                        "N/A"
+                        if not map_item.get("available")
+                        else (
+                            "normal"
+                            if row["map_health_pass"] is True
+                            else ";".join(row["map_health_flags"])
+                        )
+                    ),
+                    "recommendation_eligible": row["recommendation_eligible"],
                     "relative_rmse_m": row["relative_to_baseline"].get("rmse_m"),
                     "relative_p95_m": row["relative_to_baseline"].get("p95_m"),
                     "duration_s": row["trajectory"].get("duration_s"),
@@ -378,11 +457,14 @@ def write_outputs(run: Path, report: dict[str, Any]) -> None:
                     "z_range_m": row["trajectory"].get("z_range_m"),
                     "mean_cpu_percent": row["resource"].get("mean_cpu_percent"),
                     "peak_rss_mib": row["resource"].get("peak_rss_mib"),
-                    "map_points": (
-                        row["map"].get("map_points")
-                        if row["map"].get("available")
-                        else None
-                    ),
+                    "map_points": map_item.get("map_points") if map_item.get("available") else None,
+                    "robust_z_span_m": robust[2] if len(robust) >= 3 else None,
+                    "baseline_voxel_iou": map_item.get("baseline_voxel_iou"),
+                    "symmetric_nn_p95_m": map_item.get("symmetric_nn_p95_m"),
+                    "position_jump_count": diagnostics.get("position_jump_count"),
+                    "yaw_jump_count": diagnostics.get("yaw_jump_count"),
+                    "max_position_step_m": diagnostics.get("max_position_step_m"),
+                    "max_yaw_step_deg": diagnostics.get("max_yaw_step_deg"),
                 }
             )
 
