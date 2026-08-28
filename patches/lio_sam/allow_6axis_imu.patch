@@ -1,0 +1,67 @@
+diff --git a/include/lio_sam/utility.hpp b/include/lio_sam/utility.hpp
+--- a/include/lio_sam/utility.hpp
++++ b/include/lio_sam/utility.hpp
+@@ -104,6 +104,7 @@ public:
+     float imuGyrBiasN;
+     float imuGravity;
+     float imuRPYWeight;
++    bool allow6AxisImu;
+     vector<double> extRotV;
+     vector<double> extRPYV;
+     vector<double> extTransV;
+@@ -231,6 +232,8 @@ public:
+         get_parameter("imuGravity", imuGravity);
+         declare_parameter("imuRPYWeight", 0.01);
+         get_parameter("imuRPYWeight", imuRPYWeight);
++        declare_parameter("allow6AxisImu", false);
++        get_parameter("allow6AxisImu", allow6AxisImu);
+ 
+         double ida[] = { 1.0,  0.0,  0.0,
+                          0.0,  1.0,  0.0,
+@@ -327,16 +330,42 @@ public:
+         imu_out.angular_velocity.y = gyr.y();
+         imu_out.angular_velocity.z = gyr.z();
+         // rotate roll pitch yaw
+         Eigen::Quaterniond q_from(imu_in.orientation.w, imu_in.orientation.x, imu_in.orientation.y, imu_in.orientation.z);
++        const double q_norm = q_from.norm();
++        if (q_norm < 0.1)
++        {
++            if (!allow6AxisImu)
++            {
++                RCLCPP_ERROR(get_logger(), "Invalid quaternion, please use a 9-axis IMU!");
++                rclcpp::shutdown();
++                return imu_out;
++            }
++
++            const double acc_norm = acc.norm();
++            if (acc_norm < 1e-3)
++            {
++                RCLCPP_ERROR(get_logger(), "6-axis IMU fallback cannot estimate gravity from near-zero acceleration");
++                rclcpp::shutdown();
++                return imu_out;
++            }
++
++            const double roll = atan2(acc.y(), acc.z());
++            const double pitch = atan2(-acc.x(), sqrt(acc.y() * acc.y() + acc.z() * acc.z()));
++            const double cr = cos(0.5 * roll);
++            const double sr = sin(0.5 * roll);
++            const double cp = cos(0.5 * pitch);
++            const double sp = sin(0.5 * pitch);
++            q_from = Eigen::Quaterniond(cr * cp, sr * cp, cr * sp, -sr * sp);
++            q_from.normalize();
++            RCLCPP_WARN_ONCE(
++                get_logger(),
++                "6-axis IMU fallback active: roll/pitch estimated from acceleration, yaw initialized to zero");
++        }
++
+         Eigen::Quaterniond q_final = q_from * extQRPY;
+         imu_out.orientation.x = q_final.x();
+         imu_out.orientation.y = q_final.y();
+         imu_out.orientation.z = q_final.z();
+         imu_out.orientation.w = q_final.w();
+ 
+-        if (sqrt(q_final.x()*q_final.x() + q_final.y()*q_final.y() + q_final.z()*q_final.z() + q_final.w()*q_final.w()) < 0.1)
++        if (q_final.norm() < 0.1)
+         {
+             RCLCPP_ERROR(get_logger(), "Invalid quaternion, please use a 9-axis IMU!");
+             rclcpp::shutdown();
