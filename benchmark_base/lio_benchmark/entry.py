@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .postprocess import execute_stage
 
-POSTPROCESS_COMMANDS = {"standardize", "evaluate", "visualize", "report", "compare"}
+POSTPROCESS_COMMANDS = {"standardize", "evaluate", "visualize", "report", "compare", "phase-analysis"}
 
 
 def _postprocess_parser() -> argparse.ArgumentParser:
@@ -31,6 +31,13 @@ def _postprocess_parser() -> argparse.ArgumentParser:
 
     parser = sub.add_parser("report")
     parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--no-plot", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+
+    parser = sub.add_parser("phase-analysis")
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--baseline", default="fast_livo2")
+    parser.add_argument("--phase-param", action="append", default=[])
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return root
@@ -64,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
         })
     elif args.command == "report":
         kwargs["no_plot"] = args.no_plot
+    elif args.command == "phase-analysis":
+        kwargs.update({
+            "baseline": args.baseline,
+            "phase_params": args.phase_param,
+            "no_plot": args.no_plot,
+        })
     try:
         return execute_stage(args.run, args.command, **kwargs)
     except (ValueError, FileNotFoundError) as exc:
