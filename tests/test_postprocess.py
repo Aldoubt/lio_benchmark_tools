@@ -23,7 +23,7 @@ def test_visualize_bootstraps_metrics_when_missing_and_maps_are_opt_in(tmp_path)
         "summarize_smoke_run.py",
         "plot_comparison_dashboard.py",
         "plot_resource_curves.py",
-        "visualize_baseline_maps.py",
+        "reconstruct_comparison_maps.py",
         "enhance_map_comparison.py",
     ]
     assert "--baseline" in commands[-2]
@@ -50,7 +50,7 @@ def test_compare_with_maps_enhances_maps_before_current_run_report(tmp_path):
         "summarize_smoke_run.py",
         "plot_comparison_dashboard.py",
         "plot_resource_curves.py",
-        "visualize_baseline_maps.py",
+        "reconstruct_comparison_maps.py",
         "enhance_map_comparison.py",
         "current_run_report.py",
     ]
