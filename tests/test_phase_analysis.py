@@ -2,6 +2,7 @@ import datetime as dt
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from phase_analysis import (
@@ -109,12 +110,32 @@ def test_phase_builder_respects_priority_and_merges_short_fragments():
     ]
     samples, phases = build_phases(rows, params)
     states = [phase["state"] for phase in phases]
-    assert states[0] == "INITIALIZATION"
+    assert states[0] == "PRE_MOTION_STATIC"
     assert "TURN" in states
     assert states[-1] == "STRAIGHT"
-    turn_samples = [sample for sample in samples if sample["state"] == "TURN"]
+    turn_samples = [s for s in samples if s["state"] == "TURN"]
     assert turn_samples
-    assert any(sample["curvature_1pm"] > params["high_curvature_1pm"] for sample in turn_samples)
+    assert any(s["curvature_1pm"] > params["high_curvature_1pm"] for s in turn_samples)
+
+
+def test_phase_builder_labels_terminal_static_edges():
+    params = dict(DEFAULT_PHASE_PARAMETERS)
+    params.update({
+        "resample_hz": 2.0,
+        "stationary_speed_mps": 0.05,
+        "min_phase_duration_s": 0.5,
+        "sustained_motion_s": 1.0,
+    })
+    rows = [
+        _row(0.0, 0.0), _row(0.5, 0.0),
+        _row(1.0, 0.2), _row(1.5, 0.4), _row(2.0, 0.6),
+        _row(2.5, 0.6), _row(3.0, 0.6),
+    ]
+    _, phases = build_phases(rows, params)
+    states = [phase["state"] for phase in phases]
+    assert states[0] == "PRE_MOTION_STATIC"
+    assert states[-1] == "POST_MOTION_STATIC"
+    assert "STRAIGHT" in states
 
 
 def test_phase_metrics_and_resource_aggregation():
@@ -132,22 +153,22 @@ def test_phase_metrics_and_resource_aggregation():
         {"trajectory_time_s": 1.5, "cpu_percent": 30.0, "rss_bytes": 120 * 1024 * 1024, "threads": 4},
         {"trajectory_time_s": 2.5, "cpu_percent": 20.0, "rss_bytes": 130 * 1024 * 1024, "threads": 3},
     ]
-    result = aggregate_resource_phase(resource, phase)
-    assert result["resource_samples"] == 3
-    assert result["cpu_median_percent"] == pytest.approx(20.0)
-    assert result["rss_growth_mib"] == pytest.approx(30.0)
-    assert result["threads_peak"] == 4
+    r = aggregate_resource_phase(resource, phase)
+    assert r["resource_samples"] == 3
+    assert r["cpu_median_percent"] == pytest.approx(20.0)
+    assert r["rss_growth_mib"] == pytest.approx(30.0)
+    assert r["threads_peak"] == 4
 
 
 def _write_traj(path: Path, rows):
     import csv
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = ["timestamp_s", "x_m", "y_m", "z_m", "roll_rad", "pitch_rad", "yaw_rad"]
-    with path.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields)
-        writer.writeheader()
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
         for row in rows:
-            writer.writerow({key: row.get(key, 0.0) for key in fields})
+            w.writerow({key: row.get(key, 0.0) for key in fields})
 
 
 def test_run_phase_analysis_writes_contract_and_keeps_health_failures(tmp_path):
