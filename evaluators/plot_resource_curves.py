@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +68,37 @@ def samples_for(path: Path) -> list[dict[str, float]]:
     return samples
 
 
+def _percentile(values: list[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * percentile
+    lower = int(math.floor(rank))
+    upper = int(math.ceil(rank))
+    if lower == upper:
+        return ordered[lower]
+    fraction = rank - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def cpu_distribution(samples: list[dict[str, float]]) -> dict[str, float]:
+    """Return robust CPU statistics derived from the recorded time series."""
+    values = [float(item.get("cpu_percent", 0.0) or 0.0) for item in samples]
+    if not values:
+        return {
+            "median_cpu_percent": 0.0,
+            "p95_cpu_percent": 0.0,
+            "peak_cpu_percent_from_samples": 0.0,
+        }
+    return {
+        "median_cpu_percent": float(statistics.median(values)),
+        "p95_cpu_percent": float(_percentile(values, 0.95)),
+        "peak_cpu_percent_from_samples": float(max(values)),
+    }
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as stream:
         fields = ("algorithm", "label", "elapsed_s", "cpu_percent", "rss_mib", "threads", "write_mib")
@@ -125,11 +158,13 @@ def plot_summary(path: Path, summary: list[dict[str, Any]], *, only_healthy: boo
     positions = list(range(len(labels)))
     fig, axes = plt.subplots(3, 1, figsize=(14, 12), constrained_layout=True)
 
-    width = 0.38
+    width = 0.25
+    median_cpu = [item["median_cpu_percent"] for item in valid]
     mean_cpu = [item["mean_cpu_percent"] for item in valid]
-    peak_cpu = [item["peak_cpu_percent"] for item in valid]
-    axes[0].bar([p - width / 2 for p in positions], mean_cpu, width=width, label="Mean CPU")
-    axes[0].bar([p + width / 2 for p in positions], peak_cpu, width=width, label="Peak CPU")
+    p95_cpu = [item["p95_cpu_percent"] for item in valid]
+    axes[0].bar([p - width for p in positions], median_cpu, width=width, label="Median CPU")
+    axes[0].bar(positions, mean_cpu, width=width, label="Mean CPU")
+    axes[0].bar([p + width for p in positions], p95_cpu, width=width, label="P95 CPU")
     axes[0].set_ylabel("CPU (%)")
     axes[0].legend()
 
@@ -169,6 +204,7 @@ def main() -> int:
         for sample in samples:
             rows.append({"algorithm": algorithm, "label": LABELS.get(algorithm, algorithm), **sample})
         resource = load_json(resource_path)
+        distribution = cpu_distribution(samples)
         summary.append({
             "algorithm": algorithm,
             "label": LABELS.get(algorithm, algorithm),
@@ -176,8 +212,10 @@ def main() -> int:
             "health_flags": health.get(algorithm, []),
             "sample_count": len(samples),
             "duration_s": float(resource.get("wall_time_s", 0.0) or 0.0),
+            "median_cpu_percent": distribution["median_cpu_percent"],
             "mean_cpu_percent": float(resource.get("mean_cpu_percent", 0.0) or 0.0),
-            "peak_cpu_percent": float(resource.get("peak_cpu_percent", 0.0) or 0.0),
+            "p95_cpu_percent": distribution["p95_cpu_percent"],
+            "peak_cpu_percent": float(resource.get("peak_cpu_percent", distribution["peak_cpu_percent_from_samples"]) or 0.0),
             "mean_rss_mib": float(resource.get("mean_rss_bytes", 0.0) or 0.0) / (1024.0 ** 2),
             "peak_rss_mib": float(resource.get("peak_rss_bytes", 0.0) or 0.0) / (1024.0 ** 2),
             "peak_threads": int(resource.get("peak_threads", 0) or 0),
@@ -197,6 +235,7 @@ def main() -> int:
         "# Resource curves\n\n"
         "CPU is the logical CPU sum of the algorithm process tree; 100% is one logical core. "
         "RSS is the process-tree resident set size. Samples are recorded at the manifest or environment interval. "
+        "The summary CPU panel shows median, mean and P95 from the recorded time series; the raw instantaneous peak remains in resource_summary.json/csv. "
         "resource_summary_valid.png excludes algorithms with trajectory health flags; resource_summary.png keeps every algorithm and marks health-fail rows.\n",
         encoding="utf-8",
     )
