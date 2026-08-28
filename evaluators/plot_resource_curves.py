@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -66,12 +68,56 @@ def samples_for(path: Path) -> list[dict[str, float]]:
     return samples
 
 
+def _percentile(values: list[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * percentile
+    lower = int(math.floor(rank))
+    upper = int(math.ceil(rank))
+    if lower == upper:
+        return ordered[lower]
+    fraction = rank - lower
+    return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def cpu_distribution(samples: list[dict[str, float]]) -> dict[str, float]:
+    """Return robust CPU statistics derived from the recorded time series."""
+    values = [float(item.get("cpu_percent", 0.0) or 0.0) for item in samples]
+    if not values:
+        return {
+            "median_cpu_percent": 0.0,
+            "p95_cpu_percent": 0.0,
+            "peak_cpu_percent_from_samples": 0.0,
+        }
+    return {
+        "median_cpu_percent": float(statistics.median(values)),
+        "p95_cpu_percent": float(_percentile(values, 0.95)),
+        "peak_cpu_percent_from_samples": float(max(values)),
+    }
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as stream:
         fields = ("algorithm", "label", "elapsed_s", "cpu_percent", "rss_mib", "threads", "write_mib")
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def health_flags(run: Path) -> dict[str, list[str]]:
+    comparison = load_json(run / "metrics" / "full_comparison.json")
+    result: dict[str, list[str]] = {}
+    for item in comparison.get("algorithms", []) or []:
+        if not isinstance(item, dict) or not item.get("algorithm"):
+            continue
+        flags = list(item.get("health_flags") or [])
+        if item.get("status") != "SUCCESS":
+            flags.insert(0, f"status:{item.get('status') or 'UNKNOWN'}")
+        result[str(item["algorithm"])] = flags
+    return result
 
 
 def plot_curves(path: Path, series: dict[str, list[dict[str, float]]]) -> None:
@@ -89,33 +135,51 @@ def plot_curves(path: Path, series: dict[str, list[dict[str, float]]]) -> None:
     axes[1].set_ylabel("RSS (MiB)")
     axes[2].set_ylabel("Threads")
     axes[2].set_xlabel("Elapsed algorithm time (s)")
-    axes[0].set_title("Algorithm process-tree resource curves")
+    axes[0].set_title("Algorithm process-tree resource curves", pad=20)
     for axis in axes:
         axis.grid(alpha=0.25)
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc="upper center", ncol=5, bbox_to_anchor=(0.5, 1.02), fontsize=9)
-    fig.savefig(path, dpi=170, bbox_inches="tight")
+    fig.savefig(path, dpi=170, bbox_inches="tight", pad_inches=0.2)
     plt.close(fig)
 
 
-def plot_summary(path: Path, summary: list[dict[str, Any]]) -> None:
+def _display_label(item: dict[str, Any]) -> str:
+    label = str(item["label"])
+    return f"{label} [health-fail]" if item.get("health_flags") else label
+
+
+def plot_summary(path: Path, summary: list[dict[str, Any]], *, only_healthy: bool = False) -> None:
     valid = [item for item in summary if item.get("sample_count", 0) > 0]
-    labels = [item["label"] for item in valid]
+    if only_healthy:
+        valid = [item for item in valid if not item.get("health_flags")]
+    labels = [_display_label(item) for item in valid]
     positions = list(range(len(labels)))
     fig, axes = plt.subplots(3, 1, figsize=(14, 12), constrained_layout=True)
-    axes[0].bar(positions, [item["mean_cpu_percent"] for item in valid], label="Mean CPU")
-    axes[0].bar(positions, [item["peak_cpu_percent"] for item in valid], alpha=0.45, label="Peak CPU")
+
+    width = 0.25
+    median_cpu = [item["median_cpu_percent"] for item in valid]
+    mean_cpu = [item["mean_cpu_percent"] for item in valid]
+    p95_cpu = [item["p95_cpu_percent"] for item in valid]
+    axes[0].bar([p - width for p in positions], median_cpu, width=width, label="Median CPU")
+    axes[0].bar(positions, mean_cpu, width=width, label="Mean CPU")
+    axes[0].bar([p + width for p in positions], p95_cpu, width=width, label="P95 CPU")
     axes[0].set_ylabel("CPU (%)")
-    axes[1].bar(positions, [item["peak_rss_mib"] for item in valid], color="#d95f02")
-    axes[1].set_ylabel("Peak RSS (MiB)")
-    axes[2].bar(positions, [item["peak_threads"] for item in valid], color="#1b9e77")
-    axes[2].set_ylabel("Peak threads")
-    axes[2].set_xticks(positions, labels, rotation=35, ha="right")
     axes[0].legend()
+
+    axes[1].bar(positions, [item["peak_rss_mib"] for item in valid])
+    axes[1].set_ylabel("Peak RSS (MiB)")
+    axes[2].bar(positions, [item["peak_threads"] for item in valid])
+    axes[2].set_ylabel("Peak threads")
+
     for axis in axes:
+        axis.set_xticks(positions)
+        axis.set_xticklabels(labels, rotation=35, ha="right", fontsize=8)
         axis.grid(axis="y", alpha=0.25)
-    fig.suptitle("Resource summary")
+
+    qualifier = "health-valid algorithms" if only_healthy else "all algorithms; health-fail rows marked"
+    fig.suptitle(f"Resource summary — {qualifier}")
     fig.savefig(path, dpi=170, bbox_inches="tight")
     plt.close(fig)
 
@@ -129,6 +193,7 @@ def main() -> int:
     output = (args.output_dir or run / "figures" / "resource_curves").resolve()
     output.mkdir(parents=True, exist_ok=True)
     status = load_json(run / "metadata" / "run_status.json")
+    health = health_flags(run)
     series: dict[str, list[dict[str, float]]] = {}
     summary: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
@@ -139,14 +204,18 @@ def main() -> int:
         for sample in samples:
             rows.append({"algorithm": algorithm, "label": LABELS.get(algorithm, algorithm), **sample})
         resource = load_json(resource_path)
+        distribution = cpu_distribution(samples)
         summary.append({
             "algorithm": algorithm,
             "label": LABELS.get(algorithm, algorithm),
             "status": (entry.get("result") or {}).get("status"),
+            "health_flags": health.get(algorithm, []),
             "sample_count": len(samples),
             "duration_s": float(resource.get("wall_time_s", 0.0) or 0.0),
+            "median_cpu_percent": distribution["median_cpu_percent"],
             "mean_cpu_percent": float(resource.get("mean_cpu_percent", 0.0) or 0.0),
-            "peak_cpu_percent": float(resource.get("peak_cpu_percent", 0.0) or 0.0),
+            "p95_cpu_percent": distribution["p95_cpu_percent"],
+            "peak_cpu_percent": float(resource.get("peak_cpu_percent", distribution["peak_cpu_percent_from_samples"]) or 0.0),
             "mean_rss_mib": float(resource.get("mean_rss_bytes", 0.0) or 0.0) / (1024.0 ** 2),
             "peak_rss_mib": float(resource.get("peak_rss_bytes", 0.0) or 0.0) / (1024.0 ** 2),
             "peak_threads": int(resource.get("peak_threads", 0) or 0),
@@ -160,11 +229,14 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(summary)
     plot_curves(output / "resource_curves.png", series)
-    plot_summary(output / "resource_summary.png", summary)
+    plot_summary(output / "resource_summary.png", summary, only_healthy=False)
+    plot_summary(output / "resource_summary_valid.png", summary, only_healthy=True)
     (output / "README.md").write_text(
         "# Resource curves\n\n"
         "CPU is the logical CPU sum of the algorithm process tree; 100% is one logical core. "
-        "RSS is the process-tree resident set size. Samples are recorded at the manifest or environment interval.\n",
+        "RSS is the process-tree resident set size. Samples are recorded at the manifest or environment interval. "
+        "The summary CPU panel shows median, mean and P95 from the recorded time series; the raw instantaneous peak remains in resource_summary.json/csv. "
+        "resource_summary_valid.png excludes algorithms with trajectory health flags; resource_summary.png keeps every algorithm and marks health-fail rows.\n",
         encoding="utf-8",
     )
     print(json.dumps({"output": str(output), "algorithms": len(series), "samples": len(rows)}, ensure_ascii=False, indent=2))
