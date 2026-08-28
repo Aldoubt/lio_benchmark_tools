@@ -175,6 +175,8 @@ benchmark_base/bin/lio-benchmark phase-analysis \
 
 `PRE_MOTION_STATIC / POST_MOTION_STATIC / STATIONARY / STRAIGHT / TURN / HIGH_CURVATURE` 是从 baseline 轨迹自动得到的运动学 phase，不等价于“温室行间”“垄端转弯”等场景语义。农业场景语义需要在有对应温室地图、任务区或人工/自动语义证据时再叠加，不能从开阔测试场景的运动轨迹直接推断。
 
+当前开阔场景长 run 可以作为 phase pipeline 的验证集：它适合验证静止/直行/转弯切分、health gating、历史时间证据降级与图表契约；温室场景应作为下一阶段的场景化全量 benchmark，用来验证行间退化、垄端转弯、植被遮挡和资源压力是否与运动 phase/场景语义共同相关。
+
 ## 7. 当前验收边界
 
 在真实 Ubuntu/ROS 数据机验证前，不把以下事项标记为最终通过：
