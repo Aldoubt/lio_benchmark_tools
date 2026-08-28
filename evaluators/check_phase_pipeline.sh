@@ -17,6 +17,7 @@ python3 -m py_compile \
   evaluators/manual_run_controller_base.py \
   evaluators/summarize_smoke_run.py \
   evaluators/current_run_report.py \
+  evaluators/generate_comprehensive_report.py \
   evaluators/reconstruct_comparison_maps.py \
   evaluators/enhance_map_comparison.py \
   benchmark_base/lio_benchmark/entry.py \
@@ -38,6 +39,7 @@ python3 -m pytest -q \
   tests/test_entry.py \
   tests/test_postprocess.py \
   tests/test_current_run_report.py \
+  tests/test_legacy_comprehensive_report_wrapper.py \
   tests/test_map_comparison_enhancement.py \
   tests/test_map_reconstruction_selection.py
 
@@ -59,6 +61,7 @@ Expected visualization behavior:
 
 Current-run comparison/report behavior:
   - comprehensive report values come only from the selected run
+  - the legacy generate_comprehensive_report.py filename delegates to the current-run-only generator
   - whole-run baseline-relative RMSE/P95 are recomputed from current standardized CSVs
   - healthy algorithms are not excluded by historical hard-coded recommendations
   - missing current-run map metadata is reported as N/A rather than backfilled
