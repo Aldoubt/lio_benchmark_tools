@@ -160,6 +160,24 @@ def test_phase_metrics_and_resource_aggregation():
     assert r["threads_peak"] == 4
 
 
+def test_adjacent_resource_phases_own_boundary_sample_once():
+    resource = [
+        {"trajectory_time_s": 0.5, "cpu_percent": 10.0, "rss_bytes": 100, "threads": 1},
+        {"trajectory_time_s": 1.0, "cpu_percent": 20.0, "rss_bytes": 100, "threads": 1},
+        {"trajectory_time_s": 1.5, "cpu_percent": 30.0, "rss_bytes": 100, "threads": 1},
+        {"trajectory_time_s": 2.0, "cpu_percent": 40.0, "rss_bytes": 100, "threads": 1},
+    ]
+    left = {"id": "phase_000", "state": "STRAIGHT", "start_s": 0.0, "end_s": 1.0, "duration_s": 1.0}
+    right = {"id": "phase_001", "state": "TURN", "start_s": 1.0, "end_s": 2.0, "duration_s": 1.0}
+
+    left_metrics = aggregate_resource_phase(resource, left, include_end=False)
+    right_metrics = aggregate_resource_phase(resource, right, include_end=True)
+
+    assert left_metrics["resource_samples"] == 1
+    assert right_metrics["resource_samples"] == 3
+    assert left_metrics["resource_samples"] + right_metrics["resource_samples"] == len(resource)
+
+
 def _write_traj(path: Path, rows):
     import csv
     path.parent.mkdir(parents=True, exist_ok=True)
