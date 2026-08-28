@@ -2,7 +2,7 @@
 """Clock-anchor-aware facade for the existing manual LIO run controller.
 
 The large, battle-tested lifecycle implementation stays in
-manual_run_controller_base.py.  This facade adds strict /clock capture without
+manual_run_controller_base.py. This facade adds strict /clock capture without
 copying or forking the rest of the controller logic.
 """
 from __future__ import annotations
@@ -29,20 +29,15 @@ def _make_manual_controller_class(base_class: type) -> type:
                 raise ControllerError(
                     "clock anchor recorder requires an allocated output directory"
                 )
-            existing = self._processes.get("clock_anchor_recorder")
+            existing = self._processes.get("clock_anchor")
             if existing is not None and self._poll(existing) is None:
                 return
             command = [
                 sys.executable,
                 str(REPO_ROOT / "evaluators/clock_anchor_recorder.py"),
-                "--output",
-                str(self._output_dir / "clock_anchors.json"),
+                "--output", str(self._output_dir / "clock_anchors.json"),
             ]
-            process = self._spawn(
-                "clock_anchor_recorder",
-                self._shell_script(command),
-                self._output_dir / "clock_anchor_recorder.log",
-            )
+            process = self._spawn("clock_anchor", self._shell_script(command), self._output_dir / "clock_anchor_recorder.log")
             self._sleep(0.25)
             if self._poll(process) is not None:
                 raise ControllerError(
@@ -64,13 +59,13 @@ def _make_manual_controller_class(base_class: type) -> type:
             return self.snapshot()
 
         def _finalize(self, **kwargs: Any) -> dict[str, Any]:
-            # Stop playback first so the last /clock sample can arrive.  Then
+            # Stop playback first so the last /clock sample can arrive. Then
             # stop the recorder and let its finally block atomically write the
             # status=finished snapshot before the base finalizer continues.
             if self._bag_process is not None and self._poll(self._bag_process) is None:
                 self._terminate("bag_play", signal.SIGINT, 5.0)
-            if "clock_anchor_recorder" in self._processes:
-                self._terminate("clock_anchor_recorder", signal.SIGINT, 5.0)
+            if "clock_anchor" in self._processes:
+                self._terminate("clock_anchor", signal.SIGTERM, 5.0)
             return super()._finalize(**kwargs)
 
     ClockAnchoredManualRunController.__name__ = "ManualRunController"
