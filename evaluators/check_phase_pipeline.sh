@@ -16,6 +16,8 @@ python3 -m py_compile \
   evaluators/manual_run_controller.py \
   evaluators/manual_run_controller_base.py \
   evaluators/summarize_smoke_run.py \
+  evaluators/current_run_report.py \
+  evaluators/enhance_map_comparison.py \
   benchmark_base/lio_benchmark/entry.py \
   benchmark_base/lio_benchmark/postprocess.py
 
@@ -33,11 +35,13 @@ python3 -m pytest -q \
   tests/test_manual_clock_anchor_facade.py \
   tests/test_manual_run_controller.py \
   tests/test_entry.py \
-  tests/test_postprocess.py
+  tests/test_postprocess.py \
+  tests/test_current_run_report.py \
+  tests/test_map_comparison_enhancement.py
 
 cat <<'EOF'
 
-phase pipeline static/self tests passed.
+phase/comparison pipeline static/self tests passed.
 
 Next, inspect an existing run without changing it:
   benchmark_base/bin/lio-benchmark phase-analysis --run <RUN_DIR> --baseline fast_livo2 --dry-run
@@ -50,6 +54,13 @@ Expected visualization behavior:
   - *_all trajectory figures retain health-fail runs for diagnosis
   - PRE_MOTION_STATIC and POST_MOTION_STATIC remain in the timeline but are excluded from primary trajectory plots
   - trajectory-only runs do not keep stale cpu_by_phase.png or rss_growth_by_phase.png
+
+Current-run comparison/report behavior:
+  - comprehensive report values come only from the selected run
+  - whole-run baseline-relative RMSE/P95 are recomputed from current standardized CSVs
+  - healthy algorithms are not excluded by historical hard-coded recommendations
+  - missing current-run map metadata is reported as N/A rather than backfilled
+  - compare --with-maps adds health-gated XY/XZ map grids plus *_all diagnostics with shared axes/Z scale
 
 Smoke coverage policy:
   - short smoke runs are compared with smoke_duration_s and allow a 5 s startup margin
