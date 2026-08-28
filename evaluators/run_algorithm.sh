@@ -24,8 +24,6 @@ if [[ -e "$output_dir/run_result.json" || -e "$output_dir/trajectory/metadata.ya
   exit 73
 fi
 export ROS_LOG_DIR="$output_dir/ros_logs"
-# Keep benchmark publishers, /tf, and /clock isolated from any robot stack that
-# may already be running on the workstation.  Override only for a controlled CI.
 export ROS_DOMAIN_ID="${LIO_BENCHMARK_ROS_DOMAIN_ID:-77}"
 
 status_update() {
@@ -61,7 +59,6 @@ for assignment in "${algorithm_environment[@]:-}"; do
 done
 for setup in "${setup_scripts[@]}"; do
   [[ "$setup" = /* ]] || setup="$(cd -- "$(dirname -- "$script_dir")" && pwd)/$setup"
-  # shellcheck disable=SC1090
   set +u
   source "$setup"
   set -u
@@ -96,6 +93,7 @@ node_pid=""
 node_control_pid=""
 record_pid=""
 resource_monitor_pid=""
+clock_anchor_pid=""
 status_heartbeat_pid=""
 play_pid=""
 stop_process() {
@@ -115,6 +113,9 @@ cleanup() {
   [[ -n "$play_pid" ]] && stop_process "$play_pid" INT
   play_pid=""
   [[ -n "$record_pid" ]] && stop_process "$record_pid" INT
+  record_pid=""
+  [[ -n "$clock_anchor_pid" ]] && stop_process "$clock_anchor_pid" TERM
+  clock_anchor_pid=""
   [[ -n "$node_control_pid" ]] && stop_process "$node_control_pid" TERM
   for pid in "${node_child_pids[@]:-}"; do stop_process "$pid" TERM; done
   if [[ -n "$node_pid" ]]; then
@@ -169,10 +170,6 @@ case "$algorithm" in
     if [[ "$algorithm" == mola_lio ]]; then
       export IMU_POSE_X=-0.011 IMU_POSE_Y=-0.02329 IMU_POSE_Z=0.04412
       export IMU_POSE_YAW=0 IMU_POSE_PITCH=0 IMU_POSE_ROLL=0
-      # The MID360 bag has no valid attitude estimate in sensor_msgs/Imu
-      # (orientation is the default quaternion with zero covariance). Use
-      # MOLA's accelerometer-only pitch/roll initializer instead of the
-      # pipeline's default identity FixedPose initialization.
       export MOLA_LO_INITIAL_LOCALIZATION_METHOD=InitLocalization::PitchAndRollFromIMU
       export MOLA_LO_INITIAL_IMU_SAMPLES=400
       export MOLA_LO_INITIAL_IMU_USE_ORIENTATION=false
@@ -195,9 +192,6 @@ case "$algorithm" in
   dlio)
     start_cloud_adapter "$cloud_topic"; start_imu_scaler
     node_cmd=("$algorithm_executable" --ros-args --params-file "$algorithm_config/dlio.yaml" --params-file "$algorithm_config/params.yaml" -p use_sim_time:=true -r pointcloud:="$cloud_topic" -r imu:="$imu_si_topic")
-    # DLIO's /path message grows for the whole run. Recording it causes the
-    # unbounded nav_msgs/Path to trigger Fast-CDR buffer failures; /odom is
-    # sufficient for canonical trajectory standardization.
     output_topics=(/odom)
     ;;
   glim_odometry|glim_full_slam)
@@ -228,6 +222,8 @@ cp "$algorithm_config" "$output_dir/actual_config" 2>/dev/null || cp -R "$algori
 node_pid=$!
 setsid --wait python3 "$script_dir/resource_monitor.py" "$node_pid" --output "$output_dir/resource_monitor.json" --interval "$resource_interval" </dev/null >"$output_dir/resource_monitor.log" 2>&1 &
 resource_monitor_pid=$!
+setsid --wait python3 "$script_dir/clock_anchor_recorder.py" --output "$output_dir/clock_anchors.json" </dev/null >"$output_dir/clock_anchor_recorder.log" 2>&1 &
+clock_anchor_pid=$!
 status_heartbeat_loop() {
   local bag_state=$1 phase=$2
   while kill -0 "$node_pid" 2>/dev/null; do
@@ -239,6 +235,7 @@ status_heartbeat_loop not_started algorithm_startup </dev/null >/dev/null 2>&1 &
 status_heartbeat_pid=$!
 sleep 5
 kill -0 "$node_pid" 2>/dev/null || { echo "algorithm exited during startup" >&2; exit 70; }
+kill -0 "$clock_anchor_pid" 2>/dev/null || { echo "clock anchor recorder exited during startup" >&2; exit 70; }
 node_control_pid=$(pgrep -P "$node_pid" | head -n 1 || true)
 [[ -n "$node_control_pid" ]] || { echo "cannot identify ros2 node supervisor child" >&2; exit 70; }
 mapfile -t node_child_pids < <(pgrep -P "$node_control_pid" || true)
@@ -267,6 +264,8 @@ play_exit=$play_exit_raw
 sleep 5
 stop_process "$record_pid" INT
 record_pid=""
+[[ -n "$clock_anchor_pid" ]] && stop_process "$clock_anchor_pid" TERM
+clock_anchor_pid=""
 node_was_alive=false
 kill -0 "$node_pid" 2>/dev/null && node_was_alive=true
 node_shutdown_timeout=5
