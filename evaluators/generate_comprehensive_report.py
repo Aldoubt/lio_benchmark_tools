@@ -249,24 +249,34 @@ def build_report(run: Path, *, hardware: dict[str, Any] | None = None) -> dict[s
             row["relative_to_fast_livo2"]["peak_rss_delta_percent"] = (float(peak_rss) - float(baseline_peak_rss)) / float(baseline_peak_rss) * 100.0
 
     stable = [row for row in rows if row["recommendation_eligible"]]
-    recommendations = {
-        "navigation_frontend": {
-            "primary": "fast_livo2",
-            "alternatives": ["glim_odometry"],
-            "reason": "导航前端优先要连续、低 Z 漂移、实时处理和可预测的局部地图；本轮 FAST-LIVO2 的 z_range=0.637 m、wall time 接近 1.0x，GLIM odometry 则以更低的峰值 RSS 提供稳定的内存受限备选。",
-        },
-        "mapping_frontend": {
-            "primary": "glim_full_slam",
-            "alternatives": ["fast_livo2"],
-            "reason": "需要闭环和全局一致性时选 GLIM full SLAM；它开启 local/global mapping 且本轮相对 FAST-LIVO2 的轨迹差异仍很小。若更重视实时局部地图和竖直稳定性而不需要回环，选 FAST-LIVO2。",
-        },
-        "strict_memory_edge": {
-            "primary": "glim_odometry",
-            "alternatives": ["kiss_icp"],
-            "reason": "GLIM odometry 的峰值 RSS 约 274 MiB 且诊断稳定；KISS-ICP 约 96 MiB 最省内存，但没有 IMU 重力约束，需接受 Z 轴风险。",
-        },
-        "not_recommended_this_run": ["point_lio", "dlio", "mola_lio"],
-    }
+    if len(rows) != 10 or manifest.get("dataset", {}).get("compatibility"):
+        stable_by_z = sorted(stable, key=lambda row: (row["trajectory"].get("z_range_m") is None, row["trajectory"].get("z_range_m") or float("inf")))
+        recommendations = {
+            "baseline": baseline,
+            "stable_algorithms": [row["algorithm"] for row in stable],
+            "lowest_z_range": stable_by_z[0]["algorithm"] if stable_by_z else None,
+            "not_recommended_this_run": [row["algorithm"] for row in rows if not row["health_pass"]],
+            "reason": "该 run 使用格式受限或算法子集配置，报告只给出已启用算法的相对诊断，不做十算法绝对选型。",
+        }
+    else:
+        recommendations = {
+            "navigation_frontend": {
+                "primary": "fast_livo2",
+                "alternatives": ["glim_odometry"],
+                "reason": "导航前端优先要连续、低 Z 漂移、实时处理和可预测的局部地图；本轮 FAST-LIVO2 的 z_range=0.637 m、wall time 接近 1.0x，GLIM odometry 则以更低的峰值 RSS 提供稳定的内存受限备选。",
+            },
+            "mapping_frontend": {
+                "primary": "glim_full_slam",
+                "alternatives": ["fast_livo2"],
+                "reason": "需要闭环和全局一致性时选 GLIM full SLAM；它开启 local/global mapping 且本轮相对 FAST-LIVO2 的轨迹差异仍很小。若更重视实时局部地图和竖直稳定性而不需要回环，选 FAST-LIVO2。",
+            },
+            "strict_memory_edge": {
+                "primary": "glim_odometry",
+                "alternatives": ["kiss_icp"],
+                "reason": "GLIM odometry 的峰值 RSS 约 274 MiB 且诊断稳定；KISS-ICP 约 96 MiB 最省内存，但没有 IMU 重力约束，需接受 Z 轴风险。",
+            },
+            "not_recommended_this_run": ["point_lio", "dlio", "mola_lio"],
+        }
     return {
         "schema_version": 1,
         "report_type": "comprehensive_lio_comparison",
@@ -378,7 +388,85 @@ def plot_summary(report: dict[str, Any], output: Path) -> None:
     plt.close(fig)
 
 
+def render_markdown_dynamic(report: dict[str, Any]) -> str:
+    dataset = report["dataset"]
+    evaluation = report["evaluation"]
+    compatibility = dataset.get("compatibility", {}) or {}
+    rows = report["algorithms"]
+    baseline = report.get("baseline", "fast_livo2")
+    baseline_row = next((row for row in rows if row["algorithm"] == baseline), None)
+    lines = [
+        f"# LIO 基准对比报告：{report['run_id']}",
+        "",
+        f"生成时间：{report['generated_at']}",
+        f"FAST-LIVO2 基准：`{baseline}`；run 状态：`{report['run_state']}`",
+        "",
+        "> 当前数据没有独立 ground truth；相对 FAST-LIVO2 的 RMSE、路径长度、Z range 和地图范围都是诊断量，不是绝对精度。",
+        "",
+        "## 输入契约",
+        "",
+        f"- 数据集：`{dataset.get('bag_dir', '')}`；时长 `{number(dataset.get('duration_s'), 2)} s`；回放 `{number(report.get('playback_rate', 1.0), 1)}x`。",
+        f"- LiDAR：`{dataset.get('lidar_type')}`，topic `{dataset.get('lidar_topic')}`，frame `{dataset.get('frame_id')}`，点时间 `{dataset.get('point_time_field')}/{dataset.get('point_time_semantics')}`。",
+        f"- IMU：`{dataset.get('imu_type')}`，topic `{dataset.get('imu_topic')}`，加速度单位 `{dataset.get('imu_acceleration_unit')}`。",
+        f"- 评测范围：`{number(evaluation.get('minimum_range_m'), 2)}--{number(evaluation.get('maximum_range_m'), 2)} m`；地图 voxel `{number(evaluation.get('map_voxel_m'), 2)} m`。",
+    ]
+    if compatibility:
+        lines.extend(["", "## 格式审计", ""])
+        verdict = compatibility.get("verdict")
+        if verdict:
+            lines.append(f"- 结论：{verdict}")
+        for item in compatibility.get("limitations", []) or []:
+            lines.append(f"- {item}")
+        for item in compatibility.get("enabled_scope", []) or []:
+            lines.append(f"- {item}")
+    if baseline_row:
+        trajectory = baseline_row["trajectory"]
+        resource = baseline_row["resource"]
+        lines.extend([
+            "",
+            "## 基准摘要",
+            "",
+            f"FAST-LIVO2 输出 `{baseline_row['status']}`；轨迹时长 `{number(trajectory.get('duration_s'), 2)} s`，路径 `{number(trajectory.get('path_length_m'), 2)} m`，Z range `{number(trajectory.get('z_range_m'), 3)} m`，平均 CPU `{number(resource.get('mean_cpu_percent'), 1)}%`，峰值 RSS `{number(resource.get('peak_rss_mib'), 1)} MiB`。",
+        ])
+    lines.extend([
+        "",
+        "## 对比总表",
+        "",
+        "| 算法 | 分组 | 状态 | 健康 | 相对 FAST RMSE (m) | 时长 (s) | 路径 (m) | Z range (m) | 平均 CPU | 峰值 RSS (MiB) |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|",
+    ])
+    for row in rows:
+        trajectory = row["trajectory"]
+        resource = row["resource"]
+        relative = row["relative_to_fast_livo2"]
+        health = "normal" if row["health_pass"] else ";".join(row.get("health_flags", [])) or "needs_review"
+        lines.append(
+            f"| {row['label']} | {row['group_label']} | {row['status']} | {health} | "
+            f"{number(relative.get('rmse_m'), 3)} | {number(trajectory.get('duration_s'), 2)} | "
+            f"{number(trajectory.get('path_length_m'), 2)} | {number(trajectory.get('z_range_m'), 3)} | "
+            f"{number(resource.get('mean_cpu_percent'), 1)}% | {number(resource.get('peak_rss_mib'), 1)} |"
+        )
+    lines.extend([
+        "",
+        "## 解释边界",
+        "",
+        "- 这份报告只比较本 run 中实际成功保存并完成标准化的算法；未启用或因输入契约不满足而跳过的算法不参与排名。",
+        "- xyz-only PointCloud2 缺少逐点时间时，deskew 会被禁用或退化；因此结果不能和 MID360 CustomMsg 十算法基线直接横向比较。",
+        "- LiDAR-IMU 外参若未由该包提供，FAST-LIVO2 的 LIO 结果只能作为当前假设下的可运行诊断。",
+        "- 资源值来自算法进程树；CPU 100% 代表一个逻辑核。",
+        "",
+        "## 产物入口",
+        "",
+        f"- 查看器：`{report['visualization']['viewer_command']}`",
+        "- 机器可读结果：`reports/comprehensive_comparison.json`、`reports/comprehensive_comparison.csv`。",
+        "- 相对基准地图和轨迹图在 `figures/fast_livo2_baseline_maps/`，资源曲线在 `figures/resource_curves/`。",
+    ])
+    return "\n".join(lines) + "\n"
+
+
 def render_markdown(report: dict[str, Any]) -> str:
+    if len(report.get("algorithms", [])) != 10 or report.get("dataset", {}).get("compatibility"):
+        return render_markdown_dynamic(report)
     dataset = report["dataset"]
     evaluation = report["evaluation"]
     rows_by_algorithm = {row["algorithm"]: row for row in report["algorithms"]}

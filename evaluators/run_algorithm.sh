@@ -68,7 +68,11 @@ for setup in "${setup_scripts[@]}"; do
 done
 
 lidar_topic=$(query dataset.lidar_topic)
+lidar_type=$(query dataset.lidar_type)
 imu_topic=$(query dataset.imu_topic)
+imu_unit=$(query dataset.imu_acceleration_unit)
+frame_id=$(query dataset.frame_id 2>/dev/null || true)
+frame_id=${frame_id:-livox_frame}
 cloud_topic=$(query dataset.adapter_topics.pointcloud2)
 imu_si_topic=$(query dataset.adapter_topics.imu_si)
 lio_sam_topic=$(query dataset.adapter_topics.lio_sam_points)
@@ -126,14 +130,25 @@ trap cleanup EXIT INT TERM
 
 start_cloud_adapter() {
   local destination=$1
+  if [[ "$lidar_type" == "sensor_msgs/msg/PointCloud2" && "$destination" == "$lidar_topic" ]]; then
+    printf '{"status":"passthrough","input_topic":"%s","output_topic":"%s","note":"input PointCloud2 was replayed directly; no canonical time/ring adapter was applied"}\n' "$lidar_topic" "$destination" >"$output_dir/input_validation.json"
+    return 0
+  fi
+  [[ "$lidar_type" == "livox_ros_driver2/msg/CustomMsg" ]] || { echo "unsupported cloud adapter source type: $lidar_type -> $destination" >&2; exit 65; }
   setsid --wait "$cloud_adapter_path" --ros-args \
     -p input_topic:="$lidar_topic" -p output_topic:="$destination" -p sort_by_time:=true \
     -p metrics_path:="$output_dir/input_validation.json" >"$output_dir/cloud_adapter.log" 2>&1 &
   worker_pids+=("$!")
 }
 start_imu_scaler() {
+  local acceleration_scale
+  case "$imu_unit" in
+    g) acceleration_scale=9.80665 ;;
+    m/s^2) acceleration_scale=1.0 ;;
+    *) echo "unsupported imu_acceleration_unit: $imu_unit" >&2; exit 65 ;;
+  esac
   setsid --wait python3 "$script_dir/scale_imu_acceleration.py" --ros-args \
-    -p input_topic:="$imu_topic" -p output_topic:="$imu_si_topic" -p acceleration_scale:=9.80665 \
+    -p input_topic:="$imu_topic" -p output_topic:="$imu_si_topic" -p acceleration_scale:="$acceleration_scale" \
     -p output_frame_id:=livox_imu >"$output_dir/imu_scaler.log" 2>&1 &
   worker_pids+=("$!")
 }
@@ -150,7 +165,7 @@ case "$algorithm" in
     start_cloud_adapter "$cloud_topic"
     [[ "$algorithm" == mola_lio ]] && start_imu_scaler
     mola_pipeline="$(ros2 pkg prefix mola_lidar_odometry)/share/mola_lidar_odometry/pipelines/lidar3d-gicp.yaml"
-    mola_args=(lidar_topic_name:="$cloud_topic" use_sim_time:=true use_mola_gui:=False use_rviz:=False ignore_lidar_pose_from_tf:=true publish_localization_following_rep105:=False mola_tf_base_link:=livox_frame min_nearby_poses_occupied:=2 simplemap_min_nearby_poses:=2 mola_lo_pipeline:="$mola_pipeline")
+    mola_args=(lidar_topic_name:="$cloud_topic" use_sim_time:=true use_mola_gui:=False use_rviz:=False ignore_lidar_pose_from_tf:=true publish_localization_following_rep105:=False mola_tf_base_link:="$frame_id" min_nearby_poses_occupied:=2 simplemap_min_nearby_poses:=2 mola_lo_pipeline:="$mola_pipeline")
     if [[ "$algorithm" == mola_lio ]]; then
       export IMU_POSE_X=-0.011 IMU_POSE_Y=-0.02329 IMU_POSE_Z=0.04412
       export IMU_POSE_YAW=0 IMU_POSE_PITCH=0 IMU_POSE_ROLL=0

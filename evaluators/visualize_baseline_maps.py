@@ -33,6 +33,17 @@ ALGORITHMS = (
     ("lio_sam_loop", "LIO-SAM loop", "#2c3e50"),
 )
 
+POINT_FIELD_DTYPES = {
+    1: "i1",
+    2: "u1",
+    3: "i2",
+    4: "u2",
+    5: "i4",
+    6: "u4",
+    7: "f4",
+    8: "f8",
+}
+
 MAIN_TOPICS = {
     "kiss_icp": "/kiss/odometry",
     "mola_lo": "/tf",
@@ -69,7 +80,49 @@ def pose_at(trajectory: dict[str, np.ndarray], times: np.ndarray) -> tuple[np.nd
     return positions, rotations
 
 
-def read_scans(bag: Path, topic: str, scan_step: int, point_step: int, stop_after_s: float | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def pointcloud2_arrays(message) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    field_map = {field.name: field for field in message.fields}
+    missing = {"x", "y", "z"} - set(field_map)
+    if missing:
+        raise ValueError(f"PointCloud2 is missing required fields: {sorted(missing)}")
+    byte_order = ">" if message.is_bigendian else "<"
+    names, formats, offsets = [], [], []
+    for field in message.fields:
+        if field.datatype not in POINT_FIELD_DTYPES:
+            continue
+        names.append(field.name)
+        formats.append(byte_order + POINT_FIELD_DTYPES[field.datatype])
+        offsets.append(field.offset)
+    dtype = np.dtype({"names": names, "formats": formats, "offsets": offsets, "itemsize": message.point_step})
+    count = int(message.width * message.height)
+    records = np.frombuffer(message.data, dtype=dtype, count=count)
+    xyz = np.column_stack((records["x"].astype(np.float64), records["y"].astype(np.float64), records["z"].astype(np.float64)))
+    intensities = records["intensity"].astype(np.float64) if "intensity" in records.dtype.names else np.zeros(count, dtype=np.float64)
+    header_time = float(message.header.stamp.sec) + float(message.header.stamp.nanosec) * 1e-9
+    point_times = np.full(count, header_time, dtype=np.float64)
+    time_name = next((name for name in ("time", "timestamp", "t", "time_stamp") if name in records.dtype.names), None)
+    if time_name:
+        values = records[time_name].astype(np.float64)
+        finite = values[np.isfinite(values)]
+        if len(finite):
+            if np.nanmax(finite) > 1e12:
+                point_times = values * 1e-9
+            elif np.nanmax(finite) > 1e6:
+                point_times = header_time + values * 1e-9
+            else:
+                point_times = header_time + values
+    return xyz, point_times, intensities
+
+
+def read_scans(
+    bag: Path,
+    topic: str,
+    scan_step: int,
+    point_step: int,
+    stop_after_s: float | None = None,
+    minimum_range_m: float = 0.5,
+    maximum_range_m: float = 100.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     db_files = sorted(bag.glob("*.db3"))
     if len(db_files) != 1:
         raise ValueError(f"expected one sqlite3 bag file, found {len(db_files)} in {bag}")
@@ -90,11 +143,18 @@ def read_scans(bag: Path, topic: str, scan_step: int, point_step: int, stop_afte
         header_time = float(message.header.stamp.sec) + float(message.header.stamp.nanosec) * 1e-9
         if stop_after_s is not None and header_time > stop_after_s:
             break
-        selected = message.points[::point_step]
-        xyz = np.asarray([[point.x, point.y, point.z] for point in selected], dtype=np.float64)
-        intensity = np.asarray([point.reflectivity for point in selected], dtype=np.float64)
-        point_times = header_time + np.asarray([point.offset_time for point in selected], dtype=np.float64) * 1e-9
-        valid = np.isfinite(xyz).all(axis=1) & np.isfinite(point_times) & (np.linalg.norm(xyz, axis=1) >= 0.5) & (np.linalg.norm(xyz, axis=1) <= 100.0)
+        if hasattr(message, "points") and hasattr(message, "timebase"):
+            selected = message.points[::point_step]
+            xyz = np.asarray([[point.x, point.y, point.z] for point in selected], dtype=np.float64)
+            intensity = np.asarray([point.reflectivity for point in selected], dtype=np.float64)
+            point_times = header_time + np.asarray([point.offset_time for point in selected], dtype=np.float64) * 1e-9
+        elif hasattr(message, "fields"):
+            xyz, point_times, intensity = pointcloud2_arrays(message)
+            xyz, point_times, intensity = xyz[::point_step], point_times[::point_step], intensity[::point_step]
+        else:
+            raise ValueError(f"unsupported LiDAR message type for map reconstruction: {type(message)!r}")
+        ranges = np.linalg.norm(xyz, axis=1)
+        valid = np.isfinite(xyz).all(axis=1) & np.isfinite(point_times) & (ranges >= minimum_range_m) & (ranges <= maximum_range_m)
         points.append(xyz[valid]); times.append(point_times[valid]); intensities.append(intensity[valid])
     connection.close()
     if not points:
@@ -216,7 +276,16 @@ def main() -> int:
             comparisons[algorithm] = metrics
 
     input_stop_time = max(float(trajectory["timestamp_s"][-1]) for trajectory in trajectories.values()) + 0.2
-    points, times, intensities = read_scans(Path(manifest["dataset"]["bag_dir"]), manifest["dataset"]["lidar_topic"], args.scan_step, args.point_step, input_stop_time)
+    evaluation = manifest.get("evaluation", {})
+    points, times, intensities = read_scans(
+        Path(manifest["dataset"]["bag_dir"]),
+        manifest["dataset"]["lidar_topic"],
+        args.scan_step,
+        args.point_step,
+        input_stop_time,
+        float(evaluation.get("minimum_range_m", 0.5)),
+        float(evaluation.get("maximum_range_m", 100.0)),
+    )
     calibration = manifest["calibration"]["lidar_to_imu"]
     extrinsic_rotation = np.asarray(calibration["rotation"], dtype=np.float64).reshape(3, 3)
     extrinsic_translation = np.asarray(calibration["translation"], dtype=np.float64)

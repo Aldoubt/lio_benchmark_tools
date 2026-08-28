@@ -1,0 +1,146 @@
+{
+  "schema_version": 2,
+  "name": "indoor_hard_01_xyz_limited",
+  "output_root": "/home/yangxuan/lio_benchmark_runs",
+  "playback_rate": 1.0,
+  "resource_monitor_interval_s": 0.5,
+  "dataset": {
+    "bag_dir": "/home/yangxuan/lio_benchmark_tools/date/indoor_hard_01",
+    "storage_id": "sqlite3",
+    "lidar_topic": "/points2/decompressed",
+    "lidar_type": "sensor_msgs/msg/PointCloud2",
+    "imu_topic": "/imu",
+    "imu_type": "sensor_msgs/msg/Imu",
+    "wheel_odom_topic": null,
+    "ground_truth": null,
+    "imu_acceleration_unit": "m/s^2",
+    "point_time_field": "none",
+    "point_time_datatype": "none",
+    "point_time_unit": "none",
+    "point_time_semantics": "not_available",
+    "start_offset_s": 0.0,
+    "end_offset_s": null,
+    "duration_s": 163.993314536,
+    "message_count": 49156,
+    "frame_id": "depth_camera_link",
+    "setup_scripts": [
+      "/opt/ros/humble/setup.bash",
+      "/home/yangxuan/agt_navigation_v2/install/setup.bash",
+      "/home/yangxuan/lio_benchmark_algorithms/adapter_ws/install/setup.bash"
+    ],
+    "cloud_adapter": {
+      "package": "lio_benchmark_adapters",
+      "executable": "custommsg_to_pointcloud2",
+      "required_executable": "/home/yangxuan/lio_benchmark_algorithms/adapter_ws/install/lio_benchmark_adapters/lib/lio_benchmark_adapters/custommsg_to_pointcloud2"
+    },
+    "pre_run_input_validation": "benchmark_base/docs/development/PRE_RUN_INPUT_VALIDATION_INDOOR_HARD_01.json",
+    "adapter_topics": {
+      "pointcloud2": "/points2/decompressed",
+      "imu_si": "/lio_benchmark/imu_si",
+      "lio_sam_points": "/lio_benchmark/lio_sam_points"
+    },
+    "compatibility": {
+      "verdict": "格式不满足当前 MID360 CustomMsg 十算法公平基线；本配置仅运行 xyz-only 可解释子集，并以 FAST-LIVO2 PointCloud2/L515 的 LiDAR-IMU 模式作为相对基准。",
+      "limitations": [
+        "PointCloud2 仅包含 x/y/z float32，缺少 intensity、ring/line 和逐点 time/timestamp。",
+        "LiDAR frame 为 depth_camera_link，不是旧基线的 livox_frame。",
+        "用户提供 indoor T_lidar_imu；FAST-LIVO2 runner 使用其逆变换作为 Lid_rot_to_IMU/Lid_offset_to_IMU，smoke 中该方向明显更健康。该包仍没有独立 ground truth。",
+        "IMU 加速度幅值约为 9.8，按 m/s^2 处理，不能沿用旧 MID360 g->SI 缩放。"
+      ],
+      "enabled_scope": [
+        "FAST-LIVO2 使用 PointCloud2/L515 分支和用户提供外参的 runner 方向变换，不构造伪 Livox CustomMsg 或伪逐点时间。",
+        "KISS-ICP 和 MOLA-LO 使用同一 xyz PointCloud2 直通输入；deskew/逐点时间能力退化。",
+        "Point-LIO、DLIO、GLIM、MOLA-LIO、LIO-SAM 因缺少逐点时间、ring/line 或可靠外参未纳入本轮报告。"
+      ]
+    }
+  },
+  "calibration": {
+    "lidar_to_imu": {
+      "direction": "lidar_to_imu",
+      "rotation": [0.00294472132, 0.098808431349, -0.995102116625, -0.999995007254, -0.000849765291, -0.003043577682, -0.001146334376, 0.995106110821, 0.098805435702],
+      "translation": [-0.051154275837, 0.002848161621, 0.001062091781],
+      "confidence": "inverse_of_user_provided_indoor_T_lidar_imu_selected_by_smoke"
+    },
+    "imu_to_base": {
+      "direction": "imu_to_base",
+      "rotation": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+      "translation": [0.0, 0.0, 0.0],
+      "confidence": "identity_base_assumption_no_vehicle_frame_in_bag"
+    },
+    "lidar_to_base": {
+      "direction": "lidar_to_base",
+      "rotation": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+      "translation": [0.0, 0.0, 0.0],
+      "confidence": "identity_base_assumption_no_vehicle_frame_in_bag"
+    },
+    "source": "user-provided indoor tuple [0.003,0.004,-0.051,-0.476,0.474,0.524,0.525]; FAST-LIVO2 runner uses the inverse as Lid_rot_to_IMU/Lid_offset_to_IMU after smoke comparison; base transforms are limited-run identity assumptions",
+    "confidence": "mixed_user_lidar_imu_and_identity_base_assumptions"
+  },
+  "evaluation": {
+    "ground_truth_available": false,
+    "common_time_window": true,
+    "max_pose_interpolation_gap_s": 0.25,
+    "map_scan_step": 5,
+    "map_point_step": 20,
+    "map_voxel_m": 0.12,
+    "minimum_range_m": 0.5,
+    "maximum_range_m": 70.0,
+    "diagnostic_only_metrics": ["z_range_m", "z_end_delta_m", "loop_endpoint_delta_m", "estimated_path_length_m", "roll_range_deg", "pitch_range_deg", "map_consistency_proxy"]
+  },
+  "algorithms": {
+    "fast_livo2": {
+      "enabled": true,
+      "group": "lidar_imu_odometry",
+      "mode": "odometry",
+      "sensor_inputs": ["lidar", "imu"],
+      "workspace": "/home/yangxuan/agt_navigation_v2",
+      "source": "/home/yangxuan/agt_navigation_v2/third_party/fast_livo2_ros2",
+      "repository": "vendored in Aldoubt/agt_navigation_v2",
+      "branch": "main",
+      "commit": "1e96f08f992aab57a7b738ad7964edff835caee2",
+      "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/agt_navigation_v2/install/setup.bash"],
+      "runner": "evaluators/run_fast_livo_test.sh",
+      "config": "configs/algorithms/fast_livo2/indoor_hard_01.yaml",
+      "input_topics": {"lidar": "/points2/decompressed", "imu": "/imu"},
+      "output_topics": {"odometry": "/aft_mapped_to_init", "path": "/path"},
+      "patches": [],
+      "required_executables": ["/home/yangxuan/agt_navigation_v2/install/fast_livo/lib/fast_livo/fastlivo_mapping"]
+    },
+    "kiss_icp": {
+      "enabled": true,
+      "group": "lidar_only_odometry",
+      "mode": "odometry",
+      "sensor_inputs": ["lidar"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/kiss_icp_ws",
+      "source": "/home/yangxuan/lio_benchmark_algorithms/kiss_icp_ws/src/kiss-icp",
+      "repository": "https://github.com/PRBonn/kiss-icp.git",
+      "branch": "v1.3.0",
+      "commit": "b16835283aee62f7d5e2bdf6c1c3bb2930de74ff",
+      "setup_scripts": ["/opt/ros/humble/setup.bash", "/home/yangxuan/lio_benchmark_algorithms/kiss_icp_ws/install/setup.bash"],
+      "runner": "evaluators/run_kiss_icp_test.sh",
+      "config": "configs/algorithms/kiss_icp/indoor_hard_01.yaml",
+      "input_topics": {"lidar": "/points2/decompressed"},
+      "output_topics": {"odometry": "/kiss/odometry"},
+      "patches": [],
+      "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/kiss_icp_ws/install/kiss_icp/lib/kiss_icp/kiss_icp_node"]
+    },
+    "mola_lo": {
+      "enabled": true,
+      "group": "lidar_only_odometry",
+      "mode": "odometry",
+      "sensor_inputs": ["lidar"],
+      "workspace": "/home/yangxuan/lio_benchmark_algorithms/mola_ws",
+      "source": "/home/yangxuan/lio_benchmark_algorithms/mola_ws/apt_root/opt/ros/humble",
+      "repository": "ROS 2 Humble binary packages",
+      "branch": "binary",
+      "commit": "mola=2.9.0,mola_lidar_odometry=2.2.1",
+      "setup_scripts": ["/opt/ros/humble/setup.bash", "configs/algorithms/mola/setup_user_overlay.bash"],
+      "runner": "evaluators/run_mola_lo_test.sh",
+      "config": "configs/algorithms/mola_lo/indoor_hard_01.yaml",
+      "input_topics": {"lidar": "/points2/decompressed"},
+      "output_topics": {"trajectory_tf": "/tf", "transform": "map->depth_camera_link"},
+      "patches": [],
+      "required_executables": ["/home/yangxuan/lio_benchmark_algorithms/mola_ws/apt_root/opt/ros/humble/lib/mola_launcher/mola-cli"]
+    }
+  }
+}

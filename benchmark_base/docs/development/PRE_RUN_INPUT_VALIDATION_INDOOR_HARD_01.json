@@ -1,0 +1,23 @@
+{
+  "dataset": "date/indoor_hard_01",
+  "lidar_topic": "/points2/decompressed",
+  "lidar_type": "sensor_msgs/msg/PointCloud2",
+  "sampled_lidar_frames": 50,
+  "total_lidar_frames": 2379,
+  "sampled_points": 8304736,
+  "non_finite_points": 0,
+  "header_time_backtracks": 0,
+  "output_time_backtracks_after_sort": 0,
+  "dropped_ratio": 0.0,
+  "frame_id": "depth_camera_link",
+  "fields": [
+    {"name": "x", "offset": 0, "datatype": 7, "count": 1},
+    {"name": "y", "offset": 4, "datatype": 7, "count": 1},
+    {"name": "z", "offset": 8, "datatype": 7, "count": 1}
+  ],
+  "limitations": [
+    "PointCloud2 contains only x/y/z float32 fields.",
+    "No intensity, ring/line, or per-point time field is available.",
+    "The package does not provide an independent LiDAR-IMU extrinsic calibration or ground truth."
+  ]
+}

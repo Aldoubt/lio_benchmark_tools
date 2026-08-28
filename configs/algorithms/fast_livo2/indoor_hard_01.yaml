@@ -1,0 +1,45 @@
+/**:
+  ros__parameters:
+    common:
+      lid_topic: /points2/decompressed
+      imu_topic: /imu
+      img_topic: /unused_camera_topic
+      img_en: 0
+      lidar_en: 1
+      publish_tf: false
+    # Camera parameters are required by upstream startup even when img_en=0.
+    camera:
+      model: Pinhole
+      width: 1280
+      height: 1024
+      scale: 0.5
+      fx: 1176.2874292149932
+      fy: 1176.21585445307
+      cx: 592.1187382755453
+      cy: 509.0864309628322
+      d0: -0.132180376958456
+      d1: 0.15360732717073536
+      d2: 0.00036918417348059815
+      d3: -0.00031715324469463964
+    preprocess:
+      lidar_type: 4
+      scan_line: 1
+      scan_rate: 15
+      point_filter_num: 1
+      filter_size_surf: 0.1
+      blind: 0.5
+      feature_extract_enabled: false
+    extrin_calib:
+      extrinsic_T: [-0.051154275837, 0.002848161621, 0.001062091781]
+      extrinsic_R: [0.00294472132, 0.098808431349, -0.995102116625, -0.999995007254, -0.000849765291, -0.003043577682, -0.001146334376, 0.995106110821, 0.098805435702]
+      Rcl: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+      Pcl: [0.0, 0.0, 0.0]
+    time_offset: {imu_time_offset: 0.0, img_time_offset: 0.0, exposure_time_init: 0.0}
+    imu: {imu_en: true, imu_int_frame: 30, gravity_est_en: true, ba_bg_est_en: true, acc_cov: 0.8, gyr_cov: 0.5, b_acc_cov: 0.001, b_gyr_cov: 0.001}
+    lio: {max_iterations: 5, dept_err: 0.02, beam_err: 0.15, min_eigen_value: 0.005, voxel_size: 0.5, max_layer: 2, max_points_num: 50, layer_init_num: [5, 5, 5, 5, 5]}
+    local_map: {map_sliding_en: false, half_map_size: 100, sliding_thresh: 8.0}
+    uav: {imu_rate_odom: false, gravity_align_en: true}
+    publish: {dense_map_en: false, pub_effect_point_en: false, pub_plane_en: false, pub_scan_num: 1, blind_rgb_points: 0.0}
+    vio: {max_iterations: 5, outlier_threshold: 1000, img_point_cov: 100, patch_size: 8, patch_pyrimid_level: 4, normal_en: true, raycast_en: false, inverse_composition_en: false, exposure_estimate_en: false, inv_expo_cov: 0.1}
+    evo: {seq_name: indoor_hard_01, pose_output_en: false}
+    pcd_save: {pcd_save_en: false, colmap_output_en: false, save_raw_pcd: false, incremental_voxel_en: true, filter_size_pcd: 0.25, max_abs_coordinate: 10000.0, interval: -1, output_directory: .}

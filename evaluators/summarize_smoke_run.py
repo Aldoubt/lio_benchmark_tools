@@ -50,7 +50,7 @@ def row_from_pose(header, pose, topic: str) -> dict:
     }
 
 
-def read_samples(bag: Path, algorithm: str) -> tuple[list[dict], str]:
+def read_samples(bag: Path, algorithm: str, frame_id: str = "livox_frame") -> tuple[list[dict], str]:
     topic = MAIN_TOPICS[algorithm]
     reader = rosbag2_py.SequentialReader()
     reader.open(
@@ -68,11 +68,12 @@ def read_samples(bag: Path, algorithm: str) -> tuple[list[dict], str]:
             continue
         message = deserialize_message(raw, message_class)
         if algorithm in {"mola_lo", "mola_lio"}:
+            accepted_children = {frame_id, "livox_frame", "base_link"}
             transforms = [
                 transform
                 for transform in message.transforms
                 if transform.header.frame_id in {"map", "odom"}
-                and transform.child_frame_id in {"livox_frame", "base_link"}
+                and transform.child_frame_id in accepted_children
             ]
             if not transforms:
                 continue
@@ -149,13 +150,15 @@ def raw_directory(run: Path, algorithm: str) -> Path:
 
 def summarize_algorithm(run: Path, algorithm: str, expected_duration_s: float | None = None) -> dict:
     raw = raw_directory(run, algorithm)
+    manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    frame_id = manifest.get("dataset", {}).get("frame_id") or "livox_frame"
     result = json.loads((raw / "run_result.json").read_text(encoding="utf-8"))
     resource = parse_resource(raw / "resource_time.txt")
     resource_monitor = parse_resource_monitor(raw / "resource_monitor.json")
     output_base = run / "standardized" / "trajectories" / algorithm
     topic = MAIN_TOPICS[algorithm]
     try:
-        rows, topic = read_samples(raw / "trajectory", algorithm)
+        rows, topic = read_samples(raw / "trajectory", algorithm, frame_id)
         normalized, standardization = normalize_samples(rows, topic)
         if len(normalized) < 2:
             raise ValueError(f"trajectory has only {len(normalized)} valid samples")
