@@ -1,41 +1,9 @@
 # LIO Benchmark Tools
 
-> This repository contains a reproducible ROS 2 LIO/SLAM benchmark harness for MID360 datasets, with algorithm adapters, run manifests, trajectory standardization, diagnostic evaluation, resource monitoring, reports and visualization.
+ROS 2 Humble 离线 LiDAR/LIO/SLAM 多算法评测框架。当前仓库已经接入并跑通 10 个独立实验配置：KISS-ICP、MOLA-LO、MOLA-LIO、FAST-LIVO2、Point-LIO、DLIO、GLIM odometry、GLIM full SLAM、LIO-SAM no-loop 和 LIO-SAM loop。
 
-## Current development workflow
+这里的“10 个算法”更准确地说是 7 个算法家族下的 10 个可复现实验配置：GLIM odometry/full SLAM、LIO-SAM no-loop/loop、MOLA-LO/MOLA-LIO 分别是同一算法家族下的不同使用策略。框架的目标不是给出没有真值支撑的绝对排名，而是把输入契约、版本、参数、资源消耗、轨迹健康和相对地图诊断固定下来，让不同策略能在同一 bag 上被审计、复现和继续调参。
 
-The active multi-algorithm benchmark work is developed on feature branches. A completed run can be post-processed without replaying the original rosbag:
+Git 跟踪部分只保存编排代码、manifest、参数、测试和必要 patch；外部算法源码、bag 原始数据、构建目录和完整运行产物不进入 Git。当前工作区的 `artifacts/` 是用于查看本轮结果的本机归档，外部工作区路径全部由 manifest 注入。
 
-```bash
-benchmark_base/bin/lio-benchmark visualize --run /path/to/run
-```
-
-The lightweight comparison path generates health-aware trajectory figures, baseline-relative diagnostics and resource summaries from standardized trajectories and recorded process-tree resource samples.
-
-Important output examples:
-
-- `figures/comparison_dashboard/trajectory_xy_overlay.png`: health-valid trajectory overlay.
-- `figures/comparison_dashboard/relative_to_baseline.png`: relative RMSE/P95 to the selected baseline; diagnostic only when no independent ground truth exists.
-- `figures/resource_curves/resource_curves.png`: CPU/RSS/thread time series.
-- `figures/resource_curves/resource_summary_valid.png`: health-valid resource summary using CPU median/mean/P95; instantaneous peak CPU remains in JSON/CSV.
-
-For the detailed workflow and interpretation boundaries, see `benchmark_base/docs/COMPARISON_VISUALIZATION.md`.
-
-## Metric boundary
-
-If a dataset does not contain independent ground truth, trajectory length, Z range, endpoint displacement and baseline-relative RMSE/P95 are diagnostic quantities. They must not be reported as ATE/RPE or absolute accuracy.
-
-CPU values use the recorded process-tree logical CPU sum: 100% corresponds to one logical CPU core. A failed or incomplete trajectory must not be interpreted as resource-efficient simply because its mean CPU or memory is low.
-
-## Repository layout
-
-- `benchmark_base/`: CLI, manifests, schemas and benchmark documentation.
-- `configs/algorithms/`: algorithm-specific integration/configuration.
-- `evaluators/`: trajectory, report, map and resource-analysis tools.
-- `ros2_adapters/`: ROS 2 message/data adapters.
-- `tests/`: regression tests for benchmark contracts and analysis logic.
-- `patches/`: upstream compatibility patches used by benchmark integrations.
-
-## License
-
-See `LICENSE`.
+> 顶层 README 已恢复为完整多算法说明版本。本轮 comparison/resource 可视化的新增说明集中维护在 `benchmark_base/docs/COMPARISON_VISUALIZATION.md`，避免用局部功能说明覆盖仓库总览。
