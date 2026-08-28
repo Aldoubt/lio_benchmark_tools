@@ -57,6 +57,7 @@ def build_stage_commands(
     if stage in {"visualize", "compare"}:
         commands.append(_python("plot_comparison_dashboard.py", "--run", run, "--baseline", baseline))
         commands.append(_python("plot_resource_curves.py", "--run", run))
+        commands.append(_python("trajectory_discontinuity.py", "--run", run, "--baseline", baseline))
         if with_maps:
             commands.append(_python(
                 "reconstruct_comparison_maps.py",
