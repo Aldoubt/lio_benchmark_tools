@@ -12,7 +12,11 @@ def test_visualize_uses_existing_metrics_without_restandardizing(tmp_path):
     (run / "metrics").mkdir(parents=True)
     (run / "metrics" / "full_comparison.json").write_text("{}", encoding="utf-8")
     commands = build_stage_commands(run, "visualize", with_maps=False)
-    assert names(commands) == ["plot_comparison_dashboard.py", "plot_resource_curves.py"]
+    assert names(commands) == [
+        "plot_comparison_dashboard.py",
+        "plot_resource_curves.py",
+        "trajectory_discontinuity.py",
+    ]
 
 
 def test_visualize_bootstraps_metrics_when_missing_and_maps_are_opt_in(tmp_path):
@@ -23,9 +27,11 @@ def test_visualize_bootstraps_metrics_when_missing_and_maps_are_opt_in(tmp_path)
         "summarize_smoke_run.py",
         "plot_comparison_dashboard.py",
         "plot_resource_curves.py",
+        "trajectory_discontinuity.py",
         "reconstruct_comparison_maps.py",
         "enhance_map_comparison.py",
     ]
+    assert "--baseline" in commands[-3]
     assert "--baseline" in commands[-2]
     assert "--baseline" in commands[-1]
 
@@ -38,6 +44,7 @@ def test_compare_is_fresh_end_to_end_postprocess_plan(tmp_path):
         "summarize_smoke_run.py",
         "plot_comparison_dashboard.py",
         "plot_resource_curves.py",
+        "trajectory_discontinuity.py",
         "current_run_report.py",
     ]
 
@@ -50,6 +57,7 @@ def test_compare_with_maps_enhances_maps_before_current_run_report(tmp_path):
         "summarize_smoke_run.py",
         "plot_comparison_dashboard.py",
         "plot_resource_curves.py",
+        "trajectory_discontinuity.py",
         "reconstruct_comparison_maps.py",
         "enhance_map_comparison.py",
         "current_run_report.py",
