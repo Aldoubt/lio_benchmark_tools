@@ -36,6 +36,36 @@ def robust_jump_threshold(values: np.ndarray, floor: float) -> float:
     return float(max(floor, median + MAD_MULTIPLIER * MAD_SCALE * mad))
 
 
+def resolve_time_origin(
+    run: Path,
+    baseline_trajectory: dict[str, np.ndarray],
+) -> tuple[float, str]:
+    """Prefer bag LiDAR header start so relative time maps to rosbag regions."""
+    run = Path(run)
+    try:
+        manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    try:
+        bag_analysis = json.loads(
+            (run / "metrics" / "bag_analysis.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        bag_analysis = {}
+    lidar_topic = (manifest.get("dataset") or {}).get("lidar_topic")
+    topic_item = ((bag_analysis.get("topics") or {}).get(lidar_topic) or {}) if lidar_topic else {}
+    header_first = topic_item.get("header_first_s")
+    if header_first is not None:
+        try:
+            value = float(header_first)
+            if np.isfinite(value):
+                return value, f"bag_analysis:{lidar_topic}:header_first_s"
+        except (TypeError, ValueError):
+            pass
+    value = float(np.asarray(baseline_trajectory["timestamp_s"], dtype=np.float64)[0])
+    return value, "baseline_standardized:first_timestamp_s"
+
+
 def step_series(
     trajectory: dict[str, np.ndarray],
     origin_timestamp_s: float,
@@ -199,7 +229,8 @@ def _write_markdown(path: Path, payload: dict[str, Any]) -> None:
     lines = [
         "# Trajectory discontinuity diagnostics",
         "",
-        f"- Baseline time origin: `{payload['baseline']}` first standardized timestamp.",
+        f"- Time origin: `{payload['origin_source']}` = `{payload['origin_timestamp_s']:.9f}`.",
+        f"- Baseline: `{payload['baseline']}`.",
         f"- Metric class: `{METRIC_CLASS}`",
         "- Events are diagnostic only; a loop-closure correction can be a legitimate pose jump.",
         "- Per-step CSVs retain sensor timestamps for later point-cloud/resource highlighting.",
@@ -228,7 +259,7 @@ def _write_markdown(path: Path, payload: dict[str, Any]) -> None:
         ),
         reverse=True,
     )[:30]
-    lines.append("| Algorithm | Type | Relative time (s) | Sensor timestamp | Δpos (m) | Δyaw (deg) | XYZ (m) |")
+    lines.append("| Algorithm | Type | Bag-relative time (s) | Sensor timestamp | Δpos (m) | Δyaw (deg) | XYZ (m) |")
     lines.append("|---|---|---:|---:|---:|---:|---|")
     for item in events:
         lines.append(
@@ -276,7 +307,7 @@ def _plot_timeline(
                 marker="x",
             )
     axis.set_yscale("log")
-    axis.set_xlabel("Time relative to baseline start (s)")
+    axis.set_xlabel("Time relative to run sensor-time origin (s)")
     axis.set_ylabel(ylabel)
     axis.set_title(title)
     axis.grid(alpha=0.2)
@@ -304,7 +335,10 @@ def main() -> int:
         algorithm: load_trajectory(trajectory_dir / f"{algorithm}.csv")
         for algorithm in algorithms
     }
-    origin_timestamp_s = float(trajectories[args.baseline]["timestamp_s"][0])
+    origin_timestamp_s, origin_source = resolve_time_origin(
+        run,
+        trajectories[args.baseline],
+    )
 
     series_by_algorithm: dict[str, dict[str, np.ndarray]] = {}
     summaries: dict[str, dict[str, Any]] = {}
@@ -332,10 +366,11 @@ def main() -> int:
 
     events.sort(key=lambda item: (item["timestamp_s"], item["algorithm"], item["type"]))
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "metric_class": METRIC_CLASS,
         "baseline": args.baseline,
         "origin_timestamp_s": origin_timestamp_s,
+        "origin_source": origin_source,
         "threshold_policy": {
             "median_plus_scaled_mad_multiplier": MAD_MULTIPLIER,
             "mad_scale": MAD_SCALE,
@@ -383,6 +418,7 @@ def main() -> int:
                 "algorithms": len(algorithms),
                 "events": len(events),
                 "origin_timestamp_s": origin_timestamp_s,
+                "origin_source": origin_source,
             },
             ensure_ascii=False,
         )
