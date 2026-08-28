@@ -26,7 +26,14 @@ git status --short
 git rev-parse HEAD
 ```
 
-The commit must be the locked source commit. Then check and apply the tracked patch:
+The commit must be the locked source commit. If `include/lio_sam/utility.hpp` is already modified, do not reset it automatically. First inspect whether the compatibility change is already present:
+
+```bash
+grep -n "allow6AxisImu\|6-axis IMU fallback" include/lio_sam/utility.hpp || true
+git diff -- include/lio_sam/utility.hpp
+```
+
+For a clean locked checkout, check and apply the tracked patch:
 
 ```bash
 git apply --check /home/yangxuan/lio_benchmark_tools/patches/lio_sam/allow_6axis_imu.patch
@@ -39,11 +46,16 @@ If `git apply --check` reports that the patch does not apply, do not force it. F
 git apply --reverse --check /home/yangxuan/lio_benchmark_tools/patches/lio_sam/allow_6axis_imu.patch
 ```
 
+If the reverse check succeeds, the patch is already applied. If both forward and reverse checks fail, preserve the local diff and reconcile it explicitly rather than using `git reset --hard` or `git checkout --`.
+
 ## Rebuild only LIO-SAM
+
+The dependency setup helper is normally invoked by the benchmark runner and requires the algorithm workspace environment variable. Set it explicitly for a manual build:
 
 ```bash
 cd /home/yangxuan/lio_benchmark_algorithms/lio_sam_ws
 source /opt/ros/humble/setup.bash
+export LIO_BENCHMARK_ALGORITHM_WORKSPACE=/home/yangxuan/lio_benchmark_algorithms/lio_sam_ws
 source /home/yangxuan/lio_benchmark_tools/configs/algorithms/lio_sam/setup_dependencies.bash
 colcon build --packages-select lio_sam --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
