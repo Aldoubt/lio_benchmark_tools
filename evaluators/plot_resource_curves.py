@@ -74,6 +74,19 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def health_flags(run: Path) -> dict[str, list[str]]:
+    comparison = load_json(run / "metrics" / "full_comparison.json")
+    result: dict[str, list[str]] = {}
+    for item in comparison.get("algorithms", []) or []:
+        if not isinstance(item, dict) or not item.get("algorithm"):
+            continue
+        flags = list(item.get("health_flags") or [])
+        if item.get("status") != "SUCCESS":
+            flags.insert(0, f"status:{item.get('status') or 'UNKNOWN'}")
+        result[str(item["algorithm"])] = flags
+    return result
+
+
 def plot_curves(path: Path, series: dict[str, list[dict[str, float]]]) -> None:
     fig, axes = plt.subplots(3, 1, figsize=(14, 13), sharex=True, constrained_layout=True)
     colors = plt.get_cmap("tab10")
@@ -89,33 +102,49 @@ def plot_curves(path: Path, series: dict[str, list[dict[str, float]]]) -> None:
     axes[1].set_ylabel("RSS (MiB)")
     axes[2].set_ylabel("Threads")
     axes[2].set_xlabel("Elapsed algorithm time (s)")
-    axes[0].set_title("Algorithm process-tree resource curves")
+    axes[0].set_title("Algorithm process-tree resource curves", pad=20)
     for axis in axes:
         axis.grid(alpha=0.25)
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc="upper center", ncol=5, bbox_to_anchor=(0.5, 1.02), fontsize=9)
-    fig.savefig(path, dpi=170, bbox_inches="tight")
+    fig.savefig(path, dpi=170, bbox_inches="tight", pad_inches=0.2)
     plt.close(fig)
 
 
-def plot_summary(path: Path, summary: list[dict[str, Any]]) -> None:
+def _display_label(item: dict[str, Any]) -> str:
+    label = str(item["label"])
+    return f"{label} [health-fail]" if item.get("health_flags") else label
+
+
+def plot_summary(path: Path, summary: list[dict[str, Any]], *, only_healthy: bool = False) -> None:
     valid = [item for item in summary if item.get("sample_count", 0) > 0]
-    labels = [item["label"] for item in valid]
+    if only_healthy:
+        valid = [item for item in valid if not item.get("health_flags")]
+    labels = [_display_label(item) for item in valid]
     positions = list(range(len(labels)))
     fig, axes = plt.subplots(3, 1, figsize=(14, 12), constrained_layout=True)
-    axes[0].bar(positions, [item["mean_cpu_percent"] for item in valid], label="Mean CPU")
-    axes[0].bar(positions, [item["peak_cpu_percent"] for item in valid], alpha=0.45, label="Peak CPU")
+
+    width = 0.38
+    mean_cpu = [item["mean_cpu_percent"] for item in valid]
+    peak_cpu = [item["peak_cpu_percent"] for item in valid]
+    axes[0].bar([p - width / 2 for p in positions], mean_cpu, width=width, label="Mean CPU")
+    axes[0].bar([p + width / 2 for p in positions], peak_cpu, width=width, label="Peak CPU")
     axes[0].set_ylabel("CPU (%)")
-    axes[1].bar(positions, [item["peak_rss_mib"] for item in valid], color="#d95f02")
-    axes[1].set_ylabel("Peak RSS (MiB)")
-    axes[2].bar(positions, [item["peak_threads"] for item in valid], color="#1b9e77")
-    axes[2].set_ylabel("Peak threads")
-    axes[2].set_xticks(positions, labels, rotation=35, ha="right")
     axes[0].legend()
+
+    axes[1].bar(positions, [item["peak_rss_mib"] for item in valid])
+    axes[1].set_ylabel("Peak RSS (MiB)")
+    axes[2].bar(positions, [item["peak_threads"] for item in valid])
+    axes[2].set_ylabel("Peak threads")
+
     for axis in axes:
+        axis.set_xticks(positions)
+        axis.set_xticklabels(labels, rotation=35, ha="right", fontsize=8)
         axis.grid(axis="y", alpha=0.25)
-    fig.suptitle("Resource summary")
+
+    qualifier = "health-valid algorithms" if only_healthy else "all algorithms; health-fail rows marked"
+    fig.suptitle(f"Resource summary — {qualifier}")
     fig.savefig(path, dpi=170, bbox_inches="tight")
     plt.close(fig)
 
@@ -129,6 +158,7 @@ def main() -> int:
     output = (args.output_dir or run / "figures" / "resource_curves").resolve()
     output.mkdir(parents=True, exist_ok=True)
     status = load_json(run / "metadata" / "run_status.json")
+    health = health_flags(run)
     series: dict[str, list[dict[str, float]]] = {}
     summary: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
@@ -143,6 +173,7 @@ def main() -> int:
             "algorithm": algorithm,
             "label": LABELS.get(algorithm, algorithm),
             "status": (entry.get("result") or {}).get("status"),
+            "health_flags": health.get(algorithm, []),
             "sample_count": len(samples),
             "duration_s": float(resource.get("wall_time_s", 0.0) or 0.0),
             "mean_cpu_percent": float(resource.get("mean_cpu_percent", 0.0) or 0.0),
@@ -160,11 +191,13 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(summary)
     plot_curves(output / "resource_curves.png", series)
-    plot_summary(output / "resource_summary.png", summary)
+    plot_summary(output / "resource_summary.png", summary, only_healthy=False)
+    plot_summary(output / "resource_summary_valid.png", summary, only_healthy=True)
     (output / "README.md").write_text(
         "# Resource curves\n\n"
         "CPU is the logical CPU sum of the algorithm process tree; 100% is one logical core. "
-        "RSS is the process-tree resident set size. Samples are recorded at the manifest or environment interval.\n",
+        "RSS is the process-tree resident set size. Samples are recorded at the manifest or environment interval. "
+        "resource_summary_valid.png excludes algorithms with trajectory health flags; resource_summary.png keeps every algorithm and marks health-fail rows.\n",
         encoding="utf-8",
     )
     print(json.dumps({"output": str(output), "algorithms": len(series), "samples": len(rows)}, ensure_ascii=False, indent=2))
