@@ -40,6 +40,7 @@ python3 -m pytest -q \
   tests/test_postprocess.py \
   tests/test_current_run_report.py \
   tests/test_legacy_comprehensive_report_wrapper.py \
+  tests/test_experiment_report.py \
   tests/test_map_comparison_enhancement.py \
   tests/test_map_reconstruction_selection.py
 
@@ -62,6 +63,7 @@ Expected visualization behavior:
 Current-run comparison/report behavior:
   - comprehensive report values come only from the selected run
   - the legacy generate_comprehensive_report.py filename delegates to the current-run-only generator
+  - the legacy build_report(run, hardware=...) Python API remains available for compatibility, while trajectory/map/recommendation data still come from the selected run
   - whole-run baseline-relative RMSE/P95 are recomputed from current standardized CSVs
   - healthy algorithms are not excluded by historical hard-coded recommendations
   - missing current-run map metadata is reported as N/A rather than backfilled
