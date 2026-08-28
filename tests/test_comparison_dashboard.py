@@ -6,8 +6,11 @@ import numpy as np
 
 from plot_comparison_dashboard import (
     align_candidate_to_baseline,
+    build_alignment_summary,
     build_metric_summary,
+    choose_stable_algorithms,
     discover_algorithms,
+    health_valid,
     load_trajectory,
 )
 
@@ -77,3 +80,41 @@ def test_metric_summary_reads_trajectory_and_resource_monitor_fields():
         "mean_cpu_percent": 123.0,
         "peak_rss_mib": 850.0,
     }]
+
+
+def test_health_valid_requires_success_without_flags():
+    assert health_valid({"status": "SUCCESS", "health_flags": []})
+    assert not health_valid({"status": "SUCCESS", "health_flags": ["path_divergence"]})
+    assert not health_valid({"status": "RUNTIME_CRASH", "health_flags": []})
+
+
+def test_choose_stable_algorithms_excludes_health_failures_but_keeps_baseline():
+    algorithms = ["fast_livo2", "glim_odometry", "point_lio", "dlio"]
+    rows = [
+        {"algorithm": "fast_livo2", "status": "SUCCESS", "health_flags": []},
+        {"algorithm": "glim_odometry", "status": "SUCCESS", "health_flags": []},
+        {"algorithm": "point_lio", "status": "SUCCESS", "health_flags": ["trajectory_short", "path_divergence"]},
+        {"algorithm": "dlio", "status": "SUCCESS", "health_flags": ["path_divergence"]},
+    ]
+    stable, excluded = choose_stable_algorithms(algorithms, rows, "fast_livo2")
+    assert stable == ["fast_livo2", "glim_odometry"]
+    assert excluded == {
+        "point_lio": ["trajectory_short", "path_divergence"],
+        "dlio": ["path_divergence"],
+    }
+
+
+def test_alignment_summary_uses_zero_for_baseline_and_relative_values_for_candidate():
+    rows = [
+        {"algorithm": "fast_livo2", "status": "SUCCESS", "health_flags": []},
+        {"algorithm": "glim_odometry", "status": "SUCCESS", "health_flags": []},
+    ]
+    alignment = {
+        "fast_livo2": {"method": "identity"},
+        "glim_odometry": {"relative_rmse_m": 0.11, "relative_p95_m": 0.16},
+    }
+    result = build_alignment_summary(alignment, rows, ["fast_livo2", "glim_odometry"], "fast_livo2")
+    assert result[0]["relative_rmse_m"] == 0.0
+    assert result[0]["relative_p95_m"] == 0.0
+    assert result[1]["relative_rmse_m"] == 0.11
+    assert result[1]["relative_p95_m"] == 0.16
