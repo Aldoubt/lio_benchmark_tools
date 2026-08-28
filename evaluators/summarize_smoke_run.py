@@ -12,6 +12,7 @@ import rosbag2_py
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
+from health_policy import trajectory_short
 from standardize_trajectory import normalize_samples, write_outputs
 
 
@@ -172,7 +173,7 @@ def summarize_algorithm(run: Path, algorithm: str, expected_duration_s: float | 
     input_validation_path = raw / "input_validation.json"
     input_validation = json.loads(input_validation_path.read_text(encoding="utf-8")) if input_validation_path.is_file() else {}
     health_flags: list[str] = []
-    if metrics and expected_duration_s and metrics["duration_s"] < expected_duration_s * 0.98:
+    if metrics and trajectory_short(metrics.get("duration_s"), result, expected_duration_s):
         health_flags.append("trajectory_short")
     return {
         "algorithm": algorithm,
@@ -223,7 +224,7 @@ def write_report(output: Path, rows: list[dict], title: str, description: str) -
     lines.extend(
         [
             "",
-            "Health flags are diagnostic: trajectory_short means the canonical trajectory covers less than 98% of the manifest duration; path_divergence means the path is an order-of-magnitude outlier from the stable trajectory group. "
+            "Health flags are diagnostic: trajectory_short compares a smoke trajectory with its requested smoke duration using a 5 s startup margin, while full-bag runs require at least 98% of the manifest duration; path_divergence means the path is an order-of-magnitude outlier from the stable trajectory group. "
             "Resource values come from the monitored algorithm process tree. Parent-process values from GNU time are retained in the JSON but are not used for the peak RSS column. "
             "Samples, path length, endpoint displacement, and Z range are diagnostic health signals only. "
             "No absolute accuracy ranking is valid without independent ground truth.",
