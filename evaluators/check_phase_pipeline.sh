@@ -40,6 +40,12 @@ Next, inspect an existing run without changing it:
 Then execute the offline analysis:
   benchmark_base/bin/lio-benchmark phase-analysis --run <RUN_DIR> --baseline fast_livo2
 
+Expected visualization behavior:
+  - primary trajectory figures contain health-valid algorithms only
+  - *_all trajectory figures retain health-fail runs for diagnosis
+  - PRE_MOTION_STATIC and POST_MOTION_STATIC remain in the timeline but are excluded from primary trajectory plots
+  - trajectory-only runs do not keep stale cpu_by_phase.png or rss_growth_by_phase.png
+
 For a new strict-clock smoke run, run one algorithm for 20-30 s first, then verify:
   raw/<algorithm>/clock_anchors.json
 contains status=finished, samples>2, and no unexpected time backtracks.
