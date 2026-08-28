@@ -33,7 +33,7 @@ Conservative map-health flags:
 
 The baseline always has IoU=1, NN=0 and no map-health flags.
 
-Map health is separate from trajectory lifecycle/health. Primary map figures may require both trajectory health and map health; `*_all` figures must retain every reconstructable map for failure diagnosis.
+Map health is separate from trajectory lifecycle/health. Primary map figures require both trajectory health and map health; `*_all` figures retain every reconstructable map for failure diagnosis.
 
 ### Trajectory discontinuity diagnostics
 
@@ -42,7 +42,8 @@ Consume existing standardized trajectory CSVs only. Do not replay bags or algori
 For each algorithm compute one row per consecutive trajectory sample:
 
 - sensor timestamp;
-- time relative to baseline trajectory start;
+- time relative to the original bag LiDAR `header_first_s` when current-run `bag_analysis.json` is available;
+- fallback time relative to baseline standardized trajectory start when bag timing evidence is unavailable;
 - `dt_s`;
 - position step magnitude;
 - yaw step magnitude after unwrap;
@@ -59,7 +60,7 @@ Events are diagnostic only. A loop-closure correction can be a real jump rather 
 
 Outputs:
 
-- `metrics/trajectory_discontinuity.json` — summary + timestamped anomaly events;
+- `metrics/trajectory_discontinuity.json` — summary + timestamped anomaly events + time-origin provenance;
 - `metrics/trajectory_discontinuity/<algorithm>.csv` — complete per-step time series suitable for a later frontend;
 - `reports/trajectory_discontinuity.md`;
 - `figures/trajectory_discontinuity/position_step.png`;
@@ -67,7 +68,7 @@ Outputs:
 
 ### Current-run report integration
 
-`current_run_report.py` must consume the new artifacts when present:
+`current_run_report.py` consumes the new artifacts when present:
 
 - expose map health separately from trajectory health;
 - make `recommendation_eligible` false when a current-run map exists and explicitly fails map health;
@@ -76,7 +77,7 @@ Outputs:
 
 ### Future interactive frontend contract
 
-The interactive frontend is explicitly deferred. This core work must provide the artifacts it will need:
+The interactive frontend is explicitly deferred. This core work provides the artifacts it will need:
 
 - standardized trajectory CSVs;
 - reconstructed PLYs;
@@ -85,4 +86,4 @@ The interactive frontend is explicitly deferred. This core work must provide the
 - existing resource-monitor sample history;
 - existing strict clock/bag timing evidence and phase analysis.
 
-A later frontend can use one selected sensor timestamp to highlight trajectory position, nearby point-cloud data and synchronized resource/phase anomalies without changing the metric definitions implemented here.
+A later frontend can use one selected bag-relative sensor timestamp to highlight trajectory position, nearby point-cloud data and synchronized resource/phase anomalies without changing the metric definitions implemented here.
