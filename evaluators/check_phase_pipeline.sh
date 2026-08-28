@@ -12,8 +12,10 @@ python3 -m py_compile \
   evaluators/phase_analysis.py \
   evaluators/plot_phase_analysis.py \
   evaluators/clock_anchor_recorder.py \
+  evaluators/health_policy.py \
   evaluators/manual_run_controller.py \
   evaluators/manual_run_controller_base.py \
+  evaluators/summarize_smoke_run.py \
   benchmark_base/lio_benchmark/entry.py \
   benchmark_base/lio_benchmark/postprocess.py
 
@@ -25,6 +27,9 @@ python3 -m pytest -q \
   tests/test_phase_plot.py \
   tests/test_clock_anchor_recorder.py \
   tests/test_clock_anchor_runner_contract.py \
+  tests/test_health_policy.py \
+  tests/test_lio_sam_6axis_patch_contract.py \
+  tests/test_algorithm_configs.py \
   tests/test_manual_clock_anchor_facade.py \
   tests/test_manual_run_controller.py \
   tests/test_entry.py \
@@ -45,6 +50,14 @@ Expected visualization behavior:
   - *_all trajectory figures retain health-fail runs for diagnosis
   - PRE_MOTION_STATIC and POST_MOTION_STATIC remain in the timeline but are excluded from primary trajectory plots
   - trajectory-only runs do not keep stale cpu_by_phase.png or rss_growth_by_phase.png
+
+Smoke coverage policy:
+  - short smoke runs are compared with smoke_duration_s and allow a 5 s startup margin
+  - full-bag runs still require at least 98% trajectory coverage
+
+LIO-SAM 6-axis compatibility:
+  - patches/lio_sam/allow_6axis_imu.patch must be applied to the locked LIO-SAM source before rebuilding
+  - allow6AxisImu=true is explicit in both no-loop and loop benchmark params
 
 For a new strict-clock smoke run, run one algorithm for 20-30 s first, then verify:
   raw/<algorithm>/clock_anchors.json
