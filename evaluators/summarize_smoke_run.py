@@ -12,7 +12,7 @@ import rosbag2_py
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
-from health_policy import trajectory_short
+from health_policy import nominal_stable_path_length_m, trajectory_short
 from standardize_trajectory import normalize_samples, write_outputs
 
 
@@ -245,11 +245,12 @@ def main() -> int:
     expected_duration_s = float(manifest.get("dataset", {}).get("duration_s") or 0.0) or None
     algorithms = [algorithm for algorithm, entry in status["algorithms"].items() if entry.get("result")]
     rows = [summarize_algorithm(run, algorithm, expected_duration_s) for algorithm in algorithms]
-    stable_paths = [item["trajectory"].get("path_length_m") for item in rows if item["trajectory"].get("path_length_m", 0.0) <= 1000.0]
-    if stable_paths:
-        nominal_path = sorted(stable_paths)[len(stable_paths) // 2]
+    nominal_path = nominal_stable_path_length_m(
+        item.get("trajectory", {}).get("path_length_m") for item in rows
+    )
+    if nominal_path is not None:
         for item in rows:
-            path_length = item["trajectory"].get("path_length_m")
+            path_length = item.get("trajectory", {}).get("path_length_m")
             if path_length is not None and path_length > max(1000.0, nominal_path * 5.0):
                 item["health_flags"].append("path_divergence")
     full_bag = all((item["result"].get("smoke_duration_s") is None and item["result"].get("duration_s") is None) for item in status["algorithms"].values() if item.get("result"))
