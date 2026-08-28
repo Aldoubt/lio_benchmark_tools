@@ -41,7 +41,7 @@ benchmark_base/bin/lio-benchmark phase-analysis \
   --baseline fast_livo2
 ```
 
-输出：
+核心输出：
 
 ```text
 metrics/phase_analysis.json
@@ -49,11 +49,24 @@ reports/phase_analysis.md
 figures/phase_analysis/
 ├── phase_timeline.png
 ├── trajectory_error_by_phase.png
+├── trajectory_error_by_phase_all.png
 ├── z_change_by_phase.png
-├── cpu_by_phase.png
-├── rss_growth_by_phase.png
+├── z_change_by_phase_all.png
 └── phase_dashboard.png
 ```
+
+主轨迹图和 dashboard 只画 `selection_eligible=true` 的 health-valid 算法；带 `_all` 的图保留 Point-LIO、DLIO 等 health-fail 轨迹用于失败诊断，避免极端发散值把正常候选全部压扁。
+
+phase builder 会把第一次持续运动之前的静止段标成 `PRE_MOTION_STATIC`，最后一次持续运动之后的静止段标成 `POST_MOTION_STATIC`。主轨迹图会排除这两个边缘静止区间，但保留路线中间真实发生的 `STATIONARY / STRAIGHT / TURN / HIGH_CURVATURE` phase。完整 timeline 仍保留所有 phase。
+
+如果当前 run 有可用的 phase 级资源时间对齐，还会额外输出：
+
+```text
+cpu_by_phase.png
+rss_growth_by_phase.png
+```
+
+如果 `time_alignment_mode=trajectory-only`，这两张 standalone 资源图不会生成；旧的同名文件如果存在会被删除，dashboard 中会明确显示资源 unavailable 及时间证据不足的原因，避免把空图或旧图误认为有效结果。
 
 如果 `metrics/bag_analysis.json` 不存在，先执行：
 
@@ -86,7 +99,7 @@ phase analysis 需要其中 LiDAR topic 的 `recorded_first_s` 与 `record_minus
 
 ## 4. 新 run 的 strict smoke 验证
 
-不要先跑完整 807 s 或全十算法。先选一个已经能稳定运行的算法做 20–30 s smoke，例如 FAST-LIVO2：
+不要先跑完整长 bag 或全算法。先选一个已经能稳定运行的算法做 20–30 s smoke，例如 FAST-LIVO2：
 
 ```bash
 benchmark_base/bin/lio-benchmark run \
@@ -158,13 +171,18 @@ benchmark_base/bin/lio-benchmark phase-analysis \
 
 结果会把最终采用的阈值写入 `phase_parameters`，保证图和报告可追溯。
 
-## 6. 当前验收边界
+## 6. 场景语义边界
+
+`PRE_MOTION_STATIC / POST_MOTION_STATIC / STATIONARY / STRAIGHT / TURN / HIGH_CURVATURE` 是从 baseline 轨迹自动得到的运动学 phase，不等价于“温室行间”“垄端转弯”等场景语义。农业场景语义需要在有对应温室地图、任务区或人工/自动语义证据时再叠加，不能从开阔测试场景的运动轨迹直接推断。
+
+## 7. 当前验收边界
 
 在真实 Ubuntu/ROS 数据机验证前，不把以下事项标记为最终通过：
 
 - automatic runner 的真实 `/clock` QoS 与进程退出行为；
 - manual controller 的真实 prepare/play/finalize 生命周期；
-- 历史长 run 最终能达到 approximate 还是只能 trajectory-only；
 - 新 short smoke 是否能完整得到 strict wall→recorded→header→phase resource 链路。
+
+历史 run 如果缺少 LiDAR recorded/header offset 证据，稳定降级到 `trajectory-only` 是正确行为，不视为 phase pipeline 失败。
 
 本地验证时如果失败，保留终端输出，并优先附上 `clock_anchors.json`、`metrics/bag_analysis.json` 中 LiDAR topic、`resource_monitor.json` 的前后若干 sample，以及 `metrics/phase_analysis.json` 的 `time_alignment_*` 和 `warnings` 字段。
