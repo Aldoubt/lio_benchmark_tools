@@ -25,19 +25,29 @@ def build_stage_commands(
     with_maps: bool = False,
     baseline: str = "fast_livo2",
     no_plot: bool = False,
+    phase_params: list[str] | None = None,
     scan_step: int = 5,
     point_step: int = 20,
     voxel: float = 0.12,
 ) -> list[list[str]]:
     """Build deterministic post-processing commands without executing them."""
     run = run.resolve()
-    if stage not in {"standardize", "evaluate", "visualize", "report", "compare"}:
+    if stage not in {"standardize", "evaluate", "visualize", "report", "compare", "phase-analysis"}:
         raise ValueError(f"unknown postprocess stage: {stage}")
     if scan_step < 1 or point_step < 1 or voxel <= 0:
         raise ValueError("scan_step and point_step must be >= 1; voxel must be > 0")
 
-    metrics_ready = (run / "metrics" / "full_comparison.json").is_file()
     commands: list[list[str]] = []
+    if stage == "phase-analysis":
+        command = _python("phase_analysis.py", "--run", run, "--baseline", baseline)
+        for value in phase_params or []:
+            command.extend(["--phase-param", value])
+        commands.append(command)
+        if not no_plot:
+            commands.append(_python("plot_phase_analysis.py", "--run", run))
+        return commands
+
+    metrics_ready = (run / "metrics" / "full_comparison.json").is_file()
     if stage in {"standardize", "evaluate"}:
         return [_summary_command(run)]
 
@@ -73,6 +83,7 @@ def execute_stage(
     with_maps: bool = False,
     baseline: str = "fast_livo2",
     no_plot: bool = False,
+    phase_params: list[str] | None = None,
     scan_step: int = 5,
     point_step: int = 20,
     voxel: float = 0.12,
@@ -88,6 +99,7 @@ def execute_stage(
         with_maps=with_maps,
         baseline=baseline,
         no_plot=no_plot,
+        phase_params=phase_params,
         scan_step=scan_step,
         point_step=point_step,
         voxel=voxel,
