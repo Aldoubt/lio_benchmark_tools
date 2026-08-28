@@ -1,6 +1,9 @@
+import json
+
 import numpy as np
 
 from trajectory_discontinuity import (
+    resolve_time_origin,
     robust_jump_threshold,
     step_series,
     summarize_discontinuities,
@@ -60,3 +63,23 @@ def test_summary_reports_large_yaw_jump_without_marking_normal_steps():
     assert summary["yaw_jump_count"] == 1
     assert summary["events"][0]["type"] == "yaw_jump"
     assert summary["events"][0]["yaw_step_deg"] > 50.0
+
+
+def test_time_origin_prefers_bag_lidar_header_time(tmp_path):
+    run = tmp_path / "run"
+    (run / "metrics").mkdir(parents=True)
+    (run / "manifest.json").write_text(
+        json.dumps({"dataset": {"lidar_topic": "/lidar"}}), encoding="utf-8"
+    )
+    (run / "metrics" / "bag_analysis.json").write_text(
+        json.dumps({"topics": {"/lidar": {"header_first_s": 90.0}}}),
+        encoding="utf-8",
+    )
+    baseline = trajectory(
+        [100.0, 101.0],
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        [0.0, 0.0],
+    )
+    value, source = resolve_time_origin(run, baseline)
+    assert value == 90.0
+    assert source == "bag_analysis:/lidar:header_first_s"
