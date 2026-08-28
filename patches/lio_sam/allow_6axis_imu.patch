@@ -1,7 +1,7 @@
 diff --git a/include/lio_sam/utility.hpp b/include/lio_sam/utility.hpp
 --- a/include/lio_sam/utility.hpp
 +++ b/include/lio_sam/utility.hpp
-@@ -104,6 +104,7 @@ public:
+@@ -101,6 +101,7 @@
      float imuGyrBiasN;
      float imuGravity;
      float imuRPYWeight;
@@ -9,7 +9,7 @@ diff --git a/include/lio_sam/utility.hpp b/include/lio_sam/utility.hpp
      vector<double> extRotV;
      vector<double> extRPYV;
      vector<double> extTransV;
-@@ -231,6 +232,8 @@ public:
+@@ -208,6 +209,8 @@
          get_parameter("imuGravity", imuGravity);
          declare_parameter("imuRPYWeight", 0.01);
          get_parameter("imuRPYWeight", imuRPYWeight);
@@ -18,8 +18,7 @@ diff --git a/include/lio_sam/utility.hpp b/include/lio_sam/utility.hpp
  
          double ida[] = { 1.0,  0.0,  0.0,
                           0.0,  1.0,  0.0,
-@@ -327,16 +330,42 @@ public:
-         imu_out.angular_velocity.y = gyr.y();
+@@ -316,13 +319,44 @@
          imu_out.angular_velocity.z = gyr.z();
          // rotate roll pitch yaw
          Eigen::Quaterniond q_from(imu_in.orientation.w, imu_in.orientation.x, imu_in.orientation.y, imu_in.orientation.z);
