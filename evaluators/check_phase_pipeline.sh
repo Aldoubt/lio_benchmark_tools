@@ -4,6 +4,10 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
 
+export MPLBACKEND="${MPLBACKEND:-Agg}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/lio-benchmark-matplotlib}"
+mkdir -p "$MPLCONFIGDIR"
+
 python3 -m py_compile \
   evaluators/phase_analysis.py \
   evaluators/plot_phase_analysis.py \
