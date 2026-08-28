@@ -179,11 +179,14 @@ benchmark_base/bin/lio-benchmark phase-analysis \
 
 ## 7. 当前验收边界
 
-在真实 Ubuntu/ROS 数据机验证前，不把以下事项标记为最终通过：
+当前开阔历史 run 已验证：当 LiDAR recorded/header offset 证据缺失时，分析会稳定降级到 `trajectory-only`，轨迹 phase 仍可生成，而 CPU/RSS 不会被伪绑定到轨迹阶段。
+
+在真实 Ubuntu/ROS 数据机继续验证前，不把以下事项标记为最终通过：
 
 - automatic runner 的真实 `/clock` QoS 与进程退出行为；
 - manual controller 的真实 prepare/play/finalize 生命周期；
-- 新 short smoke 是否能完整得到 strict wall→recorded→header→phase resource 链路。
+- 新 short smoke 是否能完整得到 strict wall→recorded→header→phase resource 链路；
+- 温室全量 run 的运动 phase 是否与实际行间/垄端/退化区域形成稳定对应关系。
 
 历史 run 如果缺少 LiDAR recorded/header offset 证据，稳定降级到 `trajectory-only` 是正确行为，不视为 phase pipeline 失败。
 
