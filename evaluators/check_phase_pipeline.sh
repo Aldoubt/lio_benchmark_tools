@@ -19,7 +19,9 @@ python3 -m py_compile \
   evaluators/current_run_report.py \
   evaluators/generate_comprehensive_report.py \
   evaluators/reconstruct_comparison_maps.py \
+  evaluators/map_consistency.py \
   evaluators/enhance_map_comparison.py \
+  evaluators/trajectory_discontinuity.py \
   benchmark_base/lio_benchmark/entry.py \
   benchmark_base/lio_benchmark/postprocess.py
 
@@ -39,10 +41,13 @@ python3 -m pytest -q \
   tests/test_entry.py \
   tests/test_postprocess.py \
   tests/test_current_run_report.py \
+  tests/test_current_run_diagnostics.py \
   tests/test_legacy_comprehensive_report_wrapper.py \
   tests/test_experiment_report.py \
+  tests/test_map_consistency.py \
   tests/test_map_comparison_enhancement.py \
-  tests/test_map_reconstruction_selection.py
+  tests/test_map_reconstruction_selection.py \
+  tests/test_trajectory_discontinuity.py
 
 cat <<'EOF'
 
@@ -62,13 +67,14 @@ Expected visualization behavior:
 
 Current-run comparison/report behavior:
   - comprehensive report values come only from the selected run
-  - the legacy generate_comprehensive_report.py filename delegates to the current-run-only generator
-  - the legacy build_report(run, hardware=...) Python API remains available for compatibility, while trajectory/map/recommendation data still come from the selected run
   - whole-run baseline-relative RMSE/P95 are recomputed from current standardized CSVs
-  - healthy algorithms are not excluded by historical hard-coded recommendations
+  - compare/visualize generate timestamped trajectory-discontinuity timelines and per-step CSVs
+  - discontinuity time prefers bag LiDAR header start, so relative time maps directly to rosbag regions when bag_analysis exists
+  - compare --with-maps computes robust P99-P1 extents, baseline voxel IoU and symmetric nearest-neighbour metrics
+  - map health remains separate from trajectory health
+  - primary map figures require trajectory+map health; *_all retains every reconstructable map
   - missing current-run map metadata is reported as N/A rather than backfilled
-  - compare --with-maps reconstructs every available standardized trajectory, including failed/crashed partial trajectories for *_all diagnostics
-  - primary map figures are health-gated; XY/XZ panels use shared axes and a shared Z color scale
+  - the legacy generate_comprehensive_report.py filename/API delegates to current-run-only data
 
 Smoke coverage policy:
   - short smoke runs are compared with smoke_duration_s and allow a 5 s startup margin
