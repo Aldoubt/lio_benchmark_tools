@@ -39,7 +39,7 @@ def _phase_lookup(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def _phase_labels(result: dict[str, Any], phase_ids: list[str] | None = None) -> list[str]:
     lookup = _phase_lookup(result)
-    ids = phase_ids or [str(phase["id"]) for phase in result["phases"]]
+    ids = [str(phase["id"]) for phase in result["phases"]] if phase_ids is None else phase_ids
     return [f"{phase_id}\n{lookup[phase_id]['state']}" for phase_id in ids]
 
 
@@ -69,8 +69,8 @@ def _series(
     algorithms: list[str] | None = None,
     phase_ids: list[str] | None = None,
 ) -> dict[str, list[float]]:
-    ids = phase_ids or [str(phase["id"]) for phase in result["phases"]]
-    names = algorithms or list((result.get("algorithms") or {}).keys())
+    ids = [str(phase["id"]) for phase in result["phases"]] if phase_ids is None else phase_ids
+    names = list((result.get("algorithms") or {}).keys()) if algorithms is None else algorithms
     output: dict[str, list[float]] = {}
     for algorithm in names:
         item = (result.get("algorithms") or {}).get(algorithm) or {}
@@ -131,7 +131,7 @@ def _plot_lines(
     phase_ids: list[str] | None = None,
     unavailable_text: str = "unavailable",
 ) -> None:
-    ids = phase_ids or [str(phase["id"]) for phase in result["phases"]]
+    ids = [str(phase["id"]) for phase in result["phases"]] if phase_ids is None else phase_ids
     labels = _phase_labels(result, ids)
     x = np.arange(len(labels), dtype=float)
     fig, ax = plt.subplots(figsize=(max(7.0, len(labels) * 1.3), 4.6))
