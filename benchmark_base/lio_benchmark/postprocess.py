@@ -59,7 +59,7 @@ def build_stage_commands(
         commands.append(_python("plot_resource_curves.py", "--run", run))
         if with_maps:
             commands.append(_python(
-                "visualize_baseline_maps.py",
+                "reconstruct_comparison_maps.py",
                 "--run", run,
                 "--baseline", baseline,
                 "--scan-step", scan_step,
