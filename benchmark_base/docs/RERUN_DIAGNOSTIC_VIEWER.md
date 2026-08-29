@@ -1,10 +1,12 @@
 # Rerun offline diagnostic viewer
 
-The viewer is a display/inspection layer over frozen benchmark artifacts. It does not change trajectory, map-health, resource-alignment, or anomaly definitions.
+The viewer is a display/inspection layer over frozen benchmark artifacts. It does not redefine trajectory health, map health, resource alignment, anomaly thresholds, or metric semantics.
 
-## Prerequisites
+Without independent ground truth, baseline-relative trajectory/map quantities remain `relative-to-baseline/diagnostic/non-ground-truth`.
 
-Generate the unified diagnostic timeline and LiDAR frame index first:
+## 1. Prerequisites
+
+Generate the diagnostic timeline and LiDAR frame index first:
 
 ```bash
 RUN=/path/to/run
@@ -16,19 +18,7 @@ benchmark_base/bin/lio-benchmark diagnostics \
   --with-pointcloud-index
 ```
 
-The main full-run algorithms should report `resource_alignment_mode=strict/clock-anchored` when the run contains valid `/clock` anchors and recorded/header timing evidence.
-
-Install the viewer dependency separately from the core benchmark environment:
-
-```bash
-python3 -m pip install -r benchmark_base/requirements-viewer.txt
-```
-
-The branch currently pins `rerun-sdk==0.36.3` because the Python blueprint API is intentionally version-sensitive.
-
-## Launch the MVP
-
-Source the ROS overlays that provide the bag's exact LiDAR message type when raw point-cloud viewing is enabled:
+Source the ROS overlays that provide the exact LiDAR message type in the bag:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -36,164 +26,237 @@ source /home/yangxuan/agt_navigation_v2/install/setup.bash
 source /home/yangxuan/lio_benchmark_algorithms/adapter_ws/install/setup.bash
 ```
 
-Then launch:
+The tested Viewer SDK is pinned to:
 
-```bash
-benchmark_base/bin/lio-benchmark viewer \
-  --run "$RUN" \
-  --baseline fast_livo2
+```text
+rerun-sdk==0.36.3
+@rerun-io/web-viewer==0.36.3
 ```
 
-Default behavior:
+The WebViewer package version intentionally matches the Python Rerun SDK version.
 
-- all algorithms from `metrics/diagnostic_timeline.json` are loaded;
-- existing reconstructed PLY maps are shown with a display-only `map_point_step=4` reduction;
-- trajectories are aligned to the selected baseline with the same initial-yaw + translation diagnostic convention;
-- current algorithm positions are logged on the shared `bag_time` timeline;
-- CPU, RSS, thread count, 10 Hz position step, yaw step, and speed are logged as synchronized scalar series;
-- anomaly windows are logged as timestamped events;
-- raw LiDAR uses `pointcloud-mode=anomaly` by default, so only indexed scans near anomaly windows are deserialized and logged;
-- each selected raw LiDAR frame is stored in three display LODs: `dense`, `medium`, `sparse`, default strides `10,20,80`;
-- the Rerun Blueprint panel starts expanded so algorithms and LiDAR LODs can be hidden/shown interactively.
+## 2. Python environment
 
-No rosbag replay and no LIO algorithm process is started.
+Keep the ROS/benchmark scientific Python stack separate from user-site packages. On the Ubuntu benchmark host, the known-good gate uses the system NumPy/SciPy environment:
 
-## Choose algorithms
+```bash
+PYTHONNOUSERSITE=1 bash evaluators/check_phase_pipeline.sh
+```
 
-Limit what is loaded at launch time:
+A Viewer venv may inherit the ROS/system packages:
+
+```bash
+python3 -m venv --system-site-packages .venv-viewer
+source .venv-viewer/bin/activate
+python -m pip install --no-deps rerun-sdk==0.36.3
+```
+
+No font binaries or large bag/point-cloud assets are added by the Viewer.
+
+## 3. Native Viewer
+
+Native mode remains the quick inspection path:
 
 ```bash
 benchmark_base/bin/lio-benchmark viewer \
   --run "$RUN" \
+  --mode native \
+  --baseline fast_livo2 \
+  --lang zh-CN \
   --algorithms fast_livo2,point_lio,lio_sam_no_loop,glim_full_slam
 ```
 
-Inside Rerun, use the Blueprint panel eye icons for temporary comparison changes without restarting the viewer.
+Repository-owned panel labels default to Chinese. Use `--lang en` for English. Machine-readable JSON/CSV keys remain English.
 
-The spatial entities are grouped as:
+The Blueprint panel stays expanded so algorithm groups and point-cloud LODs can be shown/hidden interactively.
 
-```text
-world/
-  algorithms/
-    fast_livo2/
-      trajectory
-      current
-      map
-    point_lio/
-      trajectory
-      current
-      map
-    ...
-```
+## 4. Raw LiDAR and point density
 
-Clicking the eye icon on one algorithm group hides/shows that algorithm's map, full trajectory, and current pose together in the `Map + trajectories` view. CPU/RSS/motion plots expose their per-algorithm entities in their own view trees, so individual curves can also be hidden with the eye icon.
-
-Use `--algorithms` for a persistent small working set and Blueprint eye toggles for quick runtime exploration.
-
-## Raw LiDAR density / LOD
-
-Each selected rosbag frame is deserialized only once at the densest requested stride. The viewer derives medium and sparse versions from that dense cloud rather than rereading the rosbag message.
-
-Default:
+Raw LiDAR remains in sensor-local coordinates under:
 
 ```text
-dense  = every 10th point
-medium = every 20th point
-sparse = every 80th point
+sensor/raw_lidar/dense
+sensor/raw_lidar/medium
+sensor/raw_lidar/sparse
 ```
 
-The `Current raw LiDAR` view defaults to **medium**. In the Blueprint panel expand:
+Default strides:
 
 ```text
-Current raw LiDAR
-  raw_lidar
-    dense
-    medium
-    sparse
+dense=10
+medium=20
+sparse=80
 ```
 
-and use the eye icons to switch density. Normally keep only one LOD visible at a time.
+Configure them with:
 
-Override the three strides when launching:
+```bash
+--point-lods 10,20,80
+```
+
+Each selected rosbag message is deserialized once at the dense stride. Medium/sparse LODs are derived from that dense selection in memory; the sqlite message is not reread for each LOD.
+
+Raw frame selection modes:
+
+```text
+none     no raw LiDAR
+anomaly  anomaly-near indexed frames only
+sampled  periodic frames plus anomaly-near frames
+```
+
+Example:
 
 ```bash
 benchmark_base/bin/lio-benchmark viewer \
   --run "$RUN" \
-  --point-lods 5,20,100
-```
-
-Rules:
-
-- exactly three positive integer strides;
-- order is `dense,medium,sparse`;
-- values must increase;
-- medium/sparse strides must be integer multiples of the dense stride so coarser LODs can be derived without rereading the bag message.
-
-`--point-step` remains accepted for compatibility with earlier viewer commands, but `--point-lods` is the active LOD control.
-
-## Useful pointcloud modes
-
-Disable raw LiDAR completely for the fastest launch:
-
-```bash
-benchmark_base/bin/lio-benchmark viewer \
-  --run "$RUN" \
-  --pointcloud-mode none
-```
-
-Log periodic raw scans as well as exact anomaly-near scans:
-
-```bash
-benchmark_base/bin/lio-benchmark viewer \
-  --run "$RUN" \
+  --mode native \
   --pointcloud-mode sampled \
   --pointcloud-period 1.0 \
   --point-lods 10,20,80
 ```
 
-This still uses the SQLite frame index and reads only selected message IDs. It does not replay the bag or pre-extract the full point cloud.
+No rosbag replay is used.
 
-Reduce reconstructed-map display load:
+## 5. World LiDAR projection
+
+World LiDAR is logged separately from raw sensor-local LiDAR:
+
+```text
+world_lidar/<algorithm>/dense
+world_lidar/<algorithm>/medium
+world_lidar/<algorithm>/sparse
+```
+
+The projection deliberately reuses the comparison-map reconstruction chain:
+
+```text
+Livox header + per-point offset_time
+  -> LiDAR point time
+  -> manifest lidar_to_imu extrinsic
+  -> standardized trajectory XYZ interpolation + quaternion Slerp
+  -> algorithm pose
+  -> initial-yaw + translation alignment to baseline
+  -> shared display origin
+```
+
+The Viewer therefore answers: “where would this exact scan be placed in the displayed comparison world according to algorithm X?” It is not an independently verified absolute-world measurement.
+
+Pose interpolation respects `evaluation.max_pose_interpolation_gap_s`. If no valid pose covers a scan/point, the projected cloud is omitted instead of extrapolated.
+
+World-cloud modes:
+
+```text
+none     no projected world cloud
+anomaly  anomaly-near frames only (default)
+sampled  periodic plus anomaly-near frames
+```
+
+Select the initially visible algorithm with:
+
+```bash
+--world-algorithm point_lio
+```
+
+All startup-selected algorithms are prelogged for the bounded world-frame set, so Blueprint/Web controls can switch algorithms without rereading the bag.
+
+## 6. WebViewer with algorithm controls and anomaly click-to-seek
+
+The formal interactive mode uses a small localhost TypeScript/Vite shell around Rerun WebViewer. Rerun still renders 3D, plots, entities, selection, and the timeline; the shell owns only benchmark-specific controls.
+
+Install/build once:
+
+```bash
+cd benchmark_base/web_viewer
+npm install
+npm test
+npm run build
+cd ../..
+```
+
+After `package-lock.json` has been generated and committed, repeatable installations use `npm ci`.
+
+Launch:
 
 ```bash
 benchmark_base/bin/lio-benchmark viewer \
   --run "$RUN" \
-  --map-point-step 8
+  --mode web \
+  --baseline fast_livo2 \
+  --lang zh-CN \
+  --algorithms fast_livo2,point_lio,lio_sam_no_loop,glim_full_slam \
+  --pointcloud-mode sampled \
+  --pointcloud-period 1.0 \
+  --world-pointcloud-mode anomaly
 ```
 
-## Save an offline RRD
+The shell exposes:
+
+- algorithm multi-select;
+- selected world-LiDAR algorithm;
+- Dense/Medium/Sparse LOD selection;
+- Chinese/English selection;
+- anomaly-window buttons.
+
+Clicking an anomaly button:
+
+1. selects the Rerun `bag_time` timeline;
+2. pauses playback;
+3. seeks to the anomaly-window midpoint in nanoseconds;
+4. ensures the anomaly algorithm is visible;
+5. changes the selected world-LiDAR algorithm to that anomaly algorithm.
+
+This interaction does not modify benchmark artifacts.
+
+`--mode web --save ...` is intentionally rejected. Use native mode for `.rrd` recording output.
+
+Use `--no-spawn` in web mode when you want the localhost server without automatically opening a browser.
+
+## 7. Native `.rrd` output
 
 ```bash
 OUT="$RUN/viewer/greenhouse_round1.rrd"
+mkdir -p "$(dirname "$OUT")"
 
 benchmark_base/bin/lio-benchmark viewer \
   --run "$RUN" \
+  --mode native \
   --pointcloud-mode anomaly \
+  --world-pointcloud-mode anomaly \
   --save "$OUT" \
   --no-spawn
 
 rerun "$OUT"
 ```
 
-The postprocess command boundary stringifies filesystem paths before serializing the command plan, so `--save` works with the CLI's `Path` values.
+The `.rrd` is a display artifact. It does not replace the original metrics, standardized trajectories, pointcloud frame index, or source rosbag.
 
-This is useful for preserving a reproducible inspection artifact without changing the benchmark run itself.
+## 8. Algorithm visibility
 
-## Intended UI contract
+Startup scope is controlled by `--algorithms`:
 
-The MVP blueprint is intentionally thin:
+```bash
+--algorithms fast_livo2,point_lio,glim_full_slam
+```
 
-- `Map + trajectories`: baseline-aligned reconstructed maps and full trajectories, with the current 10 Hz pose highlighted as the time cursor moves; spatial entities are grouped by algorithm for one-click visibility toggles;
-- `Current raw LiDAR`: selected raw LiDAR frame in sensor-local coordinates with dense/medium/sparse LOD entities, medium visible by default;
-- `CPU` / `RSS` / `Motion anomalies`: synchronized performance and trajectory-diagnostic curves, each with per-algorithm entities that can be hidden/shown;
-- `Anomaly windows`: timestamped event records such as the GLIM full-SLAM correction near 353–354 s.
+Native mode also exposes Rerun Blueprint eye toggles. Web mode exposes explicit algorithm checkboxes and sends only visibility/LOD/language state back to the Python process, which updates the Rerun blueprint. Metric data is never rewritten.
 
-Rerun's global time cursor provides the interaction. Moving or clicking the `bag_time` cursor updates current poses, scalar curves, and whichever indexed raw LiDAR frame has been logged at that time.
+## 9. Verification gates
 
-## Important semantics
+Python/benchmark gate:
 
-- The PLY maps were reconstructed from the same raw LiDAR data under different standardized trajectories. They are trajectory-induced map-consistency visualizations, not each algorithm's native mapper output.
-- Baseline-relative trajectory/map values are diagnostic/non-ground-truth unless independent ground truth exists.
-- A full-SLAM pose-graph correction may legitimately create a discontinuity event. The viewer does not convert anomaly windows into lifecycle-health failures.
-- `pointcloud-mode=anomaly` is sparse by design. Use `sampled` when you want more continuous raw-scene context while scrubbing.
-- Raw LiDAR is displayed in sensor-local coordinates in the MVP. World-frame scan overlay can be added later using the frozen calibration and selected trajectory, without changing the diagnostic timeline contract.
+```bash
+cd ~/lio_benchmark_tools
+PYTHONNOUSERSITE=1 bash evaluators/check_phase_pipeline.sh
+git diff --check
+```
+
+Web gate:
+
+```bash
+cd benchmark_base/web_viewer
+npm test
+npm run build
+test -f dist/index.html
+```
+
+For the greenhouse Round1 acceptance, inspect at least one known correction window in WebViewer and verify that clicking the anomaly card moves the shared `bag_time` cursor and switches the world cloud to the anomaly algorithm. The acceptance is interaction validation, not an absolute accuracy claim.
