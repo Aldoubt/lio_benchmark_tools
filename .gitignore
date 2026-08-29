@@ -20,3 +20,5 @@ navigation_*/
 *.png
 *.csv
 *.jsonl
+/benchmark_base/web_viewer/node_modules/
+/benchmark_base/web_viewer/dist/
