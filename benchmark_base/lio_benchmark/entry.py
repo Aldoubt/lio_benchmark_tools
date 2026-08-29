@@ -7,7 +7,15 @@ from pathlib import Path
 
 from .postprocess import execute_stage
 
-POSTPROCESS_COMMANDS = {"standardize", "evaluate", "visualize", "report", "compare", "phase-analysis"}
+POSTPROCESS_COMMANDS = {
+    "standardize",
+    "evaluate",
+    "visualize",
+    "report",
+    "compare",
+    "phase-analysis",
+    "diagnostics",
+}
 
 
 def _postprocess_parser() -> argparse.ArgumentParser:
@@ -28,6 +36,14 @@ def _postprocess_parser() -> argparse.ArgumentParser:
         parser.add_argument("--point-step", type=int, default=20)
         parser.add_argument("--voxel", type=float, default=0.12)
         parser.add_argument("--dry-run", action="store_true")
+
+    parser = sub.add_parser("diagnostics")
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--baseline", default="fast_livo2")
+    parser.add_argument("--hz", type=float, default=10.0, help="fixed trajectory diagnostic rate")
+    parser.add_argument("--window-gap", type=float, default=1.0, help="merge anomaly events separated by at most this many seconds")
+    parser.add_argument("--with-pointcloud-index", action="store_true", help="also deserialize LiDAR headers and build an on-demand rosbag frame index")
+    parser.add_argument("--dry-run", action="store_true")
 
     parser = sub.add_parser("report")
     parser.add_argument("--run", type=Path, required=True)
@@ -68,6 +84,13 @@ def main(argv: list[str] | None = None) -> int:
             "scan_step": args.scan_step,
             "point_step": args.point_step,
             "voxel": args.voxel,
+        })
+    elif args.command == "diagnostics":
+        kwargs.update({
+            "baseline": args.baseline,
+            "diagnostic_hz": args.hz,
+            "anomaly_window_gap_s": args.window_gap,
+            "with_pointcloud_index": args.with_pointcloud_index,
         })
     elif args.command == "report":
         kwargs["no_plot"] = args.no_plot
