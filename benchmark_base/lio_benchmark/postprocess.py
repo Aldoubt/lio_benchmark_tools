@@ -48,6 +48,7 @@ def build_stage_commands(
     anomaly_window_gap_s: float = 1.0,
     with_pointcloud_index: bool = False,
     viewer_algorithms: str | None = None,
+    viewer_language: str = "zh-CN",
     viewer_with_maps: bool = True,
     viewer_pointcloud_mode: str = "anomaly",
     viewer_pointcloud_period_s: float = 1.0,
@@ -77,6 +78,8 @@ def build_stage_commands(
         raise ValueError("diagnostic_hz must be > 0")
     if anomaly_window_gap_s < 0:
         raise ValueError("anomaly_window_gap_s must be >= 0")
+    if viewer_language not in {"zh-CN", "en"}:
+        raise ValueError("viewer_language must be zh-CN or en")
     if viewer_pointcloud_mode not in {"none", "anomaly", "sampled"}:
         raise ValueError("viewer_pointcloud_mode must be none, anomaly, or sampled")
     if viewer_pointcloud_period_s <= 0 or viewer_point_step < 1 or viewer_map_point_step < 1:
@@ -113,6 +116,7 @@ def build_stage_commands(
             "rerun_diagnostic_viewer.py",
             "--run", run,
             "--baseline", baseline,
+            "--lang", viewer_language,
             "--pointcloud-mode", viewer_pointcloud_mode,
             "--pointcloud-period", viewer_pointcloud_period_s,
             "--point-step", viewer_point_step,
@@ -191,6 +195,7 @@ def execute_stage(
     anomaly_window_gap_s: float = 1.0,
     with_pointcloud_index: bool = False,
     viewer_algorithms: str | None = None,
+    viewer_language: str = "zh-CN",
     viewer_with_maps: bool = True,
     viewer_pointcloud_mode: str = "anomaly",
     viewer_pointcloud_period_s: float = 1.0,
@@ -219,6 +224,7 @@ def execute_stage(
         anomaly_window_gap_s=anomaly_window_gap_s,
         with_pointcloud_index=with_pointcloud_index,
         viewer_algorithms=viewer_algorithms,
+        viewer_language=viewer_language,
         viewer_with_maps=viewer_with_maps,
         viewer_pointcloud_mode=viewer_pointcloud_mode,
         viewer_pointcloud_period_s=viewer_pointcloud_period_s,
