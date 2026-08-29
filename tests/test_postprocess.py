@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from lio_benchmark.postprocess import build_stage_commands
 
 
@@ -100,7 +102,7 @@ def test_diagnostics_stage_is_lightweight_and_pointcloud_index_is_opt_in(tmp_pat
     ]
 
 
-def test_viewer_stage_only_launches_rerun_consumer(tmp_path):
+def test_native_viewer_stage_launches_rerun_consumer(tmp_path):
     run = tmp_path / "run"
     run.mkdir()
     save_path = tmp_path / "viewer.rrd"
@@ -108,6 +110,7 @@ def test_viewer_stage_only_launches_rerun_consumer(tmp_path):
         run,
         "viewer",
         baseline="fast_livo2",
+        viewer_mode="native",
         viewer_algorithms="fast_livo2,point_lio",
         viewer_language="en",
         viewer_with_maps=False,
@@ -136,6 +139,32 @@ def test_viewer_stage_only_launches_rerun_consumer(tmp_path):
     assert "--save" in command and str(save_path) in command
     assert "--no-spawn" in command
     assert all(isinstance(item, str) for item in command)
+
+
+def test_web_viewer_stage_launches_web_controller(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    commands = build_stage_commands(
+        run,
+        "viewer",
+        viewer_mode="web",
+        viewer_spawn=False,
+    )
+    assert names(commands) == ["web_diagnostic_viewer.py"]
+    assert "--no-browser" in commands[0]
+    assert "--save" not in commands[0]
+
+
+def test_web_viewer_rejects_rrd_save(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    with pytest.raises(ValueError, match="web.*save"):
+        build_stage_commands(
+            run,
+            "viewer",
+            viewer_mode="web",
+            viewer_save=tmp_path / "viewer.rrd",
+        )
 
 
 def test_report_bootstraps_comparison_then_generates_current_run_report(tmp_path):
