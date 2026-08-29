@@ -47,6 +47,7 @@ def build_stage_commands(
     diagnostic_hz: float = 10.0,
     anomaly_window_gap_s: float = 1.0,
     with_pointcloud_index: bool = False,
+    viewer_mode: str = "native",
     viewer_algorithms: str | None = None,
     viewer_language: str = "zh-CN",
     viewer_with_maps: bool = True,
@@ -80,6 +81,8 @@ def build_stage_commands(
         raise ValueError("diagnostic_hz must be > 0")
     if anomaly_window_gap_s < 0:
         raise ValueError("anomaly_window_gap_s must be >= 0")
+    if viewer_mode not in {"native", "web"}:
+        raise ValueError("viewer_mode must be native or web")
     if viewer_language not in {"zh-CN", "en"}:
         raise ValueError("viewer_language must be zh-CN or en")
     if viewer_pointcloud_mode not in {"none", "anomaly", "sampled"}:
@@ -90,6 +93,8 @@ def build_stage_commands(
         raise ValueError("viewer pointcloud period must be >0 and viewer point steps must be >=1")
     if not str(viewer_point_lods).strip():
         raise ValueError("viewer_point_lods must not be empty")
+    if viewer_mode == "web" and viewer_save is not None:
+        raise ValueError("web viewer mode does not support --save; use native mode for .rrd output")
 
     commands: list[list[str]] = []
     if stage == "phase-analysis":
@@ -116,8 +121,9 @@ def build_stage_commands(
         return commands
 
     if stage == "viewer":
+        script = "rerun_diagnostic_viewer.py" if viewer_mode == "native" else "web_diagnostic_viewer.py"
         command = _python(
-            "rerun_diagnostic_viewer.py",
+            script,
             "--run", run,
             "--baseline", baseline,
             "--lang", viewer_language,
@@ -134,10 +140,13 @@ def build_stage_commands(
             command.extend(["--world-algorithm", str(viewer_world_algorithm)])
         if not viewer_with_maps:
             command.append("--no-maps")
-        if viewer_save is not None:
-            command.extend(["--save", str(viewer_save)])
-        if not viewer_spawn:
-            command.append("--no-spawn")
+        if viewer_mode == "native":
+            if viewer_save is not None:
+                command.extend(["--save", str(viewer_save)])
+            if not viewer_spawn:
+                command.append("--no-spawn")
+        elif not viewer_spawn:
+            command.append("--no-browser")
         return [command]
 
     metrics_ready = (run / "metrics" / "full_comparison.json").is_file()
@@ -201,6 +210,7 @@ def execute_stage(
     diagnostic_hz: float = 10.0,
     anomaly_window_gap_s: float = 1.0,
     with_pointcloud_index: bool = False,
+    viewer_mode: str = "native",
     viewer_algorithms: str | None = None,
     viewer_language: str = "zh-CN",
     viewer_with_maps: bool = True,
@@ -232,6 +242,7 @@ def execute_stage(
         diagnostic_hz=diagnostic_hz,
         anomaly_window_gap_s=anomaly_window_gap_s,
         with_pointcloud_index=with_pointcloud_index,
+        viewer_mode=viewer_mode,
         viewer_algorithms=viewer_algorithms,
         viewer_language=viewer_language,
         viewer_with_maps=viewer_with_maps,
