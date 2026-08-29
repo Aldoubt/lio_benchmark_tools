@@ -125,6 +125,7 @@ function renderLanguage(root: HTMLElement): void {
     );
   });
   root.append(select);
+  root.append(element("p", t(state.language, "state.rerun_english_note"), "language-note"));
 }
 
 function anomalyButton(window: AnomalyWindow): HTMLButtonElement {
