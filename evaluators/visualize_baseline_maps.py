@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import sqlite3
@@ -14,10 +13,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-import rosbag2_py
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
-from scipy.spatial.transform import Rotation, Slerp
+
+from viewer_projection import (
+    TrajectoryModel,
+    initial_yaw_translation_alignment,
+    load_standardized_trajectory,
+    pose_at,
+    project_points_to_display_world,
+)
 
 
 ALGORITHMS = (
@@ -56,28 +61,6 @@ MAIN_TOPICS = {
     "lio_sam_no_loop": "/lio_sam/mapping/odometry",
     "lio_sam_loop": "/lio_sam/mapping/odometry",
 }
-
-
-def load_trajectory(path: Path) -> dict[str, np.ndarray]:
-    rows = list(csv.DictReader(path.open(encoding="utf-8")))
-    if len(rows) < 2:
-        raise ValueError(f"trajectory has fewer than two rows: {path}")
-    data = {key: np.asarray([float(row[key]) for row in rows], dtype=np.float64) for key in ("timestamp_s", "x_m", "y_m", "z_m", "qx", "qy", "qz", "qw")}
-    order = np.argsort(data["timestamp_s"], kind="stable")
-    data = {key: value[order] for key, value in data.items()}
-    _, unique = np.unique(data["timestamp_s"], return_index=True)
-    unique = np.sort(unique)
-    data = {key: value[unique] for key, value in data.items()}
-    data["positions"] = np.column_stack((data["x_m"], data["y_m"], data["z_m"]))
-    data["rotations"] = Rotation.from_quat(np.column_stack((data["qx"], data["qy"], data["qz"], data["qw"])))
-    data["slerp"] = Slerp(data["timestamp_s"], data["rotations"])
-    return data
-
-
-def pose_at(trajectory: dict[str, np.ndarray], times: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    positions = np.column_stack([np.interp(times, trajectory["timestamp_s"], trajectory["positions"][:, axis]) for axis in range(3)])
-    rotations = trajectory["slerp"](times).as_matrix()
-    return positions, rotations
 
 
 def pointcloud2_arrays(message) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -162,55 +145,43 @@ def read_scans(
     return np.concatenate(points), np.concatenate(times), np.concatenate(intensities)
 
 
-def initial_yaw_translation_alignment(reference: dict[str, np.ndarray], candidate: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray, dict]:
-    start = max(reference["timestamp_s"][0], candidate["timestamp_s"][0])
-    end = min(reference["timestamp_s"][-1], candidate["timestamp_s"][-1])
-    if end <= start:
-        raise ValueError("baseline and candidate have no common time window")
-    times = np.linspace(start, end, min(500, max(2, int((end - start) * 10))))
-    reference_positions, reference_rotations = pose_at(reference, np.asarray([start]))
-    candidate_positions, candidate_rotations = pose_at(candidate, np.asarray([start]))
-    reference_yaw = math.atan2(reference_rotations[0, 1, 0], reference_rotations[0, 0, 0])
-    candidate_yaw = math.atan2(candidate_rotations[0, 1, 0], candidate_rotations[0, 0, 0])
-    yaw = reference_yaw - candidate_yaw
-    rotation_2d = np.array([[math.cos(yaw), -math.sin(yaw)], [math.sin(yaw), math.cos(yaw)]])
-    rotation = np.eye(3)
-    rotation[:2, :2] = rotation_2d
-    translation = reference_positions[0] - (rotation @ candidate_positions[0])
-    reference_positions, _ = pose_at(reference, times)
-    candidate_positions, _ = pose_at(candidate, times)
-    aligned = (rotation @ candidate_positions.T).T + translation
-    errors = np.linalg.norm(aligned - reference_positions, axis=1)
-    return rotation, translation, {
-        "method": "initial_yaw_translation",
-        "common_start_s": float(start),
-        "common_end_s": float(end),
-        "common_duration_s": float(end - start),
-        "samples": int(len(times)),
-        "rmse_m": float(np.sqrt(np.mean(errors**2))),
-        "mean_m": float(np.mean(errors)),
-        "p95_m": float(np.percentile(errors, 95)),
-        "max_m": float(np.max(errors)),
-    }
-
-
 def voxel_downsample(cloud: np.ndarray, voxel: float) -> np.ndarray:
     keys = np.floor(cloud[:, :3] / voxel).astype(np.int64)
     _, retained = np.unique(keys, axis=0, return_index=True)
     return cloud[np.sort(retained)]
 
 
-def reconstruct_map(points: np.ndarray, times: np.ndarray, intensities: np.ndarray, trajectory: dict[str, np.ndarray], alignment: tuple[np.ndarray, np.ndarray], extrinsic_rotation: np.ndarray, extrinsic_translation: np.ndarray, origin: np.ndarray, voxel: float) -> np.ndarray:
-    start = max(float(times[0]), float(trajectory["timestamp_s"][0]))
-    end = min(float(times[-1]), float(trajectory["timestamp_s"][-1]))
+def reconstruct_map(
+    points: np.ndarray,
+    times: np.ndarray,
+    intensities: np.ndarray,
+    trajectory: TrajectoryModel,
+    alignment: tuple[np.ndarray, np.ndarray],
+    extrinsic_rotation: np.ndarray,
+    extrinsic_translation: np.ndarray,
+    origin: np.ndarray,
+    voxel: float,
+) -> np.ndarray:
+    start = max(float(times[0]), float(trajectory.timestamp_s[0]))
+    end = min(float(times[-1]), float(trajectory.timestamp_s[-1]))
     mask = (times >= start) & (times <= end)
-    selected_points, selected_times, selected_intensities = points[mask], times[mask], intensities[mask]
-    positions, rotations = pose_at(trajectory, selected_times)
-    lidar_in_body = (extrinsic_rotation @ selected_points.T).T + extrinsic_translation
-    world = np.einsum("nij,nj->ni", rotations, lidar_in_body) + positions
+    selected_points = points[mask]
+    selected_times = times[mask]
+    selected_intensities = intensities[mask]
     alignment_rotation, alignment_translation = alignment
-    aligned = (alignment_rotation @ world.T).T + alignment_translation - origin
-    return voxel_downsample(np.column_stack((aligned, selected_intensities)), voxel)
+    aligned, valid = project_points_to_display_world(
+        selected_points,
+        selected_times,
+        trajectory,
+        extrinsic_rotation,
+        extrinsic_translation,
+        alignment_rotation,
+        alignment_translation,
+        origin,
+        None,
+    )
+    cloud = np.column_stack((aligned[valid], selected_intensities[valid]))
+    return voxel_downsample(cloud, voxel)
 
 
 def write_ply(path: Path, cloud: np.ndarray) -> None:
@@ -262,7 +233,12 @@ def main() -> int:
     if args.baseline not in requested:
         raise ValueError(f"baseline {args.baseline} is not a successful selected algorithm")
     selected = [(algorithm, known[algorithm][0], known[algorithm][1]) for algorithm in requested]
-    trajectories = {algorithm: load_trajectory(run / "standardized" / "trajectories" / f"{algorithm}.csv") for algorithm, _, _ in selected}
+    trajectories = {
+        algorithm: load_standardized_trajectory(
+            run / "standardized" / "trajectories" / f"{algorithm}.csv"
+        )
+        for algorithm, _, _ in selected
+    }
     baseline = trajectories[args.baseline]
     alignments: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     comparisons: dict[str, dict] = {}
@@ -271,11 +247,13 @@ def main() -> int:
             alignments[algorithm] = (np.eye(3), np.zeros(3))
             comparisons[algorithm] = {"method": "baseline", "rmse_m": 0.0, "mean_m": 0.0, "p95_m": 0.0, "max_m": 0.0}
         else:
-            rotation, translation, metrics = initial_yaw_translation_alignment(baseline, trajectories[algorithm])
+            rotation, translation, metrics = initial_yaw_translation_alignment(
+                baseline, trajectories[algorithm]
+            )
             alignments[algorithm] = (rotation, translation)
             comparisons[algorithm] = metrics
 
-    input_stop_time = max(float(trajectory["timestamp_s"][-1]) for trajectory in trajectories.values()) + 0.2
+    input_stop_time = max(float(trajectory.timestamp_s[-1]) for trajectory in trajectories.values()) + 0.2
     evaluation = manifest.get("evaluation", {})
     points, times, intensities = read_scans(
         Path(manifest["dataset"]["bag_dir"]),
@@ -289,9 +267,11 @@ def main() -> int:
     calibration = manifest["calibration"]["lidar_to_imu"]
     extrinsic_rotation = np.asarray(calibration["rotation"], dtype=np.float64).reshape(3, 3)
     extrinsic_translation = np.asarray(calibration["translation"], dtype=np.float64)
-    common_start = max(float(baseline["timestamp_s"][0]), *(float(trajectory["timestamp_s"][0]) for trajectory in trajectories.values()))
-    origin, _ = pose_at(baseline, np.asarray([common_start]))
-    origin = origin[0]
+    common_start = max(float(baseline.timestamp_s[0]), *(float(trajectory.timestamp_s[0]) for trajectory in trajectories.values()))
+    origin_positions, _, origin_valid = pose_at(baseline, np.asarray([common_start]))
+    if not origin_valid[0]:
+        raise ValueError("baseline does not cover common display origin")
+    origin = origin_positions[0]
     maps: dict[str, np.ndarray] = {}
     metadata: dict[str, dict] = {}
     for algorithm, label, _ in selected:
@@ -304,10 +284,11 @@ def main() -> int:
     fig, ax = plt.subplots(figsize=(11, 8), constrained_layout=True)
     for algorithm, label, color in selected:
         trajectory = trajectories[algorithm]
-        start = max(float(baseline["timestamp_s"][0]), float(trajectory["timestamp_s"][0]))
-        end = min(float(baseline["timestamp_s"][-1]), float(trajectory["timestamp_s"][-1]))
+        start = max(float(baseline.timestamp_s[0]), float(trajectory.timestamp_s[0]))
+        end = min(float(baseline.timestamp_s[-1]), float(trajectory.timestamp_s[-1]))
         sample_times = np.linspace(start, end, min(500, max(2, int((end - start) * 10))))
-        positions, _ = pose_at(trajectory, sample_times)
+        positions, _, valid = pose_at(trajectory, sample_times)
+        positions = positions[valid]
         rotation, translation = alignments[algorithm]
         positions = (rotation @ positions.T).T + translation - origin
         ax.plot(positions[:, 0], positions[:, 1], label=label, color=color, linewidth=1.2)
