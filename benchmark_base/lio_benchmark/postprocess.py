@@ -47,6 +47,14 @@ def build_stage_commands(
     diagnostic_hz: float = 10.0,
     anomaly_window_gap_s: float = 1.0,
     with_pointcloud_index: bool = False,
+    viewer_algorithms: str | None = None,
+    viewer_with_maps: bool = True,
+    viewer_pointcloud_mode: str = "anomaly",
+    viewer_pointcloud_period_s: float = 1.0,
+    viewer_point_step: int = 20,
+    viewer_map_point_step: int = 4,
+    viewer_save: Path | None = None,
+    viewer_spawn: bool = True,
 ) -> list[list[str]]:
     """Build deterministic post-processing commands without executing them."""
     run = run.resolve()
@@ -58,6 +66,7 @@ def build_stage_commands(
         "compare",
         "phase-analysis",
         "diagnostics",
+        "viewer",
     }
     if stage not in allowed:
         raise ValueError(f"unknown postprocess stage: {stage}")
@@ -67,6 +76,10 @@ def build_stage_commands(
         raise ValueError("diagnostic_hz must be > 0")
     if anomaly_window_gap_s < 0:
         raise ValueError("anomaly_window_gap_s must be >= 0")
+    if viewer_pointcloud_mode not in {"none", "anomaly", "sampled"}:
+        raise ValueError("viewer_pointcloud_mode must be none, anomaly, or sampled")
+    if viewer_pointcloud_period_s <= 0 or viewer_point_step < 1 or viewer_map_point_step < 1:
+        raise ValueError("viewer pointcloud period must be >0 and viewer point steps must be >=1")
 
     commands: list[list[str]] = []
     if stage == "phase-analysis":
@@ -91,6 +104,26 @@ def build_stage_commands(
         if with_pointcloud_index:
             commands.append(_python("pointcloud_frame_index.py", "--run", run))
         return commands
+
+    if stage == "viewer":
+        command = _python(
+            "rerun_diagnostic_viewer.py",
+            "--run", run,
+            "--baseline", baseline,
+            "--pointcloud-mode", viewer_pointcloud_mode,
+            "--pointcloud-period", viewer_pointcloud_period_s,
+            "--point-step", viewer_point_step,
+            "--map-point-step", viewer_map_point_step,
+        )
+        if viewer_algorithms:
+            command.extend(["--algorithms", viewer_algorithms])
+        if not viewer_with_maps:
+            command.append("--no-maps")
+        if viewer_save is not None:
+            command.extend(["--save", viewer_save])
+        if not viewer_spawn:
+            command.append("--no-spawn")
+        return [command]
 
     metrics_ready = (run / "metrics" / "full_comparison.json").is_file()
     if stage in {"standardize", "evaluate"}:
@@ -153,6 +186,14 @@ def execute_stage(
     diagnostic_hz: float = 10.0,
     anomaly_window_gap_s: float = 1.0,
     with_pointcloud_index: bool = False,
+    viewer_algorithms: str | None = None,
+    viewer_with_maps: bool = True,
+    viewer_pointcloud_mode: str = "anomaly",
+    viewer_pointcloud_period_s: float = 1.0,
+    viewer_point_step: int = 20,
+    viewer_map_point_step: int = 4,
+    viewer_save: Path | None = None,
+    viewer_spawn: bool = True,
 ) -> int:
     run = run.resolve()
     if not run.is_dir():
@@ -172,6 +213,14 @@ def execute_stage(
         diagnostic_hz=diagnostic_hz,
         anomaly_window_gap_s=anomaly_window_gap_s,
         with_pointcloud_index=with_pointcloud_index,
+        viewer_algorithms=viewer_algorithms,
+        viewer_with_maps=viewer_with_maps,
+        viewer_pointcloud_mode=viewer_pointcloud_mode,
+        viewer_pointcloud_period_s=viewer_pointcloud_period_s,
+        viewer_point_step=viewer_point_step,
+        viewer_map_point_step=viewer_map_point_step,
+        viewer_save=viewer_save,
+        viewer_spawn=viewer_spawn,
     )
     print(json.dumps({"stage": stage, "run": str(run), "dry_run": dry_run, "commands": commands}, ensure_ascii=False, indent=2))
     if dry_run:
