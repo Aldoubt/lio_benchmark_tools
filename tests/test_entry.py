@@ -76,6 +76,7 @@ def test_viewer_dispatches_display_options(monkeypatch, tmp_path):
     result = entry.main([
         "viewer",
         "--run", str(tmp_path),
+        "--mode", "native",
         "--baseline", "fast_livo2",
         "--algorithms", "fast_livo2,point_lio",
         "--lang", "en",
@@ -93,6 +94,7 @@ def test_viewer_dispatches_display_options(monkeypatch, tmp_path):
     ])
     assert result == 0
     assert captured["stage"] == "viewer"
+    assert captured["viewer_mode"] == "native"
     assert captured["viewer_algorithms"] == "fast_livo2,point_lio"
     assert captured["viewer_language"] == "en"
     assert captured["viewer_with_maps"] is False
@@ -106,3 +108,19 @@ def test_viewer_dispatches_display_options(monkeypatch, tmp_path):
     assert captured["viewer_save"] == Path(tmp_path / "viewer.rrd")
     assert captured["viewer_spawn"] is False
     assert captured["dry_run"] is True
+
+
+def test_web_viewer_mode_dispatches_without_rrd_save(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_execute(run, stage, **kwargs):
+        captured.update({"run": run, "stage": stage, **kwargs})
+        return 0
+
+    monkeypatch.setattr(entry, "execute_stage", fake_execute)
+    result = entry.main([
+        "viewer", "--run", str(tmp_path), "--mode", "web", "--dry-run"
+    ])
+    assert result == 0
+    assert captured["viewer_mode"] == "web"
+    assert captured["viewer_save"] is None
