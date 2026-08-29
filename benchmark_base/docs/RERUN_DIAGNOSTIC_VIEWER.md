@@ -53,7 +53,24 @@ python -m pip install --no-deps rerun-sdk==0.36.3
 
 No font binaries or large bag/point-cloud assets are added by the Viewer.
 
-## 3. Native Viewer
+## 3. Language policy and Native Viewer
+
+`lio-benchmark viewer` accepts:
+
+```text
+--lang auto   mode-aware default
+--lang zh-CN  Chinese control/presentation language where supported
+--lang en     English
+```
+
+`auto` is the recommended default:
+
+```text
+native -> English Rerun labels
+web    -> Chinese benchmark control shell + English embedded Rerun labels
+```
+
+The reason for keeping Rerun-owned view/entity labels in English is practical: on some Ubuntu/Rerun font stacks CJK glyphs render as square tofu characters. English entity/view names keep the visualization recognizable on every tested host. The Web shell remains fully bilingual and can switch Chinese/English at runtime without restarting the benchmark process.
 
 Native mode remains the quick inspection path:
 
@@ -62,11 +79,13 @@ benchmark_base/bin/lio-benchmark viewer \
   --run "$RUN" \
   --mode native \
   --baseline fast_livo2 \
-  --lang zh-CN \
+  --lang auto \
   --algorithms fast_livo2,point_lio,lio_sam_no_loop,glim_full_slam
 ```
 
-Repository-owned panel labels default to Chinese. Use `--lang en` for English. Machine-readable JSON/CSV keys remain English.
+For the current Rerun 0.36.3 Ubuntu path, prefer `--lang auto` or `--lang en` in native mode. Explicit `--lang zh-CN` remains available for environments where the Rerun font stack renders CJK correctly, but it is not the compatibility default.
+
+Machine-readable JSON/CSV keys always remain English.
 
 The Blueprint panel stays expanded so algorithm groups and point-cloud LODs can be shown/hidden interactively.
 
@@ -159,30 +178,35 @@ Select the initially visible algorithm with:
 
 All startup-selected algorithms are prelogged for the bounded world-frame set, so Blueprint/Web controls can switch algorithms without rereading the bag.
 
-## 6. WebViewer with algorithm controls and anomaly click-to-seek
+## 6. WebViewer with runtime language switching and anomaly click-to-seek
 
-The formal interactive mode uses a small localhost TypeScript/Vite shell around Rerun WebViewer. Rerun still renders 3D, plots, entities, selection, and the timeline; the shell owns only benchmark-specific controls.
+The formal interactive mode uses a small localhost TypeScript/Vite shell around Rerun WebViewer. Rerun still renders 3D, plots, entities, selection, and the timeline; the shell owns benchmark-specific controls.
+
+Web development/build requires Node `>=22.12` for the pinned Vite 8 toolchain. Check before installation:
+
+```bash
+node --version
+npm --version
+```
 
 Install/build once:
 
 ```bash
 cd benchmark_base/web_viewer
-npm install
+npm ci
 npm test
 npm run build
 cd ../..
 ```
 
-After `package-lock.json` has been generated and committed, repeatable installations use `npm ci`.
-
-Launch:
+Launch with the mode-aware default language:
 
 ```bash
 benchmark_base/bin/lio-benchmark viewer \
   --run "$RUN" \
   --mode web \
   --baseline fast_livo2 \
-  --lang zh-CN \
+  --lang auto \
   --algorithms fast_livo2,point_lio,lio_sam_no_loop,glim_full_slam \
   --pointcloud-mode sampled \
   --pointcloud-period 1.0 \
@@ -194,8 +218,10 @@ The shell exposes:
 - algorithm multi-select;
 - selected world-LiDAR algorithm;
 - Dense/Medium/Sparse LOD selection;
-- Chinese/English selection;
+- runtime Chinese/English selection;
 - anomaly-window buttons.
+
+Changing the shell language immediately rerenders benchmark-owned controls and anomaly descriptions. Rerun view/entity names intentionally remain English for font compatibility; machine keys remain unchanged.
 
 Clicking an anomaly button:
 
@@ -220,6 +246,7 @@ mkdir -p "$(dirname "$OUT")"
 benchmark_base/bin/lio-benchmark viewer \
   --run "$RUN" \
   --mode native \
+  --lang auto \
   --pointcloud-mode anomaly \
   --world-pointcloud-mode anomaly \
   --save "$OUT" \
@@ -254,9 +281,9 @@ Web gate:
 
 ```bash
 cd benchmark_base/web_viewer
+node --version
+npm ci
 npm test
 npm run build
 test -f dist/index.html
 ```
-
-For the greenhouse Round1 acceptance, inspect at least one known correction window in WebViewer and verify that clicking the anomaly card moves the shared `bag_time` cursor and switches the world cloud to the anomaly algorithm. The acceptance is interaction validation, not an absolute accuracy claim.
