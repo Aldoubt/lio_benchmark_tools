@@ -10,7 +10,7 @@ Extend the existing offline LIO benchmark viewer without changing benchmark metr
 
 1. Viewer-local Chinese/English presentation with `zh-CN` as the default UI language.
 2. Clickable anomaly review that moves the active `bag_time` cursor to the selected anomaly window and highlights the relevant algorithm.
-3. Raw LiDAR projection into the selected algorithm's world frame using the same trajectory projection convention already used by the benchmark's reconstructed map visualization.
+3. Raw LiDAR projection into the selected algorithm's displayed world frame using exactly the same point-time, extrinsic, trajectory-pose, and baseline-alignment convention as the existing reconstructed map comparison.
 4. An immutable experiment freeze step that generates one provenance bundle plus both HTML and PDF reports with embedded figures.
 
 The feature remains a display, review, and archival layer. It must not upgrade baseline-relative diagnostic quantities into absolute accuracy claims.
@@ -25,8 +25,9 @@ This change does not:
 - patch the Rerun native application UI itself;
 - replace Rerun's 3D and time-series renderer with a custom WebGL stack;
 - introduce a remote database, user accounts, or cloud service;
-- treat provisional `lidar_to_base` calibration as an independently verified greenhouse calibration;
-- overwrite a previously frozen experiment snapshot.
+- treat provisional greenhouse calibration as independently verified calibration;
+- overwrite a previously frozen experiment snapshot;
+- expose experiment freezing as a web-button action in v1; freezing is a CLI operation in this design.
 
 ## 3. Current invariants to preserve
 
@@ -41,32 +42,30 @@ The implementation must preserve these existing contracts:
 
 ## 4. Architecture overview
 
-The feature is split into four independent units:
-
 ```text
 frozen benchmark artifacts
         |
-        +--> viewer recording builder ---------> native Rerun viewer
+        +--> recording/projection layer --------> native Rerun viewer
         |            |
-        |            +--------------------------> Rerun WebViewer data source
+        |            +--------------------------> Rerun WebViewer
         |                                             |
-        |                                             +--> thin local control shell
+        |                                             +--> thin Chinese-first control shell
         |
         +--> experiment freezer
                      |
                      +--> freeze_manifest.json
                      +--> report_data.json
-                     +--> evidence images
+                     +--> deterministic evidence images
                      +--> experiment.rrd
-                     +--> HTML report
-                     +--> PDF report
+                     +--> offline HTML report
+                     +--> direct PDF report
 ```
 
 The benchmark core remains upstream and immutable from the viewer/report perspective.
 
-## 5. Viewer modes
+## 5. Viewer modes and web technology
 
-The CLI keeps the existing native mode and adds a web mode.
+The CLI keeps native mode and adds web mode:
 
 ```text
 lio-benchmark viewer --mode native
@@ -75,23 +74,38 @@ lio-benchmark viewer --mode web
 
 ### 5.1 Native mode
 
-Native mode remains the fast inspection path and continues to use the Rerun Python SDK directly. It supports the current algorithm entity tree, map/trajectory visibility, LiDAR LODs, synchronized resource curves, anomaly events, `.rrd` save, and language-aware labels where the label originates from this repository.
+Native mode remains the fast inspection path using the Rerun Python SDK. It keeps algorithm entity visibility, maps/trajectories, LiDAR LODs, synchronized resource curves, anomaly events, and `.rrd` save.
 
-Native mode does not promise programmatic click-to-seek behavior because the Python-launched native viewer does not provide the same event-control surface as the embedded web viewer.
+Native mode does not promise programmatic click-to-seek behavior.
 
 ### 5.2 Web mode
 
-Web mode is the formal interactive diagnosis path. Rerun remains responsible for 3D, timeline, scalar-series, and entity rendering. A small local control shell owns only controls that the benchmark needs:
+Web mode is the formal interactive diagnosis path. It uses the framework-agnostic package:
+
+```text
+@rerun-io/web-viewer@0.36.3
+```
+
+The version must match the pinned Python `rerun-sdk==0.36.3` for this branch.
+
+The local shell is a small TypeScript application built with Vite. It does not use React. If the selected Vite version requires explicit WebAssembly/top-level-await plugins for Rerun, those plugins are pinned in the viewer package manifest.
+
+The shell owns only:
 
 - algorithm multi-select;
 - selected world-projection algorithm;
 - LiDAR LOD selection;
 - anomaly-window list;
 - language selector;
-- selected anomaly summary;
-- "freeze experiment" action only if the implementation later exposes it safely through the local process; otherwise the freeze remains a CLI operation.
+- selected anomaly summary.
 
-The web shell communicates with the Rerun WebViewer through its supported event/time control interface rather than reimplementing visualization.
+Rerun remains responsible for 3D, timeline, scalar-series, selection, and entity rendering.
+
+### 5.3 Web data source
+
+The Python viewer/recording process serves or exposes the generated Rerun stream/recording through a local Rerun-supported URL. The web shell connects to that URL; it does not parse `.rrd` itself.
+
+The local shell must remain usable without internet access after dependencies have been installed/built.
 
 ## 6. Localization design
 
@@ -105,112 +119,134 @@ Add:
 
 Default: `zh-CN`.
 
-The language option affects only repository-owned UI/report text. It never changes machine-readable schema keys.
+Only repository-owned presentation text is translated. JSON/CSV keys remain stable English identifiers.
 
-### 6.2 Stable internal keys
+### 6.2 Translation ownership
+
+Use one repository-owned translation table/module for:
+
+- view titles;
+- anomaly type names;
+- health/status labels;
+- report section headings;
+- viewer/report warnings;
+- control labels.
 
 Examples:
 
 ```text
-position_jump
- yaw_jump
-strict/clock-anchored
-relative-to-baseline/diagnostic/non-ground-truth
-```
-
-remain unchanged in JSON/CSV.
-
-Display mapping is resolved at presentation time, for example:
-
-```text
 position_jump -> 位置突变
  yaw_jump      -> 航向突变
+Map + trajectories -> 地图与轨迹
+Current raw LiDAR  -> 当前原始激光点云
+World LiDAR        -> 世界坐标点云
 ```
 
-### 6.3 Translation ownership
+Canonical algorithm names such as `FAST-LIVO2`, `Point-LIO`, and `GLIM full SLAM` are not translated.
 
-Use a small repository-owned translation module/table instead of scattered literal strings. At minimum it contains:
+### 6.3 Font policy
 
-- view titles;
-- anomaly type names;
-- algorithm group descriptions if displayed;
-- report section headings;
-- health/status display text;
-- warnings that originate from the viewer/report layer.
+No font binaries are committed or bundled.
 
-Algorithm canonical names such as `FAST-LIVO2`, `Point-LIO`, and `GLIM full SLAM` are not translated.
+HTML uses a system-font fallback list containing common CJK fonts.
 
-### 6.4 Font policy
-
-No font file is committed to the repository. HTML uses a CJK-capable system-font fallback list. PDF generation performs a startup font capability check and fails with a clear installation instruction if no supported local CJK font is found.
+PDF generation searches a documented set of local CJK font paths/families. If none is available, PDF generation fails clearly with an installation instruction instead of silently producing missing glyphs.
 
 ## 7. Anomaly click-to-seek design
 
 ### 7.1 Source of truth
 
-Anomaly cards are built only from `metrics/diagnostic_timeline.json` `anomaly_windows`. No new anomaly detector is introduced.
+Anomaly cards come only from `metrics/diagnostic_timeline.json` `anomaly_windows`.
 
-### 7.2 Window target time
+No new anomaly detector is introduced.
 
-For each anomaly window:
+### 7.2 Deterministic target time
+
+For each window:
 
 ```text
-seek_time = 0.5 * (start_bag_time_s + end_bag_time_s)
+seek_time_s = 0.5 * (start_bag_time_s + end_bag_time_s)
+seek_time_ns = round(seek_time_s * 1e9)
 ```
 
-The UI may display start/end, peak step, event count, types, and severity, but clicking the window always seeks to the deterministic midpoint unless a later schema provides a separate canonical peak timestamp.
+The conversion to nanoseconds is required because Rerun WebViewer time-timeline control uses nanoseconds.
 
-### 7.3 Interaction
+### 7.3 Interaction contract
 
-Clicking one anomaly window must:
+Clicking a window must:
 
-1. set the active timeline to `bag_time`;
-2. set current time to `seek_time`;
-3. pause playback;
-4. select/highlight the window's algorithm in the control shell;
-5. set that algorithm as the default world-LiDAR projection algorithm for the selected event;
-6. keep other algorithms available for manual comparison.
+1. obtain the active recording ID;
+2. set the active timeline to `bag_time`;
+3. call WebViewer time control with `seek_time_ns`;
+4. set playback to paused;
+5. select/highlight that algorithm in the shell;
+6. set that algorithm as the world-LiDAR projection selection for the event;
+7. leave other loaded algorithms available for manual comparison.
 
-### 7.4 No hidden mutation
-
-Seeking does not change metric files, report data, algorithm selection persisted on disk, or benchmark state.
+Seeking does not mutate benchmark artifacts.
 
 ## 8. World-frame LiDAR design
 
-### 8.1 Why this is diagnostic-only
+### 8.1 Diagnostic semantics
 
-The greenhouse config contains `lidar_to_base`, but its confidence is provisional and the overall calibration confidence is mixed. Therefore the world-point-cloud feature must not introduce a new claim that the provisional base transform has been independently validated for this dataset.
+The world point cloud means:
 
-### 8.2 Projection convention
+> the selected raw LiDAR points placed into the benchmark's displayed baseline-relative world according to algorithm X.
 
-The world-point-cloud view must reuse the same standardized trajectory pose convention used by the existing reconstructed map comparison. The selected raw LiDAR frame at `bag_time=t` is transformed by the selected algorithm's interpolated standardized pose at `t`, using the same initial-yaw + translation alignment convention used for baseline-relative map/trajectory display.
+It does not mean independently verified absolute world coordinates.
 
-This means the feature answers:
+### 8.2 Exact projection math
 
-> What does this exact LiDAR scan look like when placed into the displayed world according to algorithm X?
+The implementation must reuse/refactor the existing map-reconstruction math from `visualize_baseline_maps.py` rather than create a simplified transform path.
 
-It does not answer:
-
-> What is the independently verified absolute world location of this scan?
-
-### 8.3 Pose sampling
-
-World projection uses the standardized trajectory and the same maximum interpolation-gap semantics already frozen by the benchmark. If no valid pose exists for a selected frame within the accepted interpolation contract, the world frame is omitted for that timestamp and the UI reports `pose unavailable` rather than extrapolating.
-
-### 8.4 Raw view remains available
-
-Keep two logically distinct entities:
+For Livox CustomMsg, each selected point uses:
 
 ```text
-/sensor/raw_lidar/...              # sensor-local audit view
-/world_lidar/<algorithm>/...       # selected algorithm projection
+point_time_s = header_time_s + offset_time_ns * 1e-9
 ```
 
-The raw entity is never replaced by the projected entity.
+For each point time, the selected algorithm pose is obtained from the standardized trajectory using:
 
-### 8.5 Point-cloud density
+- linear XYZ interpolation;
+- quaternion `Slerp` for the full 3D orientation.
 
-Retain three LODs derived from one deserialized dense selection. Default strides:
+The LiDAR point is then transformed using the run manifest's LiDAR extrinsic exactly as the existing reconstructed-map path does:
+
+```text
+lidar_point
+  -> extrinsic_rotation / extrinsic_translation
+  -> algorithm 3D rotation + position at point_time
+  -> initial-yaw + translation baseline alignment
+  -> subtract shared display origin
+  -> displayed world point
+```
+
+This is the same mathematical chain as the existing `reconstruct_map(...)` comparison path.
+
+### 8.3 Calibration disclosure
+
+The source calibration confidence is carried into viewer/report metadata. The feature does not relabel provisional/mixed calibration as verified.
+
+### 8.4 Pose coverage policy
+
+No extrapolation is allowed.
+
+Points whose timestamps fall outside the trajectory coverage are omitted. If the selected frame has no usable projected points after coverage/range checks, the UI reports `pose unavailable`/`无可用位姿` for that frame.
+
+### 8.5 Raw and projected entities
+
+Keep independent entities:
+
+```text
+/sensor/raw_lidar/<lod>
+/world_lidar/<algorithm>/<lod>
+```
+
+The raw sensor-local frame is always available as audit context whenever that frame was logged.
+
+### 8.6 LOD policy
+
+Default point strides:
 
 ```text
 dense=10
@@ -218,24 +254,20 @@ medium=20
 sparse=80
 ```
 
-The CLI remains configurable. The source bag message is deserialized once per selected frame; coarser LODs are derived from the dense selection in memory.
+One source message is deserialized once at the densest requested stride, then coarser LODs are derived in memory.
 
-### 8.6 Logging policy
-
-Default policy:
+### 8.7 Logging defaults
 
 ```text
-raw LiDAR: sampled, 1 s period plus anomaly-near frames
-world LiDAR: anomaly windows only
+raw LiDAR: sampled every 1 s + anomaly-near frames
+world LiDAR: anomaly-near frames only
 ```
 
-A separate explicit option may enable sampled world projection. This prevents `.rrd` growth from becoming the default.
+An explicit `--world-pointcloud-mode sampled` enables periodic world projection.
 
 ## 9. Experiment freeze design
 
 ### 9.1 CLI
-
-Add a new command:
 
 ```text
 lio-benchmark freeze \
@@ -246,19 +278,19 @@ lio-benchmark freeze \
   --pdf
 ```
 
-Default behavior when neither `--html` nor `--pdf` is supplied: generate both.
+If neither `--html` nor `--pdf` is supplied, both are generated.
 
 ### 9.2 Snapshot identity
 
-Each freeze creates a new directory and never overwrites an existing one:
+Every freeze creates a new non-overwriting directory:
 
 ```text
 <RUN>/frozen/<run_id>_<utc_timestamp>_<benchmark_git_short_sha>/
 ```
 
-If that exact path exists, creation fails instead of replacing it.
+If the exact target already exists, the command fails rather than replacing it.
 
-### 9.3 Snapshot contents
+### 9.3 Snapshot structure
 
 ```text
 freeze_manifest.json
@@ -276,44 +308,56 @@ viewer/
   experiment.rrd
 ```
 
-### 9.4 `freeze_manifest.json`
+### 9.4 Freeze state
 
-The manifest records provenance, not analysis prose. It must include:
+The snapshot is created first with:
+
+```text
+freeze_state = INCOMPLETE
+```
+
+Only after every requested report/artifact and its hash has been generated successfully is it atomically updated to:
+
+```text
+freeze_state = COMPLETE
+```
+
+A failed freeze is never reported as complete.
+
+### 9.5 Provenance manifest
+
+`freeze_manifest.json` records provenance, not analysis prose. It includes:
 
 - schema version;
-- freeze timestamp;
-- source run path and run ID;
-- source run state;
+- freeze state and timestamp;
+- source run path/run ID/run state;
 - benchmark repository branch and commit SHA;
 - baseline algorithm;
 - metric class;
-- dataset bag path, size, and content hash;
-- benchmark config path and content hash;
-- algorithm repositories/versions/commits already frozen in the run manifest;
-- algorithm config paths and hashes when available;
-- applied patch names/hashes when available;
-- source artifact path + hash entries for report-critical metrics, trajectories, maps, diagnostic timeline, resource timelines, and point-cloud frame index;
-- generated artifact path + hash entries for HTML, PDF, evidence images, report data, and RRD;
-- report language.
+- report language;
+- dataset bag path, byte size, and SHA-256;
+- benchmark config path and SHA-256;
+- algorithm repository/version/commit evidence from the run manifest;
+- algorithm config path/hash when available;
+- patch path/hash when available;
+- source artifact path/size/hash entries for report-critical metrics, trajectories, maps, diagnostic timeline, resource timelines, and point-cloud frame index;
+- generated artifact path/size/hash entries for report data, HTML, PDF, evidence images, and RRD.
 
-Hashes use SHA-256.
+### 9.6 Large asset policy
 
-### 9.5 Source artifacts are referenced, not rewritten
+Do not duplicate the full rosbag or large PLY map assets by default. Record their path, size, and SHA-256. Small report-critical JSON/CSV/config/evidence files may be copied into the freeze bundle for portability.
 
-The freeze tool may copy small evidence/config/report-critical files into the freeze bundle when doing so materially improves portability, but it must not duplicate the full rosbag or large reconstructed PLY assets by default. Their source paths, sizes, and SHA-256 hashes are recorded in the manifest.
+## 10. Shared report data contract
 
-### 9.6 Failure policy
+`report_data.json` is the only semantic input to both HTML and PDF rendering.
 
-Freeze is all-or-error from the user's perspective. If PDF was requested and PDF generation fails, the command returns non-zero and marks the snapshot incomplete; it must not print a success message that implies both formats were created.
-
-## 10. Report data contract
-
-`report_data.json` is the single report source for both HTML and PDF. It is derived from frozen current-run artifacts and from the existing current-run report model; it does not recalculate benchmark semantics independently.
+It is built from the current-run/frozen artifact model and the existing `current_run_report.py` semantics. It must not independently reinterpret benchmark health or accuracy.
 
 Required sections:
 
 - experiment metadata;
 - dataset and timing evidence;
+- calibration source/confidence disclosure;
 - algorithm versions/config provenance;
 - run lifecycle/health table;
 - trajectory summary;
@@ -321,16 +365,16 @@ Required sections:
 - map-health summary;
 - resource summary;
 - anomaly summary;
-- selected anomaly case studies;
-- conclusions generated from current-run evidence only;
+- selected anomaly cases;
+- current-run evidence-based conclusions;
 - reproducibility checklist;
-- explicit no-GT/diagnostic disclaimer.
+- explicit no-GT diagnostic disclaimer.
 
 ## 11. Evidence image policy
 
 ### 11.1 Existing figures
 
-Reuse existing current-run figures when valid and present, including:
+Reuse valid current-run figures when present, including:
 
 - trajectory/comparison dashboard;
 - XY/XZ map comparison;
@@ -339,35 +383,41 @@ Reuse existing current-run figures when valid and present, including:
 - aligned CPU plot;
 - aligned RSS plot.
 
-### 11.2 Generated anomaly case-study images
+### 11.2 Deterministic anomaly evidence
 
-Generate deterministic static figures for selected anomaly windows rather than relying on screenshots of the interactive viewer. Static evidence is more reproducible in reports.
+Reports use deterministic static figures rather than screenshots of the interactive viewer.
 
-Each case-study image set may include:
+A selected anomaly case can include:
 
-- local trajectory crop around the window;
+- local trajectory crop;
 - raw LiDAR frame;
 - selected algorithm world-projected LiDAR frame;
-- baseline world-projected LiDAR frame when the selected algorithm is not the baseline;
+- baseline world-projected LiDAR frame when different;
 - local CPU/RSS crop;
-- local delta-position/yaw crop.
+- local position-step/yaw-step crop.
+
+The point-cloud images use the same projection helper as the Viewer.
 
 ### 11.3 Case selection
 
-HTML includes the complete anomaly table and can include more case-study figures. PDF uses a bounded deterministic selection:
+PDF detailed-case selection is deterministic:
 
-1. highest-severity windows first;
-2. ensure at least one `position_jump` example if present;
-3. ensure at least one `yaw_jump` example if present;
-4. ensure at least one failed/crashed algorithm case if anomaly evidence exists;
-5. avoid duplicate windows after those coverage rules;
-6. default maximum: 6 detailed cases.
+1. highest severity first;
+2. include at least one `position_jump` if present;
+3. include at least one `yaw_jump` if present;
+4. include at least one failed/crashed algorithm case when anomaly evidence exists;
+5. deduplicate windows;
+6. default maximum is 6 detailed cases.
 
-This selection is recorded in `report_data.json`.
+HTML includes the complete anomaly table and may show all generated detailed cases.
+
+The selected window IDs are stored in `report_data.json`.
 
 ## 12. HTML report
 
-HTML is the browsable experiment archive.
+HTML is the browsable offline experiment archive.
+
+Rendering uses Jinja2 templates owned by the repository. Jinja2 is pinned in a report-specific requirements file, not the core benchmark environment.
 
 Required structure:
 
@@ -383,77 +433,89 @@ Required structure:
 10. 当前结论与下一步 / Conclusions and Next Steps
 11. 可复现性清单 / Reproducibility Checklist
 
-The HTML report may link to local evidence files inside the freeze bundle. It must remain viewable offline.
+The HTML contains only local asset links and remains viewable offline.
 
 ## 13. PDF report
 
-PDF is the immutable human-readable snapshot. It uses the same `report_data.json` and evidence images as HTML.
+PDF is the immutable human-readable snapshot.
 
-PDF generation is direct from Python rather than browser-printing HTML. The chosen PDF backend must support local image embedding, tables, page breaks, and local CJK font registration without committing font binaries into the repository.
+The v1 PDF backend is ReportLab, pinned in the report-specific requirements file.
 
-The PDF contains the same semantic disclaimer as HTML and clearly labels baseline-relative metrics as diagnostic/non-ground-truth.
+It renders directly from `report_data.json` and the same evidence images used by HTML. It is not generated by browser-printing the HTML.
+
+The PDF must support:
+
+- CJK system-font registration;
+- tables;
+- embedded PNG/JPEG evidence;
+- page breaks and headings;
+- footer/header provenance fields;
+- the no-GT diagnostic disclaimer.
+
+No font file is distributed with the project.
 
 ## 14. Conclusions policy
 
-The report may say, for example:
+Permitted examples:
 
 - `Point-LIO is closest to FAST-LIVO2 under the current baseline-relative trajectory diagnostic.`
 - `GLIM full SLAM shows a compact correction window around 353-354 s.`
 - `KISS-ICP shows large yaw-discontinuity windows in this run.`
 - `DLIO did not complete the full run and is excluded from healthy whole-run recommendation.`
 
-It must not say:
+Forbidden examples:
 
-- `Point-LIO has the best absolute accuracy`;
-- `FAST-LIVO2 is ground truth`;
-- `GLIM is objectively inaccurate because it differs from FAST-LIVO2`;
-- `a reconstructed PLY is the algorithm's native map` unless the source artifact actually is a native map.
+- `Point-LIO has the best absolute accuracy.`
+- `FAST-LIVO2 is ground truth.`
+- `GLIM is objectively inaccurate because it differs from FAST-LIVO2.`
+- `The reconstructed comparison PLY is the algorithm's native map.`
 
-## 15. Proposed component boundaries
+## 15. Component boundaries
 
-Implementation should keep responsibilities separated rather than enlarging `rerun_diagnostic_viewer.py` indefinitely.
+Implementation must keep focused modules instead of continuing to enlarge `rerun_diagnostic_viewer.py`.
 
-Proposed files/modules:
+Target responsibilities:
 
 ```text
 evaluators/viewer_i18n.py
-  repository-owned translations only
+  translation keys and language lookup
 
 evaluators/viewer_projection.py
-  pose interpolation and raw/world LiDAR projection helpers
+  shared point-time extraction, pose interpolation, extrinsic/world projection
+  implemented by refactoring/reusing reconstruct-map math
 
 evaluators/rerun_diagnostic_viewer.py
-  recording builder and native viewer entry
+  Rerun recording builder and native viewer entry
 
 benchmark_base/web_viewer/
-  thin local web shell and Rerun WebViewer integration
+  package.json / Vite config / TypeScript shell / WebViewer integration
 
 evaluators/freeze_experiment.py
-  freeze orchestration, provenance, hashing, snapshot lifecycle
+  freeze lifecycle, provenance, hashing, non-overwrite policy
 
 evaluators/report_data.py
-  build one report-data model from current-run/frozen artifacts
+  one report model from frozen/current-run artifacts
+
+evaluators/report_evidence.py
+  deterministic static evidence image generation
 
 evaluators/report_html.py
-  offline HTML renderer
+  Jinja2 offline HTML renderer
 
 evaluators/report_pdf.py
-  direct PDF renderer
+  ReportLab PDF renderer
 
 tests/test_viewer_i18n.py
 tests/test_viewer_projection.py
 tests/test_rerun_diagnostic_viewer.py
 tests/test_freeze_experiment.py
 tests/test_report_data.py
+tests/test_report_evidence.py
 tests/test_report_html.py
 tests/test_report_pdf.py
 ```
 
-Exact names may be adjusted during implementation planning only if required to match existing repository conventions; responsibilities must remain separated.
-
-## 16. CLI surface
-
-Target CLI surface:
+## 16. Target CLI surface
 
 ```text
 lio-benchmark viewer \
@@ -477,80 +539,99 @@ lio-benchmark freeze \
   --max-anomaly-cases 6
 ```
 
-The existing native viewer command behavior must remain backward compatible when the new flags are omitted, except that repository-owned labels default to Chinese according to the approved localization policy.
+Backward compatibility: existing native Viewer usage remains valid when new flags are omitted, except repository-owned labels default to Chinese.
 
-## 17. Validation and test strategy
+## 17. Validation strategy
 
-### 17.1 Unit tests
+### 17.1 Unit/static tests
 
 Cover:
 
-- translation lookup and fallback behavior;
-- CLI language/mode parsing;
-- deterministic anomaly midpoint calculation;
-- algorithm entity selection logic;
-- pose interpolation success/gap rejection;
-- world projection on synthetic points/poses;
-- LOD reuse without repeated source deserialization at the helper contract level;
-- SHA-256 manifest creation;
-- freeze directory no-overwrite policy;
+- translation lookup/fallback;
+- CLI mode/language parsing;
+- deterministic anomaly midpoint and seconds-to-nanoseconds conversion;
+- algorithm selection state;
+- full 3D trajectory pose interpolation with Slerp;
+- point-level Livox offset-time handling;
+- extrinsic + pose + baseline-alignment projection on synthetic points;
+- trajectory-coverage rejection/no extrapolation;
+- LOD reuse contract;
+- SHA-256 manifest entries;
+- non-overwrite freeze policy;
+- INCOMPLETE -> COMPLETE freeze-state transition;
 - deterministic anomaly case selection;
-- HTML contains expected headings/images/disclaimer;
-- PDF generator reports missing CJK font clearly;
-- PDF smoke generation when a supported font is available.
+- HTML headings/assets/disclaimer;
+- PDF missing-CJK-font failure;
+- PDF smoke generation when a supported local font exists.
 
-### 17.2 Repository gate
+Extend `evaluators/check_phase_pipeline.sh` with pure/static tests. Browser/native GUI tests are documented local integration checks, not headless static-gate requirements.
 
-Extend `evaluators/check_phase_pipeline.sh` with new pure-Python tests. Tests that require a graphical Rerun process or browser are not part of the static gate; they receive a documented local integration command instead.
+### 17.2 Real-run acceptance
 
-### 17.3 Real-run acceptance
+Use:
 
-Use `/home/yangxuan/lio_benchmark_runs/greenhouse_full623_round1_001` as the acceptance run.
+```text
+/home/yangxuan/lio_benchmark_runs/greenhouse_full623_round1_001
+```
 
-Acceptance observations:
+Acceptance requirements:
 
-- all ten resource alignments remain `strict/clock-anchored`;
-- GLIM full SLAM anomaly `353.00-354.00 s` is clickable and seeks to the deterministic midpoint;
-- KISS-ICP `333.30-333.40 s` yaw case remains discoverable when that algorithm is loaded;
-- raw and world-projected LiDAR can be visually compared without overwriting either entity;
-- switching the selected projection algorithm changes only the projection view;
-- HTML and PDF are generated from the same `report_data.json`;
-- freeze manifest includes hashes for both reports and the source diagnostic artifacts;
-- a second freeze creates a new snapshot and leaves the first untouched.
+- existing benchmark algorithms are not rerun;
+- resource alignment remains `strict/clock-anchored`;
+- GLIM full SLAM `353.00-354.00 s` window seeks to its deterministic midpoint;
+- KISS-ICP `333.30-333.40 s` yaw window is discoverable when KISS is loaded;
+- raw and world LiDAR coexist;
+- world projection visibly changes when the selected algorithm changes;
+- projection uses per-point time/full orientation rather than frame-time/yaw-only shortcuts;
+- HTML and PDF both originate from the same `report_data.json`;
+- freeze manifest hashes source diagnostics and generated reports;
+- a second freeze creates a new snapshot and leaves the first unchanged.
 
-## 18. Dependency policy
+## 18. Dependency/environment policy
 
-- Keep `rerun-sdk==0.36.3` pinned for this branch until the integration is intentionally upgraded.
-- Keep the viewer environment isolated from the benchmark's ROS/scientific Python environment, using the already validated `.venv-viewer --system-site-packages` approach.
+- Python Rerun: `rerun-sdk==0.36.3`.
+- Web Rerun: `@rerun-io/web-viewer@0.36.3`.
+- Web shell: TypeScript + Vite, no React.
+- HTML templates: Jinja2, exact version pinned during implementation.
+- PDF: ReportLab, exact version pinned during implementation.
+- Viewer/report dependencies stay outside the core benchmark dependency set.
+- Use the already validated `.venv-viewer --system-site-packages` pattern so the viewer can access ROS message types without replacing Ubuntu's compatible NumPy/SciPy pair.
 - Do not require NumPy 2.x in the benchmark environment.
-- Add report dependencies only when required by the chosen HTML/PDF implementation and pin them in a viewer/report-specific requirements file rather than the core benchmark dependency set.
-- Do not vendor third-party fonts.
+- Do not vendor fonts.
 
-## 19. Delivery sequence
+## 19. Delivery decomposition
 
-Implementation order is intentionally staged so each stage remains usable:
+Because this design contains two substantial but connected subsystems, implementation planning will be split into two plans sharing this spec.
 
-1. localization module + native-viewer labels;
-2. world-projection helpers + native viewer projected entity;
-3. web shell + anomaly click-to-seek + algorithm selection;
-4. freeze manifest/provenance layer;
-5. shared report-data model;
-6. evidence image generator;
-7. HTML report;
-8. PDF report;
-9. full real-run acceptance and documentation.
+### Plan A — Viewer interaction and projection
 
-No later stage may silently redefine the benchmark outputs consumed by an earlier stage.
+1. localization module + native labels;
+2. shared projection helper refactored from current map reconstruction;
+3. native world-LiDAR entity;
+4. web shell with algorithm selection and anomaly click-to-seek;
+5. real-run Viewer acceptance.
+
+### Plan B — Experiment freeze and reports
+
+1. freeze lifecycle/provenance/hash model;
+2. shared report-data model;
+3. deterministic evidence-image generator;
+4. offline HTML report;
+5. ReportLab PDF report;
+6. frozen Round1 acceptance.
+
+Plan B consumes the shared projection helper from Plan A for anomaly point-cloud evidence.
 
 ## 20. Definition of done
 
-The feature is done when:
+The complete feature is done when:
 
-- native viewer still opens existing runs;
-- web viewer offers Chinese-first controls and deterministic anomaly seeking;
-- selected-algorithm world LiDAR is available with diagnostic semantics clearly labeled;
-- `lio-benchmark freeze` produces a non-overwriting provenance snapshot;
-- HTML and PDF use one frozen report-data model and include embedded evidence figures;
-- generated reports retain the no-GT diagnostic disclaimer;
+- the existing native Viewer still opens current runs;
+- repository-owned Viewer/report UI defaults to Chinese and can switch to English;
+- web mode can click an anomaly window and deterministically move `bag_time`;
+- selected-algorithm world LiDAR uses the same point-time/extrinsic/full-pose/alignment math as map reconstruction;
+- `lio-benchmark freeze` produces a non-overwriting provenance snapshot with explicit completion state;
+- HTML and PDF share one report-data model and include deterministic evidence figures;
+- reports preserve no-GT/baseline-relative diagnostic semantics;
 - all new static tests and the existing phase/comparison gate pass on the Ubuntu benchmark host;
-- the greenhouse Round1 acceptance checklist is completed without rerunning the ten algorithms.
+- greenhouse Round1 acceptance completes without rerunning the ten algorithms.
