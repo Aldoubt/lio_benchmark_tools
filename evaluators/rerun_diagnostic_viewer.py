@@ -33,6 +33,8 @@ COLOR_RGB = {
     "lio_sam_no_loop": [52, 73, 94],
     "lio_sam_loop": [44, 62, 80],
 }
+POINT_LOD_NAMES = ("dense", "medium", "sparse")
+DEFAULT_POINT_LODS = "10,20,80"
 
 
 def load_json(path: Path, default: Any = None) -> Any:
@@ -75,10 +77,18 @@ def load_binary_little_endian_ply(path: Path) -> np.ndarray:
         ]
         if properties != expected:
             raise ValueError(f"unsupported PLY vertex schema in {path}: {properties}")
-        records = np.fromfile(stream, dtype=np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("intensity", "<f4")]), count=count)
+        records = np.fromfile(
+            stream,
+            dtype=np.dtype(
+                [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("intensity", "<f4")]
+            ),
+            count=count,
+        )
     if len(records) != count:
         raise ValueError(f"PLY payload is truncated: expected {count}, got {len(records)}")
-    return np.column_stack([records[name].astype(np.float64) for name in ("x", "y", "z", "intensity")])
+    return np.column_stack(
+        [records[name].astype(np.float64) for name in ("x", "y", "z", "intensity")]
+    )
 
 
 def nearest_frame(frames: list[dict[str, Any]], bag_time_s: float) -> dict[str, Any]:
@@ -91,7 +101,12 @@ def nearest_frame(frames: list[dict[str, Any]], bag_time_s: float) -> dict[str, 
     if index >= len(frames):
         return frames[-1]
     before, after = frames[index - 1], frames[index]
-    return before if abs(float(before["bag_time_s"]) - bag_time_s) <= abs(float(after["bag_time_s"]) - bag_time_s) else after
+    return (
+        before
+        if abs(float(before["bag_time_s"]) - bag_time_s)
+        <= abs(float(after["bag_time_s"]) - bag_time_s)
+        else after
+    )
 
 
 def select_pointcloud_frames(
@@ -125,6 +140,48 @@ def select_pointcloud_frames(
     return sorted(selected.values(), key=lambda item: float(item["bag_time_s"]))
 
 
+def parse_point_lods(value: str) -> dict[str, int]:
+    """Parse dense,medium,sparse point strides from a compact CLI value."""
+    try:
+        steps = [int(item.strip()) for item in str(value).split(",")]
+    except ValueError as exc:
+        raise ValueError("--point-lods must contain three integer strides") from exc
+    if len(steps) != 3 or any(step < 1 for step in steps):
+        raise ValueError("--point-lods must contain three positive strides")
+    if not (steps[0] < steps[1] < steps[2]):
+        raise ValueError("--point-lods must be strictly increasing: dense,medium,sparse")
+    if any(step % steps[0] != 0 for step in steps[1:]):
+        raise ValueError("medium/sparse point LOD strides must be multiples of dense stride")
+    return dict(zip(POINT_LOD_NAMES, steps))
+
+
+def point_lod_clouds(
+    dense_points: np.ndarray,
+    lod_steps: dict[str, int],
+) -> dict[str, np.ndarray]:
+    """Derive coarser LODs from one already-deserialized dense cloud."""
+    points = np.asarray(dense_points, dtype=np.float64)
+    dense_step = int(lod_steps["dense"])
+    output: dict[str, np.ndarray] = {}
+    for name in POINT_LOD_NAMES:
+        step = int(lod_steps[name])
+        if step < dense_step or step % dense_step != 0:
+            raise ValueError("point LOD strides must be increasing multiples of dense stride")
+        output[name] = points[:: max(1, step // dense_step)]
+    return output
+
+
+def algorithm_entity_paths(algorithm: str) -> dict[str, str]:
+    """Keep all spatial entities for one algorithm under one togglable parent."""
+    root = f"world/algorithms/{algorithm}"
+    return {
+        "root": root,
+        "trajectory": f"{root}/trajectory",
+        "current": f"{root}/current",
+        "map": f"{root}/map",
+    }
+
+
 def initial_yaw_translation_transform(
     baseline_start: np.ndarray,
     baseline_yaw_rad: float,
@@ -133,12 +190,20 @@ def initial_yaw_translation_transform(
 ) -> tuple[np.ndarray, np.ndarray]:
     yaw_delta = float(baseline_yaw_rad) - float(candidate_yaw_rad)
     c, s = math.cos(yaw_delta), math.sin(yaw_delta)
-    rotation = np.asarray([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
-    translation = np.asarray(baseline_start, dtype=np.float64) - rotation @ np.asarray(candidate_start, dtype=np.float64)
+    rotation = np.asarray(
+        [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64
+    )
+    translation = np.asarray(baseline_start, dtype=np.float64) - rotation @ np.asarray(
+        candidate_start, dtype=np.float64
+    )
     return rotation, translation
 
 
-def apply_alignment(points: np.ndarray, rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:
+def apply_alignment(
+    points: np.ndarray,
+    rotation: np.ndarray,
+    translation: np.ndarray,
+) -> np.ndarray:
     values = np.asarray(points, dtype=np.float64)
     return (rotation @ values.T).T + np.asarray(translation, dtype=np.float64)
 
@@ -147,7 +212,9 @@ def resolve_algorithms(run: Path, requested: str | None) -> list[str]:
     payload = load_json(Path(run) / "metrics" / "diagnostic_timeline.json", {}) or {}
     available = [str(item) for item in payload.get("algorithm_order") or []]
     if not available:
-        raise FileNotFoundError("metrics/diagnostic_timeline.json is missing algorithm_order; run lio-benchmark diagnostics first")
+        raise FileNotFoundError(
+            "metrics/diagnostic_timeline.json is missing algorithm_order; run lio-benchmark diagnostics first"
+        )
     if requested is None:
         return available
     selected = [item.strip() for item in requested.split(",") if item.strip()]
@@ -157,13 +224,21 @@ def resolve_algorithms(run: Path, requested: str | None) -> list[str]:
     return selected
 
 
-def _alignment_for_trajectories(run: Path, algorithms: list[str], baseline: str) -> tuple[dict[str, tuple[np.ndarray, np.ndarray]], np.ndarray]:
+def _alignment_for_trajectories(
+    run: Path,
+    algorithms: list[str],
+    baseline: str,
+) -> tuple[dict[str, tuple[np.ndarray, np.ndarray]], np.ndarray]:
     trajectories = {
-        algorithm: load_trajectory(Path(run) / "standardized" / "trajectories" / f"{algorithm}.csv")
+        algorithm: load_trajectory(
+            Path(run) / "standardized" / "trajectories" / f"{algorithm}.csv"
+        )
         for algorithm in algorithms
     }
     if baseline not in trajectories:
-        trajectories[baseline] = load_trajectory(Path(run) / "standardized" / "trajectories" / f"{baseline}.csv")
+        trajectories[baseline] = load_trajectory(
+            Path(run) / "standardized" / "trajectories" / f"{baseline}.csv"
+        )
     base = trajectories[baseline]
     base_start = np.asarray(base["positions"][0], dtype=np.float64)
     base_yaw = float(base["yaw_rad"][0])
@@ -182,9 +257,14 @@ def _alignment_for_trajectories(run: Path, algorithms: list[str], baseline: str)
 
 
 def _timeline_positions(run: Path, algorithm: str) -> tuple[np.ndarray, np.ndarray]:
-    rows = load_csv(Path(run) / "metrics" / "diagnostic_timeline" / f"{algorithm}.csv")
+    rows = load_csv(
+        Path(run) / "metrics" / "diagnostic_timeline" / f"{algorithm}.csv"
+    )
     times = np.asarray([float(row["bag_time_s"]) for row in rows], dtype=np.float64)
-    positions = np.asarray([[float(row["x_m"]), float(row["y_m"]), float(row["z_m"])] for row in rows], dtype=np.float64)
+    positions = np.asarray(
+        [[float(row["x_m"]), float(row["y_m"]), float(row["z_m"])] for row in rows],
+        dtype=np.float64,
+    )
     return times, positions
 
 
@@ -211,21 +291,29 @@ def _read_indexed_lidar_points(
     message_class = get_message(topic_type)
     connection = sqlite3.connect(f"file:{Path(sqlite_db)}?mode=ro", uri=True)
     try:
-        topic_row = connection.execute("SELECT id FROM topics WHERE name = ?", (topic,)).fetchone()
+        topic_row = connection.execute(
+            "SELECT id FROM topics WHERE name = ?", (topic,)
+        ).fetchone()
         if topic_row is None:
             raise ValueError(f"bag missing LiDAR topic {topic}")
         result: list[tuple[float, np.ndarray]] = []
         for frame in frames:
-            row = connection.execute("SELECT data FROM messages WHERE id = ? AND topic_id = ?", (int(frame["message_id"]), int(topic_row[0]))).fetchone()
+            row = connection.execute(
+                "SELECT data FROM messages WHERE id = ? AND topic_id = ?",
+                (int(frame["message_id"]), int(topic_row[0])),
+            ).fetchone()
             if row is None:
                 continue
             message = deserialize_message(row[0], message_class)
             if hasattr(message, "points"):
                 selected = message.points[::point_step]
-                xyz = np.asarray([[point.x, point.y, point.z] for point in selected], dtype=np.float64)
+                xyz = np.asarray(
+                    [[point.x, point.y, point.z] for point in selected], dtype=np.float64
+                )
             elif hasattr(message, "fields"):
-                # Keep the MVP focused on the greenhouse Livox CustomMsg path.
-                raise ValueError("PointCloud2 on-demand rendering is not implemented in the Rerun MVP yet")
+                raise ValueError(
+                    "PointCloud2 on-demand rendering is not implemented in the Rerun MVP yet"
+                )
             else:
                 raise ValueError(f"unsupported LiDAR message type: {type(message)!r}")
             valid = np.isfinite(xyz).all(axis=1)
@@ -247,6 +335,15 @@ def _series_value(row: dict[str, str], key: str) -> float | None:
 
 
 def _send_blueprint(rr: Any, rrb: Any) -> None:
+    sensor_view = rrb.Spatial3DView(
+        name="Current raw LiDAR — toggle dense/medium/sparse in Blueprint",
+        origin="/sensor",
+        overrides={
+            "/sensor/raw_lidar/dense": rrb.EntityBehavior(visible=False),
+            "/sensor/raw_lidar/medium": rrb.EntityBehavior(visible=True),
+            "/sensor/raw_lidar/sparse": rrb.EntityBehavior(visible=False),
+        },
+    )
     blueprint = rrb.Blueprint(
         rrb.Vertical(
             rrb.Horizontal(
@@ -260,13 +357,13 @@ def _send_blueprint(rr: Any, rrb: Any) -> None:
                 column_shares=[2, 1],
             ),
             rrb.Horizontal(
-                rrb.Spatial3DView(name="Current raw LiDAR", origin="/sensor"),
+                sensor_view,
                 rrb.TextLogView(name="Anomaly windows", origin="/events"),
                 column_shares=[2, 1],
             ),
             row_shares=[3, 2],
         ),
-        collapse_panels=True,
+        collapse_panels=False,
     )
     rr.send_blueprint(blueprint)
 
@@ -281,6 +378,7 @@ def log_recording(
     pointcloud_mode: str,
     pointcloud_period_s: float,
     point_step: int,
+    point_lods: dict[str, int],
     save: Path | None,
     spawn: bool,
 ) -> dict[str, Any]:
@@ -288,7 +386,10 @@ def log_recording(
         import rerun as rr
         import rerun.blueprint as rrb
     except ImportError as exc:
-        raise RuntimeError("Rerun SDK is not installed. Install the tested viewer dependency with: python3 -m pip install 'rerun-sdk==0.36.3'") from exc
+        raise RuntimeError(
+            "Rerun SDK is not installed. Install the tested viewer dependency with: "
+            "python3 -m pip install 'rerun-sdk==0.36.3'"
+        ) from exc
 
     run = Path(run).resolve()
     timeline = load_json(run / "metrics" / "diagnostic_timeline.json", {}) or {}
@@ -302,14 +403,22 @@ def log_recording(
         rr.save(str(save))
     _send_blueprint(rr, rrb)
 
-    # Full aligned trajectories are static context; current positions below are temporal.
+    # Group spatial entities by algorithm so the Blueprint panel exposes a
+    # single recursive eye toggle for that algorithm's map/trajectory/current pose.
     for algorithm in algorithms:
-        trajectory = load_trajectory(run / "standardized" / "trajectories" / f"{algorithm}.csv")
+        paths = algorithm_entity_paths(algorithm)
+        trajectory = load_trajectory(
+            run / "standardized" / "trajectories" / f"{algorithm}.csv"
+        )
         rotation, translation = transforms[algorithm]
         aligned = apply_alignment(trajectory["positions"], rotation, translation) - origin
         rr.log(
-            f"world/trajectories/{algorithm}",
-            rr.LineStrips3D([aligned], colors=COLOR_RGB.get(algorithm, [180, 180, 180]), radii=0.025),
+            paths["trajectory"],
+            rr.LineStrips3D(
+                [aligned],
+                colors=COLOR_RGB.get(algorithm, [180, 180, 180]),
+                radii=0.025,
+            ),
             static=True,
         )
 
@@ -318,8 +427,13 @@ def log_recording(
         for bag_time, position in zip(times, aligned_positions):
             rr.set_time("bag_time", duration=float(bag_time))
             rr.log(
-                f"world/current/{algorithm}",
-                rr.Points3D([position], colors=COLOR_RGB.get(algorithm, [180, 180, 180]), radii=0.18, labels=[LABELS.get(algorithm, algorithm)]),
+                paths["current"],
+                rr.Points3D(
+                    [position],
+                    colors=COLOR_RGB.get(algorithm, [180, 180, 180]),
+                    radii=0.18,
+                    labels=[LABELS.get(algorithm, algorithm)],
+                ),
             )
 
     if with_maps:
@@ -329,17 +443,23 @@ def log_recording(
             if not path.is_file():
                 continue
             cloud = load_binary_little_endian_ply(path)
-            shown = cloud[::max(1, int(map_point_step)), :3]
+            shown = cloud[:: max(1, int(map_point_step)), :3]
             rr.log(
-                f"world/maps/{algorithm}",
-                rr.Points3D(shown, colors=COLOR_RGB.get(algorithm, [160, 160, 160]), radii=0.015),
+                algorithm_entity_paths(algorithm)["map"],
+                rr.Points3D(
+                    shown,
+                    colors=COLOR_RGB.get(algorithm, [160, 160, 160]),
+                    radii=0.015,
+                ),
                 static=True,
             )
 
-    # Use the already synchronized 10 Hz rows for motion diagnostics and the
-    # strict clock-aligned resource CSVs for actual resource sample timing.
+    # Use already synchronized 10 Hz motion rows and strict clock-aligned
+    # resource CSVs. These are display-only consumers of frozen diagnostics.
     for algorithm in algorithms:
-        timeline_rows = load_csv(run / "metrics" / "diagnostic_timeline" / f"{algorithm}.csv")
+        timeline_rows = load_csv(
+            run / "metrics" / "diagnostic_timeline" / f"{algorithm}.csv"
+        )
         for row in timeline_rows:
             bag_time = _series_value(row, "bag_time_s")
             if bag_time is None:
@@ -349,20 +469,35 @@ def log_recording(
             delta_yaw = _series_value(row, "delta_yaw_deg")
             speed = _series_value(row, "speed_mps")
             if delta_position is not None:
-                rr.log(f"metrics/motion/{algorithm}/delta_position_m", rr.Scalars(delta_position))
+                rr.log(
+                    f"metrics/motion/{algorithm}/delta_position_m",
+                    rr.Scalars(delta_position),
+                )
             if delta_yaw is not None:
-                rr.log(f"metrics/motion/{algorithm}/delta_yaw_deg", rr.Scalars(delta_yaw))
+                rr.log(
+                    f"metrics/motion/{algorithm}/delta_yaw_deg", rr.Scalars(delta_yaw)
+                )
             if speed is not None:
                 rr.log(f"metrics/motion/{algorithm}/speed_mps", rr.Scalars(speed))
 
-        resource_path = run / "metrics" / "diagnostic_timeline" / "resources" / f"{algorithm}.csv"
+        resource_path = (
+            run
+            / "metrics"
+            / "diagnostic_timeline"
+            / "resources"
+            / f"{algorithm}.csv"
+        )
         if resource_path.is_file():
             for row in load_csv(resource_path):
                 bag_time = _series_value(row, "bag_time_s")
                 if bag_time is None:
                     continue
                 rr.set_time("bag_time", duration=bag_time)
-                for key, root in (("cpu_percent", "cpu"), ("rss_mib", "rss"), ("threads", "threads")):
+                for key, root in (
+                    ("cpu_percent", "cpu"),
+                    ("rss_mib", "rss"),
+                    ("threads", "threads"),
+                ):
                     value = _series_value(row, key)
                     if value is not None:
                         rr.log(f"metrics/{root}/{algorithm}", rr.Scalars(value))
@@ -379,29 +514,39 @@ def log_recording(
                 f"types={','.join(window['types'])} | severity={window['severity']:.2f}"
             ),
         )
-        rr.log(f"metrics/motion/anomaly_severity/{window['algorithm']}", rr.Scalars(float(window["severity"])))
+        rr.log(
+            f"metrics/motion/anomaly_severity/{window['algorithm']}",
+            rr.Scalars(float(window["severity"])),
+        )
 
     pointcloud_frames_logged = 0
     if pointcloud_mode != "none":
         index_payload, frames = _load_frame_index(run)
         if not frames:
-            raise FileNotFoundError("pointcloud_frame_index.json is unavailable; run diagnostics --with-pointcloud-index first")
+            raise FileNotFoundError(
+                "pointcloud_frame_index.json is unavailable; run diagnostics --with-pointcloud-index first"
+            )
         selected_frames = select_pointcloud_frames(
             frames,
             selected_windows,
             period_s=pointcloud_period_s if pointcloud_mode == "sampled" else 0.0,
             include_anomalies=True,
         )
+        dense_step = int(point_lods["dense"])
         scans = _read_indexed_lidar_points(
             Path(index_payload["sqlite_db"]),
             str(index_payload["lidar_topic"]),
             str(index_payload["lidar_type"]),
             selected_frames,
-            point_step=point_step,
+            point_step=dense_step,
         )
-        for bag_time, points in scans:
+        for bag_time, dense_points in scans:
             rr.set_time("bag_time", duration=bag_time)
-            rr.log("sensor/raw_lidar", rr.Points3D(points, radii=0.025))
+            for lod_name, points in point_lod_clouds(dense_points, point_lods).items():
+                rr.log(
+                    f"sensor/raw_lidar/{lod_name}",
+                    rr.Points3D(points, radii=0.025),
+                )
         pointcloud_frames_logged = len(scans)
 
     return {
@@ -411,25 +556,52 @@ def log_recording(
         "anomaly_windows": len(selected_windows),
         "pointcloud_mode": pointcloud_mode,
         "pointcloud_frames_logged": pointcloud_frames_logged,
+        "pointcloud_lods": point_lods,
+        "legacy_point_step": int(point_step),
         "saved_rrd": str(save) if save is not None else None,
     }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Open the offline LIO benchmark diagnostic viewer")
+    parser = argparse.ArgumentParser(
+        description="Open the offline LIO benchmark diagnostic viewer"
+    )
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--baseline", default="fast_livo2")
-    parser.add_argument("--algorithms", help="comma-separated algorithm keys; default: all algorithms in diagnostic_timeline.json")
+    parser.add_argument(
+        "--algorithms",
+        help="comma-separated algorithm keys; default: all algorithms in diagnostic_timeline.json",
+    )
     parser.add_argument("--no-maps", action="store_true", help="skip reconstructed PLY maps")
-    parser.add_argument("--map-point-step", type=int, default=4, help="display every Nth PLY point")
-    parser.add_argument("--pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly")
-    parser.add_argument("--pointcloud-period", type=float, default=1.0, help="seconds between raw scans in sampled mode")
-    parser.add_argument("--point-step", type=int, default=20, help="display every Nth raw LiDAR point")
+    parser.add_argument(
+        "--map-point-step", type=int, default=4, help="display every Nth PLY point"
+    )
+    parser.add_argument(
+        "--pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly"
+    )
+    parser.add_argument(
+        "--pointcloud-period",
+        type=float,
+        default=1.0,
+        help="seconds between raw scans in sampled mode",
+    )
+    parser.add_argument(
+        "--point-step",
+        type=int,
+        default=20,
+        help="legacy single-density stride retained for CLI compatibility",
+    )
+    parser.add_argument(
+        "--point-lods",
+        default=DEFAULT_POINT_LODS,
+        help="dense,medium,sparse raw LiDAR strides; default: 10,20,80",
+    )
     parser.add_argument("--save", type=Path, help="write an .rrd recording instead of spawning a viewer")
     parser.add_argument("--no-spawn", action="store_true", help="do not spawn the native viewer")
     args = parser.parse_args()
     if args.map_point_step < 1 or args.point_step < 1 or args.pointcloud_period <= 0:
         raise ValueError("map/point steps must be >=1 and pointcloud period must be >0")
+    point_lods = parse_point_lods(args.point_lods)
 
     run = args.run.resolve()
     algorithms = resolve_algorithms(run, args.algorithms)
@@ -444,6 +616,7 @@ def main() -> int:
         pointcloud_mode=args.pointcloud_mode,
         pointcloud_period_s=args.pointcloud_period,
         point_step=args.point_step,
+        point_lods=point_lods,
         save=args.save,
         spawn=not args.no_spawn,
     )
