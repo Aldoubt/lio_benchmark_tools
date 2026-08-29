@@ -52,6 +52,7 @@ def build_stage_commands(
     viewer_pointcloud_mode: str = "anomaly",
     viewer_pointcloud_period_s: float = 1.0,
     viewer_point_step: int = 20,
+    viewer_point_lods: str = "10,20,80",
     viewer_map_point_step: int = 4,
     viewer_save: Path | None = None,
     viewer_spawn: bool = True,
@@ -80,6 +81,8 @@ def build_stage_commands(
         raise ValueError("viewer_pointcloud_mode must be none, anomaly, or sampled")
     if viewer_pointcloud_period_s <= 0 or viewer_point_step < 1 or viewer_map_point_step < 1:
         raise ValueError("viewer pointcloud period must be >0 and viewer point steps must be >=1")
+    if not str(viewer_point_lods).strip():
+        raise ValueError("viewer_point_lods must not be empty")
 
     commands: list[list[str]] = []
     if stage == "phase-analysis":
@@ -113,14 +116,15 @@ def build_stage_commands(
             "--pointcloud-mode", viewer_pointcloud_mode,
             "--pointcloud-period", viewer_pointcloud_period_s,
             "--point-step", viewer_point_step,
+            "--point-lods", viewer_point_lods,
             "--map-point-step", viewer_map_point_step,
         )
         if viewer_algorithms:
-            command.extend(["--algorithms", viewer_algorithms])
+            command.extend(["--algorithms", str(viewer_algorithms)])
         if not viewer_with_maps:
             command.append("--no-maps")
         if viewer_save is not None:
-            command.extend(["--save", viewer_save])
+            command.extend(["--save", str(viewer_save)])
         if not viewer_spawn:
             command.append("--no-spawn")
         return [command]
@@ -191,6 +195,7 @@ def execute_stage(
     viewer_pointcloud_mode: str = "anomaly",
     viewer_pointcloud_period_s: float = 1.0,
     viewer_point_step: int = 20,
+    viewer_point_lods: str = "10,20,80",
     viewer_map_point_step: int = 4,
     viewer_save: Path | None = None,
     viewer_spawn: bool = True,
@@ -218,6 +223,7 @@ def execute_stage(
         viewer_pointcloud_mode=viewer_pointcloud_mode,
         viewer_pointcloud_period_s=viewer_pointcloud_period_s,
         viewer_point_step=viewer_point_step,
+        viewer_point_lods=viewer_point_lods,
         viewer_map_point_step=viewer_map_point_step,
         viewer_save=viewer_save,
         viewer_spawn=viewer_spawn,
