@@ -78,6 +78,7 @@ def test_viewer_dispatches_display_options(monkeypatch, tmp_path):
         "--run", str(tmp_path),
         "--baseline", "fast_livo2",
         "--algorithms", "fast_livo2,point_lio",
+        "--lang", "en",
         "--no-maps",
         "--pointcloud-mode", "sampled",
         "--pointcloud-period", "2.0",
@@ -91,6 +92,7 @@ def test_viewer_dispatches_display_options(monkeypatch, tmp_path):
     assert result == 0
     assert captured["stage"] == "viewer"
     assert captured["viewer_algorithms"] == "fast_livo2,point_lio"
+    assert captured["viewer_language"] == "en"
     assert captured["viewer_with_maps"] is False
     assert captured["viewer_pointcloud_mode"] == "sampled"
     assert captured["viewer_pointcloud_period_s"] == 2.0
