@@ -115,6 +115,8 @@ def test_viewer_stage_only_launches_rerun_consumer(tmp_path):
         viewer_pointcloud_period_s=2.0,
         viewer_point_step=25,
         viewer_point_lods="10,20,80",
+        viewer_world_pointcloud_mode="sampled",
+        viewer_world_algorithm="point_lio",
         viewer_map_point_step=5,
         viewer_save=save_path,
         viewer_spawn=False,
@@ -128,6 +130,8 @@ def test_viewer_stage_only_launches_rerun_consumer(tmp_path):
     assert "--pointcloud-period" in command and "2.0" in command
     assert "--point-step" in command and "25" in command
     assert "--point-lods" in command and "10,20,80" in command
+    assert "--world-pointcloud-mode" in command and "sampled" in command
+    assert "--world-algorithm" in command and "point_lio" in command
     assert "--map-point-step" in command and "5" in command
     assert "--save" in command and str(save_path) in command
     assert "--no-spawn" in command
