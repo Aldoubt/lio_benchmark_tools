@@ -4,28 +4,28 @@
 
 **Goal:** Add an immutable `lio-benchmark freeze` workflow that records experiment provenance, generates deterministic evidence images, writes one shared `report_data.json`, and renders both an offline HTML archive and a direct PDF snapshot for a completed benchmark run.
 
-**Architecture:** Treat the selected run as immutable input. Build the report model by reusing `current_run_report.build_report()` plus frozen diagnostic/map/resource artifacts, generate deterministic static evidence (including anomaly-local raw/world LiDAR using Plan A's shared projection module), then render HTML and PDF from the same model. Build the snapshot in an `.incomplete` directory, hash source/generated artifacts with SHA-256, and atomically rename to the final unique snapshot directory only when every requested output succeeds.
+**Architecture:** Treat the selected run as immutable input. Build the report model by reusing `current_run_report.build_report()` plus frozen diagnostic/map/resource artifacts, generate deterministic static evidence including anomaly-local raw/world LiDAR through Plan A's shared projection module, then render HTML and PDF from the same model. Build the snapshot in a dot-prefixed incomplete directory, hash source/generated artifacts with SHA-256, and atomically rename to the final unique snapshot directory only when every requested output succeeds.
 
-**Tech Stack:** Python 3.10, existing NumPy/SciPy/Matplotlib stack, ROS 2 Humble for indexed Livox message deserialization used by anomaly evidence, `Jinja2==3.1.6`, `reportlab==5.0.1`, existing `rerun-sdk==0.36.3` for the archived `.rrd` recording.
+**Tech Stack:** Python 3.10, existing NumPy/SciPy/Matplotlib stack, ROS 2 Humble for indexed Livox message deserialization, `Jinja2==3.1.6`, `reportlab==5.0.1`, existing `rerun-sdk==0.36.3` for archived `.rrd` output.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-lio-diagnostic-viewer-freeze-design.md`
 
-**Dependency:** Plan A `docs/superpowers/plans/2026-08-29-lio-diagnostic-viewer-interaction-plan.md` must pass its completion gate first. This plan imports `viewer_i18n.py` and `viewer_projection.py` rather than creating alternate translations or projection math.
+**Dependency:** Plan A `docs/superpowers/plans/2026-08-29-lio-diagnostic-viewer-interaction-plan.md` must pass its completion gate first. This plan imports `viewer_i18n.py` and `viewer_projection.py` rather than creating alternate translation or projection implementations.
 
 ## Global Constraints
 
-- `report_data.json` is the only semantic source for HTML and PDF; the renderers do not independently recalculate benchmark conclusions.
+- `report_data.json` is the only semantic source for HTML and PDF; renderers do not independently recalculate benchmark conclusions.
 - Reuse `current_run_report.build_report()` for current-run comparison semantics instead of copying recommendation/health logic.
 - When no independent GT exists, all baseline-relative trajectory/map quantities remain `relative-to-baseline/diagnostic/non-ground-truth`.
 - Never describe FAST-LIVO2 as ground truth.
 - Never describe reconstructed comparison PLY as an algorithm-native map unless the source artifact actually is native-map output.
 - Freeze never overwrites an existing final snapshot directory.
 - The full rosbag and large PLY files are not copied by default; their paths, sizes, and SHA-256 hashes are recorded.
-- All requested outputs are success-or-error. A failed PDF must produce non-zero exit and must not leave a final directory that looks complete.
-- Evidence figures are deterministic Matplotlib/static assets; reports do not rely on screenshots of the interactive Viewer.
+- All requested outputs are success-or-error. A failed PDF returns non-zero and must not leave a final directory that looks complete.
+- Evidence figures are deterministic Matplotlib/static assets; reports do not depend on screenshots of the interactive Viewer.
 - PDF uses local system CJK fonts only. No font binary is committed, copied into the freeze bundle, or shared.
 - Default language is `zh-CN`; internal schema keys remain English.
-- Freeze must not replay the rosbag or launch any LIO algorithm. It may deserialize indexed LiDAR messages directly from the source sqlite bag.
+- Freeze does not replay the rosbag or launch any LIO algorithm. It may deserialize indexed LiDAR messages directly from the source sqlite bag.
 
 ---
 
@@ -33,12 +33,12 @@
 
 **Create**
 
-- `benchmark_base/requirements-report.txt` — pinned Jinja2/ReportLab dependencies.
-- `evaluators/report_data.py` — one report-data model, anomaly-case selection, current-run conclusions/disclaimer assembly.
-- `evaluators/report_evidence.py` — existing-figure collection plus deterministic anomaly-local static evidence plots.
-- `evaluators/report_html.py` — Jinja2 offline HTML renderer.
-- `evaluators/report_pdf.py` — direct ReportLab PDF renderer and CJK font discovery.
-- `evaluators/freeze_experiment.py` — snapshot identity, provenance hashing, orchestration, incomplete/final lifecycle.
+- `benchmark_base/requirements-report.txt`
+- `evaluators/report_data.py`
+- `evaluators/report_evidence.py`
+- `evaluators/report_html.py`
+- `evaluators/report_pdf.py`
+- `evaluators/freeze_experiment.py`
 - `benchmark_base/report_templates/report.html.j2`
 - `benchmark_base/report_templates/report.css`
 - `tests/test_report_data.py`
@@ -46,20 +46,20 @@
 - `tests/test_report_html.py`
 - `tests/test_report_pdf.py`
 - `tests/test_freeze_experiment.py`
+- `benchmark_base/docs/FROZEN_EXPERIMENT_REPORT.md`
 
 **Modify**
 
-- `benchmark_base/lio_benchmark/entry.py` — add `freeze` command.
-- `benchmark_base/lio_benchmark/postprocess.py` — build/execute `freeze_experiment.py` command.
+- `benchmark_base/lio_benchmark/entry.py`
+- `benchmark_base/lio_benchmark/postprocess.py`
 - `tests/test_entry.py`
 - `tests/test_postprocess.py`
 - `evaluators/check_phase_pipeline.sh`
-- `benchmark_base/docs/RERUN_DIAGNOSTIC_VIEWER.md` — link the interactive viewer to the freeze/report workflow.
-- Add `benchmark_base/docs/FROZEN_EXPERIMENT_REPORT.md` if the freeze workflow needs a standalone operational guide.
+- `benchmark_base/docs/RERUN_DIAGNOSTIC_VIEWER.md`
 
 ---
 
-### Task 1: Define the freeze identity, hashing primitives, and incomplete/final lifecycle
+### Task 1: Define freeze identity, hashing primitives, and incomplete/final lifecycle
 
 **Files:**
 - Create: `evaluators/freeze_experiment.py`
@@ -67,19 +67,24 @@
 
 **Interfaces:**
 - `sha256_file(path: Path, *, chunk_size: int = 8 * 1024 * 1024) -> str`.
-- `sha256_path(path: Path) -> dict[str, Any]`; file result includes `kind=file,path,size_bytes,sha256`; directory result includes deterministic child entries and a digest over relative path + size + content digest.
-- `benchmark_git_identity(repo_root: Path) -> dict[str, str]` returns `branch`, `commit`, `short_commit`, `dirty`.
+- `sha256_path(path: Path) -> dict[str, object]`; file result has `kind`, `path`, `size_bytes`, `sha256`; directory result has deterministic child entries and aggregate digest.
+- `benchmark_git_identity(repo_root: Path) -> dict[str, object]` returns `branch`, `commit`, `short_commit`, `dirty`.
 - `build_snapshot_name(run_id: str, timestamp_utc: datetime, short_sha: str) -> str` with UTC format `YYYYmmddTHHMMSSZ`.
 - `FreezeWorkspace.create(run: Path, snapshot_name: str) -> FreezeWorkspace` creates only `<RUN>/frozen/.<snapshot>.incomplete` and refuses conflicts.
-- `FreezeWorkspace.finalize() -> Path` atomically renames the incomplete directory to `<RUN>/frozen/<snapshot>`.
-- `FreezeWorkspace.mark_failed(error: str) -> None` writes `freeze_status.json` with `state=INCOMPLETE` and leaves only the dot-prefixed incomplete directory.
+- `FreezeWorkspace.finalize() -> Path` atomically renames incomplete to `<RUN>/frozen/<snapshot>`.
+- `FreezeWorkspace.mark_failed(error: str) -> None` writes `freeze_status.json` with `state=INCOMPLETE` and leaves no final snapshot.
 
 - [ ] **Step 1: Write failing hashing/lifecycle tests**
 
-Tests must include:
-
 ```python
-def test_sha256_file_is_content_sensitive_and_chunked(tmp_path):
+import hashlib
+from datetime import datetime, timezone
+from pathlib import Path
+import pytest
+from freeze_experiment import FreezeWorkspace, build_snapshot_name, sha256_file
+
+
+def test_sha256_file_matches_content(tmp_path):
     path = tmp_path / "a.bin"
     path.write_bytes(b"abc")
     assert sha256_file(path) == hashlib.sha256(b"abc").hexdigest()
@@ -91,15 +96,26 @@ def test_snapshot_name_is_deterministic():
 
 
 def test_freeze_workspace_never_overwrites_final_snapshot(tmp_path):
-    ...
+    run = tmp_path / "run"
+    run.mkdir()
+    final = run / "frozen" / "greenhouse_round1_20260829T080000Z_12d1e9f"
     final.mkdir(parents=True)
     with pytest.raises(FileExistsError):
-        FreezeWorkspace.create(run, snapshot_name)
+        FreezeWorkspace.create(run, final.name)
+
+
+def test_failed_workspace_never_becomes_final(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    name = "greenhouse_round1_20260829T080000Z_12d1e9f"
+    workspace = FreezeWorkspace.create(run, name)
+    workspace.mark_failed("pdf failed")
+    assert not (run / "frozen" / name).exists()
+    status = workspace.incomplete_dir / "freeze_status.json"
+    assert '"INCOMPLETE"' in status.read_text(encoding="utf-8")
 ```
 
-Add a failure test that asserts the final directory does not exist after `mark_failed()`.
-
-- [ ] **Step 2: Run the freeze lifecycle tests and verify failure**
+- [ ] **Step 2: Run lifecycle tests and verify failure**
 
 ```bash
 PYTHONNOUSERSITE=1 python3 -m pytest -q tests/test_freeze_experiment.py
@@ -109,21 +125,22 @@ Expected: FAIL because the module does not exist.
 
 - [ ] **Step 3: Implement streaming SHA-256 and workspace lifecycle**
 
-Directory hashing must sort children by POSIX relative path before combining them. Do not load the bag into RAM. File hashing loop:
+Hash file contents in chunks:
 
 ```python
 with path.open("rb") as stream:
-    while chunk := stream.read(chunk_size):
+    while True:
+        chunk = stream.read(chunk_size)
+        if not chunk:
+            break
         digest.update(chunk)
 ```
 
-Use `Path.replace()`/`os.replace()` only when finalizing within the same run filesystem.
+Directory hashing sorts children by POSIX relative path and combines relative path, size, and child digest. Never load the bag into RAM. Finalization uses `Path.replace()` or `os.replace()` only within the same run filesystem.
 
-- [ ] **Step 4: Run lifecycle tests**
+- [ ] **Step 4: Re-run lifecycle tests and verify PASS**
 
-Expected: PASS.
-
-- [ ] **Step 5: Commit hashing/workspace primitives**
+- [ ] **Step 5: Commit Task 1**
 
 ```bash
 git add evaluators/freeze_experiment.py tests/test_freeze_experiment.py
@@ -132,46 +149,69 @@ git commit -m "feat: add immutable freeze workspace"
 
 ---
 
-### Task 2: Build the single report-data model and deterministic case selection
+### Task 2: Build one report-data model and deterministic anomaly-case selection
 
 **Files:**
 - Create: `evaluators/report_data.py`
 - Create: `tests/test_report_data.py`
-- Modify: `tests/test_current_run_report.py` only if a tiny public helper is required; do not duplicate report semantics.
 
 **Interfaces:**
-- `select_anomaly_cases(windows: list[dict], run_status: dict, *, max_cases: int = 6) -> list[str]` returns ordered `window_id`s.
-- `build_report_data(run: Path, *, baseline: str, language: str, max_cases: int = 6) -> dict[str, Any]`.
-- Output schema version starts at `1` and includes `metric_class`, `no_ground_truth`, `experiment`, `dataset`, `algorithms`, `health`, `trajectory`, `maps`, `resources`, `anomalies`, `selected_case_ids`, `conclusions`, `reproducibility`, and `disclaimer`.
-- Conclusions are derived from the existing `current_run_report.build_report()` recommendations plus actual anomaly evidence; they are stored as stable semantic keys + localized display strings, not renderer-specific prose.
+- `select_anomaly_cases(windows: list[dict[str, object]], run_status: dict[str, object], *, max_cases: int = 6) -> list[str]` returns ordered `window_id`s.
+- `build_report_data(run: Path, *, baseline: str, language: str, max_cases: int = 6) -> dict[str, object]`.
+- Schema version starts at `1` and includes `metric_class`, `no_ground_truth`, `baseline`, `experiment`, `dataset`, `algorithms`, `health`, `trajectory`, `maps`, `resources`, `anomalies`, `selected_case_ids`, `conclusions`, `reproducibility`, `disclaimer`.
+- Conclusions reuse `current_run_report.build_report()` recommendations and explicit anomaly evidence.
 
-- [ ] **Step 1: Write failing anomaly-selection tests**
-
-Construct windows where the top severities are all position jumps and lower-ranked windows contain yaw/crash evidence. Assert the bounded selector covers required categories:
+- [ ] **Step 1: Write a concrete failing case-selection test**
 
 ```python
+from report_data import select_anomaly_cases
+
+
 def test_case_selection_covers_position_yaw_and_crash_without_duplicates():
-    ids = select_anomaly_cases(windows, run_status, max_cases=6)
-    assert len(ids) <= 6
+    windows = [
+        {"window_id": "point:1", "algorithm": "point_lio", "severity": 3.0, "types": ["position_jump"]},
+        {"window_id": "glim:1", "algorithm": "glim_full_slam", "severity": 2.5, "types": ["position_jump"]},
+        {"window_id": "kiss:1", "algorithm": "kiss_icp", "severity": 2.0, "types": ["yaw_jump"]},
+        {"window_id": "dlio:1", "algorithm": "dlio", "severity": 1.5, "types": ["position_jump"]},
+    ]
+    run_status = {
+        "algorithms": {
+            "point_lio": {"result": {"status": "SUCCESS"}},
+            "glim_full_slam": {"result": {"status": "SUCCESS"}},
+            "kiss_icp": {"result": {"status": "SUCCESS"}},
+            "dlio": {"result": {"status": "RUNTIME_CRASH"}},
+        }
+    }
+    ids = select_anomaly_cases(windows, run_status, max_cases=4)
     assert len(ids) == len(set(ids))
-    selected = {w["window_id"]: w for w in windows if w["window_id"] in ids}
-    assert any("position_jump" in w["types"] for w in selected.values())
-    assert any("yaw_jump" in w["types"] for w in selected.values())
-    assert any(w["algorithm"] == "dlio" for w in selected.values())
+    selected = [window for window in windows if window["window_id"] in ids]
+    assert any("position_jump" in window["types"] for window in selected)
+    assert any("yaw_jump" in window["types"] for window in selected)
+    assert any(window["algorithm"] == "dlio" for window in selected)
 ```
 
-- [ ] **Step 2: Write failing report semantic tests**
+- [ ] **Step 2: Write report semantic tests with a concrete stub current-run model**
 
-Use a minimal temporary run fixture and monkeypatch `current_run_report.build_report` with a known current-run model. Assert:
+Monkeypatch `report_data.build_current_run_report` to return:
+
+```python
+{
+    "metric_class": "relative-to-baseline/diagnostic/non-ground-truth",
+    "baseline": "fast_livo2",
+    "recommendations": {"closest_to_baseline": "point_lio"},
+    "algorithms": [],
+}
+```
+
+Create minimal `manifest.json`, `metadata/run_status.json`, and `metrics/diagnostic_timeline.json`, then assert:
 
 ```python
 assert data["metric_class"] == "relative-to-baseline/diagnostic/non-ground-truth"
 assert data["no_ground_truth"] is True
-assert "ground truth" not in " ".join(data["conclusions"]).lower()
 assert data["baseline"] == "fast_livo2"
+assert data["anomalies"][0]["types"] == ["position_jump"]
+assert data["anomalies"][0]["display_types_zh"] == ["位置突变"]
 ```
-
-Also assert machine anomaly types remain `position_jump`/`yaw_jump` while localized labels use `viewer_i18n`.
 
 - [ ] **Step 3: Run report-data tests and verify failure**
 
@@ -179,35 +219,32 @@ Also assert machine anomaly types remain `position_jump`/`yaw_jump` while locali
 PYTHONNOUSERSITE=1 python3 -m pytest -q tests/test_report_data.py
 ```
 
-Expected: FAIL because `report_data.py` does not exist.
-
 - [ ] **Step 4: Implement report-data assembly by composition**
 
-Import and call:
+Import:
 
 ```python
 from current_run_report import build_report as build_current_run_report
 from viewer_i18n import tr, translate_anomaly_types
 ```
 
-Do not recompute whole-run RMSE/P95/recommendation logic inside `report_data.py`. Read `diagnostic_timeline.json`, `pointcloud_frame_index.json`, `manifest.json`, and `run_status.json` only for fields not already represented by the current-run report model.
+Do not recompute whole-run RMSE/P95/recommendation logic in `report_data.py`. Read diagnostic timeline, pointcloud frame index, manifest, and run status only for fields not already represented by the current-run report model.
 
-- [ ] **Step 5: Implement conclusions as evidence-limited statements**
+- [ ] **Step 5: Implement evidence-limited conclusion records**
 
-Examples of allowed conclusion generation rules:
+Store structured records such as:
 
 ```python
-if recommendations.get("closest_to_baseline"):
-    conclusions.append({
-        "kind": "closest_to_baseline",
-        "algorithm": recommendations["closest_to_baseline"],
-        "metric_class": METRIC_CLASS,
-    })
+{
+    "kind": "closest_to_baseline",
+    "algorithm": "point_lio",
+    "metric_class": "relative-to-baseline/diagnostic/non-ground-truth",
+}
 ```
 
-For anomalies, store window IDs/times/severity rather than freehand interpretation. The renderers localize the display text.
+For anomalies, store window ID, algorithm, start/end time, types, and severity. Renderers localize these records. Do not store claims of absolute accuracy.
 
-- [ ] **Step 6: Run report-data and current-run report tests**
+- [ ] **Step 6: Run report-data/current-report tests and verify PASS**
 
 ```bash
 PYTHONNOUSERSITE=1 python3 -m pytest -q \
@@ -216,9 +253,7 @@ PYTHONNOUSERSITE=1 python3 -m pytest -q \
   tests/test_current_run_diagnostics.py
 ```
 
-Expected: PASS.
-
-- [ ] **Step 7: Commit the report-data model**
+- [ ] **Step 7: Commit Task 2**
 
 ```bash
 git add evaluators/report_data.py tests/test_report_data.py
@@ -227,34 +262,40 @@ git commit -m "feat: add frozen report data model"
 
 ---
 
-### Task 3: Generate deterministic evidence images, including anomaly-local raw/world LiDAR
+### Task 3: Generate deterministic evidence images including anomaly-local raw/world LiDAR
 
 **Files:**
 - Create: `evaluators/report_evidence.py`
 - Create: `tests/test_report_evidence.py`
 
 **Interfaces:**
-- `collect_existing_figures(run: Path, output_root: Path) -> list[dict[str, Any]]` copies only report figures into the freeze evidence tree and records source/destination metadata.
-- `generate_case_evidence(run: Path, case: dict, *, baseline: str, output_dir: Path, point_step: int = 20) -> dict[str, str]`.
-- Each selected case can produce: `trajectory.png`, `motion.png`, `resources.png`, `raw_lidar.png`, `world_selected.png`, and when selected algorithm differs from baseline, `world_baseline.png`.
-- Reuse Plan A `viewer_projection.IndexedLidarScan` and projection helpers.
+- `collect_existing_figures(run: Path, output_root: Path) -> list[dict[str, object]]`.
+- `generate_case_evidence(run: Path, case: dict[str, object], *, baseline: str, output_dir: Path, point_step: int = 20) -> dict[str, str]`.
+- Case outputs are `trajectory.png`, `motion.png`, `resources.png`, `raw_lidar.png`, `world_selected.png`, and when selected algorithm differs from baseline, `world_baseline.png`.
+- Reuse `viewer_projection.IndexedLidarScan` and Plan A projection helpers.
 
 - [ ] **Step 1: Write failing existing-figure collection test**
 
-Build a temporary run containing only two known figures and assert only present files are copied to deterministic category paths:
+Create only:
 
-```python
-items = collect_existing_figures(run, out)
-assert {Path(i["destination"]).name for i in items} == {"position_step_10hz.png", "cpu_aligned.png"}
+```text
+figures/comparison_dashboard/diagnostic_dashboard.png
+figures/diagnostic_timeline/cpu_aligned.png
 ```
 
-Missing optional figures must be recorded as unavailable in report data, not fabricated.
+in a temporary run, then assert `collect_existing_figures()` copies exactly those files to deterministic evidence destinations. Missing optional figures are not fabricated.
 
-- [ ] **Step 2: Write failing deterministic case-plot tests**
+- [ ] **Step 2: Write failing projection/evidence tests**
 
-Monkeypatch indexed-scan loading with a tiny scan and create a tiny standardized trajectory. Generate one case twice into separate directories and compare decoded image dimensions plus a deterministic data summary returned by the function. Do not require PNG byte-for-byte equality because Matplotlib metadata may vary unless explicitly fixed.
+Create a tiny indexed scan and standardized trajectory. Monkeypatch `report_evidence.project_points_to_display_world` with a wrapper that records the `point_times_s` argument and delegates to the real helper. Run `generate_case_evidence()` and assert:
 
-Assert world projection calls the shared helper; a monkeypatch on `report_evidence.project_points_to_display_world` must observe per-point times.
+```python
+assert observed_point_times.shape[0] == scan.points_xyz.shape[0]
+assert (output_dir / "raw_lidar.png").is_file()
+assert (output_dir / "world_selected.png").is_file()
+```
+
+Run the same case twice into separate directories and assert corresponding PNG dimensions are equal and returned evidence metadata are identical except for destination paths.
 
 - [ ] **Step 3: Run evidence tests and verify failure**
 
@@ -262,14 +303,15 @@ Assert world projection calls the shared helper; a monkeypatch on `report_eviden
 PYTHONNOUSERSITE=1 python3 -m pytest -q tests/test_report_evidence.py
 ```
 
-Expected: FAIL because `report_evidence.py` does not exist.
+- [ ] **Step 4: Implement exact existing-figure allowlist**
 
-- [ ] **Step 4: Implement existing-figure collection**
-
-Recognize exactly these current-run paths when present:
+Recognize only these current-run figure paths when present:
 
 ```text
-figures/comparison_dashboard.png
+figures/comparison_dashboard/trajectory_xy_overlay.png
+figures/comparison_dashboard/trajectory_z_drift.png
+figures/comparison_dashboard/diagnostic_dashboard.png
+figures/comparison_dashboard/relative_to_baseline.png
 figures/diagnostic_timeline/position_step_10hz.png
 figures/diagnostic_timeline/yaw_step_10hz.png
 figures/diagnostic_timeline/cpu_aligned.png
@@ -278,27 +320,25 @@ figures/fast_livo2_baseline_maps/map_comparison_xy.png
 figures/fast_livo2_baseline_maps/map_comparison_xz.png
 ```
 
-If the actual dashboard filename differs in the repository, use the existing generated filename discovered by tests/current outputs and update this exact list before committing. Do not glob unrelated stale historical figures into the report.
+Do not glob unrelated `*_all` or historical figures into the primary report evidence.
 
-- [ ] **Step 5: Implement case-local plots**
+- [ ] **Step 5: Implement deterministic case-local plots**
 
-Use a fixed review crop of the window's existing `review_start_bag_time_s`/`review_end_bag_time_s` when available; otherwise use `[start-2 s, end+2 s]` clipped to run coverage.
+Use `review_start_bag_time_s` and `review_end_bag_time_s` when present; otherwise use `[start_bag_time_s - 2.0, end_bag_time_s + 2.0]` clipped to `[0, run_duration]`.
 
 Rules:
 
-- trajectory plot: baseline + case algorithm local XY crop and current-window markers;
+- trajectory plot: baseline plus case algorithm local XY crop;
 - motion plot: 10 Hz `delta_position_m`, `delta_yaw_deg`, `speed_mps`;
-- resources plot: clock-aligned CPU and RSS using existing resource CSV bag times;
-- raw/world pointcloud: nearest indexed frame to deterministic window midpoint, same scan for all projections;
-- world selected/baseline: use exactly Plan A shared projection math and medium LOD by default.
+- resources plot: clock-aligned CPU/RSS from resource CSV bag times;
+- raw/world pointcloud: nearest indexed frame to deterministic window midpoint, same scan for every projection;
+- world selected/baseline: Plan A shared projection math, medium LOD by default.
 
-Use fixed figure sizes/DPI and explicit titles from `viewer_i18n` so HTML and PDF receive the same image files.
+Set fixed figure size, DPI, labels, and Matplotlib metadata so repeated generation is visually deterministic.
 
-- [ ] **Step 6: Run evidence tests**
+- [ ] **Step 6: Re-run evidence tests and verify PASS**
 
-Expected: PASS.
-
-- [ ] **Step 7: Commit deterministic evidence generation**
+- [ ] **Step 7: Commit Task 3**
 
 ```bash
 git add evaluators/report_evidence.py tests/test_report_evidence.py
@@ -317,11 +357,11 @@ git commit -m "feat: generate deterministic benchmark evidence"
 - Create: `tests/test_report_html.py`
 
 **Interfaces:**
-- `render_html(report_data: dict[str, Any], *, bundle_root: Path, output_path: Path, language: str) -> Path`.
+- `render_html(report_data: dict[str, object], *, bundle_root: Path, output_path: Path, language: str) -> Path`.
 - HTML references only relative paths inside the freeze snapshot and works from `file://` without network access.
 - Dependency pin: `Jinja2==3.1.6`.
 
-- [ ] **Step 1: Add the pinned report requirements**
+- [ ] **Step 1: Add pinned report requirements**
 
 `benchmark_base/requirements-report.txt`:
 
@@ -331,20 +371,9 @@ Jinja2==3.1.6
 reportlab==5.0.1
 ```
 
-- [ ] **Step 2: Write failing HTML render tests**
+- [ ] **Step 2: Write failing HTML tests**
 
-Create one tiny report model and one placeholder PNG. Assert:
-
-```python
-html = output.read_text(encoding="utf-8")
-assert "实验摘要" in html
-assert "relative-to-baseline/diagnostic/non-ground-truth" in html
-assert "https://" not in html
-assert "http://" not in html
-assert "evidence/" in html
-```
-
-Also render `language="en"` and assert the English headings exist without changing schema content.
+Create a small report model and one placeholder PNG. Assert the generated Chinese HTML contains `实验摘要`, `relative-to-baseline/diagnostic/non-ground-truth`, and a relative `evidence/` image path. Assert no `http://` or `https://` reference exists. Render `language="en"` and assert `Experiment Summary` appears while internal metric keys stay unchanged.
 
 - [ ] **Step 3: Run HTML tests and verify failure**
 
@@ -352,11 +381,7 @@ Also render `language="en"` and assert the English headings exist without changi
 PYTHONNOUSERSITE=1 python3 -m pytest -q tests/test_report_html.py
 ```
 
-Expected: FAIL because renderer/template do not exist.
-
-- [ ] **Step 4: Implement Jinja2 environment with autoescape**
-
-Use:
+- [ ] **Step 4: Implement Jinja2 autoescaped renderer**
 
 ```python
 Environment(
@@ -365,21 +390,15 @@ Environment(
 )
 ```
 
-Copy `report.css` into `report/report.css` and reference it relatively. Use the spec's 11-section ordering exactly. HTML may show the complete anomaly table, while detailed image cards use the bounded selected cases recorded in `report_data.json`.
+Copy `report.css` to `report/report.css` and reference it relatively. Use the spec's 11-section ordering. HTML shows the complete anomaly table; detailed image cards use only `selected_case_ids` from `report_data.json`.
 
-- [ ] **Step 5: Run HTML tests**
+- [ ] **Step 5: Re-run HTML tests and verify PASS**
 
-Expected: PASS.
-
-- [ ] **Step 6: Commit HTML report support**
+- [ ] **Step 6: Commit Task 4**
 
 ```bash
-git add \
-  benchmark_base/requirements-report.txt \
-  benchmark_base/report_templates/report.html.j2 \
-  benchmark_base/report_templates/report.css \
-  evaluators/report_html.py \
-  tests/test_report_html.py
+git add benchmark_base/requirements-report.txt benchmark_base/report_templates/report.html.j2 \
+  benchmark_base/report_templates/report.css evaluators/report_html.py tests/test_report_html.py
 git commit -m "feat: render offline benchmark html report"
 ```
 
@@ -394,26 +413,34 @@ git commit -m "feat: render offline benchmark html report"
 **Interfaces:**
 - `find_cjk_font(candidates: list[Path] | None = None) -> Path`.
 - `register_pdf_fonts(font_path: Path) -> dict[str, str]`.
-- `render_pdf(report_data: dict[str, Any], *, bundle_root: Path, output_path: Path, language: str, font_path: Path | None = None) -> Path`.
+- `render_pdf(report_data: dict[str, object], *, bundle_root: Path, output_path: Path, language: str, font_path: Path | None = None) -> Path`.
 - Uses `reportlab==5.0.1`.
 
-- [ ] **Step 1: Write failing font-discovery tests using temporary fake candidate paths**
-
-Do not depend on the CI machine actually having Noto CJK. Test the selection policy with temp files:
+- [ ] **Step 1: Write failing font-discovery tests**
 
 ```python
+from pathlib import Path
+import pytest
+from report_pdf import find_cjk_font
+
+
 def test_find_cjk_font_returns_first_existing_candidate(tmp_path):
-    first = tmp_path / "missing.ttc"
-    second = tmp_path / "NotoSansCJK-Regular.ttc"
-    second.write_bytes(b"placeholder")
-    assert find_cjk_font([first, second]) == second
+    missing = tmp_path / "missing.ttc"
+    existing = tmp_path / "NotoSansCJK-Regular.ttc"
+    existing.write_bytes(b"test-only-placeholder")
+    assert find_cjk_font([missing, existing]) == existing
+
+
+def test_find_cjk_font_error_has_ubuntu_install_hint(tmp_path):
+    with pytest.raises(RuntimeError, match="fonts-noto-cjk"):
+        find_cjk_font([tmp_path / "missing.ttc"])
 ```
 
-Add a test that no candidates raises a `RuntimeError` containing an Ubuntu installation hint such as `fonts-noto-cjk`.
+The placeholder file is used only to test path selection; no ReportLab font registration is attempted with it.
 
-- [ ] **Step 2: Write a PDF smoke test with a known test font injection**
+- [ ] **Step 2: Write a PDF renderer smoke test without bundling a font**
 
-The test may monkeypatch `register_pdf_fonts` so unit tests do not package/share a real font. Render a one-page synthetic report and assert the PDF starts with `%PDF-` and has non-trivial size.
+For `language="en"`, render a one-page synthetic report with built-in Helvetica and assert the output starts with `%PDF-` and is larger than 1 KiB. Separately monkeypatch `find_cjk_font` and `register_pdf_fonts` in the Chinese renderer test so unit tests verify control flow without storing a real CJK font in the repository.
 
 - [ ] **Step 3: Run PDF tests and verify failure**
 
@@ -421,11 +448,9 @@ The test may monkeypatch `register_pdf_fonts` so unit tests do not package/share
 PYTHONNOUSERSITE=1 python3 -m pytest -q tests/test_report_pdf.py
 ```
 
-Expected: FAIL because the renderer does not exist.
+- [ ] **Step 4: Implement deterministic system-font discovery**
 
-- [ ] **Step 4: Implement system font discovery policy**
-
-Probe common Ubuntu paths in deterministic order, including:
+Probe in order:
 
 ```text
 /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
@@ -433,25 +458,21 @@ Probe common Ubuntu paths in deterministic order, including:
 /usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc
 ```
 
-If none exist for `zh-CN`, raise with:
+If Chinese output is requested and none exist, raise:
 
 ```text
 Chinese PDF requires a local CJK font. On Ubuntu install: sudo apt install fonts-noto-cjk
 ```
 
-For `en`, ReportLab built-in fonts may be used without CJK discovery.
+English may use ReportLab built-in fonts.
 
-- [ ] **Step 5: Implement the 11-section PDF with shared data/evidence**
+- [ ] **Step 5: Implement the 11-section direct PDF**
 
-Use ReportLab Platypus `SimpleDocTemplate`, `Paragraph`, `Table`, `Image`, `PageBreak`, and registered CJK font styles. Do not re-read benchmark metrics in the renderer. Every metric value and case selection comes from `report_data`.
+Use ReportLab Platypus `SimpleDocTemplate`, `Paragraph`, `Table`, `Image`, and `PageBreak`. Read no benchmark files in the renderer. Every value, conclusion, case choice, and evidence path comes from `report_data` and the freeze bundle. Put the no-GT diagnostic disclaimer near the summary and again in the methodology/footer area.
 
-Include the diagnostic/no-GT disclaimer near the report summary and again in the methodology/footnote area.
+- [ ] **Step 6: Re-run PDF tests and verify PASS**
 
-- [ ] **Step 6: Run PDF tests**
-
-Expected: PASS.
-
-- [ ] **Step 7: Commit PDF support**
+- [ ] **Step 7: Commit Task 5**
 
 ```bash
 git add evaluators/report_pdf.py tests/test_report_pdf.py
@@ -471,7 +492,6 @@ git commit -m "feat: render frozen benchmark pdf report"
 - Modify: `tests/test_postprocess.py`
 
 **Interfaces:**
-- CLI:
 
 ```text
 lio-benchmark freeze \
@@ -482,37 +502,29 @@ lio-benchmark freeze \
   [--max-cases 6]
 ```
 
-When neither `--html` nor `--pdf` is supplied, both are `True`.
-
-- `freeze_experiment(run, baseline, language, html, pdf, max_cases) -> Path` returns the final snapshot directory only after successful finalization.
+When neither `--html` nor `--pdf` is supplied, both are enabled. `freeze_experiment(run: Path, baseline: str, language: str, html: bool, pdf: bool, max_cases: int) -> Path` returns only the final completed snapshot path.
 
 - [ ] **Step 1: Write failing CLI dispatch tests**
 
-Assert:
+Assert `entry.main(["freeze", "--run", str(tmp_path), "--baseline", "fast_livo2", "--lang", "zh-CN", "--dry-run"])` dispatches `freeze_html=True`, `freeze_pdf=True`, `freeze_max_cases=6`. Add a second test with explicit `--html` and assert `freeze_html=True`, `freeze_pdf=False`.
 
-```python
-entry.main(["freeze", "--run", str(tmp_path), "--baseline", "fast_livo2", "--lang", "zh-CN", "--dry-run"])
-```
+- [ ] **Step 2: Write failing orchestration-order/failure tests**
 
-passes `freeze_html=True`, `freeze_pdf=True`, `freeze_max_cases=6` to `execute_stage`. Add an explicit `--html` only case where PDF is false.
-
-- [ ] **Step 2: Write failing orchestration test with stub renderers**
-
-Monkeypatch heavy functions so the test can verify order:
+Monkeypatch heavy functions with call-recording stubs and assert this order:
 
 ```text
 create workspace
-hash required sources
-build report_data
+inventory/hash required sources
+build report data
 generate evidence
-save experiment.rrd
+save experiment RRD
 render HTML
 render PDF
-write final freeze_manifest.json
+write complete freeze manifest
 finalize atomically
 ```
 
-Assert a renderer exception leaves only `.snapshot.incomplete/freeze_status.json` with `state=INCOMPLETE` and no final snapshot.
+Make the PDF stub raise `RuntimeError("pdf failed")`; assert the final snapshot path does not exist and `.snapshot.incomplete/freeze_status.json` contains `INCOMPLETE`.
 
 - [ ] **Step 3: Run orchestration tests and verify failure**
 
@@ -523,11 +535,9 @@ PYTHONNOUSERSITE=1 python3 -m pytest -q \
   tests/test_postprocess.py
 ```
 
-Expected: FAIL until freeze CLI/orchestration is implemented.
+- [ ] **Step 4: Implement required source provenance inventory**
 
-- [ ] **Step 4: Implement source provenance inventory before report generation**
-
-Required source inventory must include when present:
+Hash when present:
 
 ```text
 manifest.json
@@ -540,83 +550,81 @@ metrics/diagnostic_timeline/*.csv
 metrics/diagnostic_timeline/resources/*.csv
 standardized/trajectories/*.csv
 figures/fast_livo2_baseline_maps/map_comparison_metrics.json
-figures/fast_livo2_baseline_maps/*.ply
+figures/fast_livo2_baseline_maps/*_map.ply
 ```
 
-Also hash the dataset bag directory and manifest-referenced algorithm config/patch files that exist. Missing required files produce a preflight error before rendering; optional figures remain optional.
+Also hash the dataset bag directory plus manifest-referenced algorithm config and patch files that exist. Missing required machine-readable inputs fail during preflight; missing optional figures do not.
 
-- [ ] **Step 5: Generate the archived RRD through the existing viewer path**
+- [ ] **Step 5: Save archived RRD through the existing native recording path**
 
-Invoke the native viewer recording builder or subprocess with deterministic frozen settings:
+Use deterministic frozen settings:
 
 ```text
-pointcloud mode = anomaly
-point LODs = 10,20,80
-world pointcloud mode = anomaly
-no spawn = true
-save = <incomplete>/viewer/experiment.rrd
+pointcloud_mode=anomaly
+point_lods=10,20,80
+world_pointcloud_mode=anomaly
+spawn=false
+save=<incomplete>/viewer/experiment.rrd
 ```
 
-Do not start a web server during freeze.
+Do not start the web shell during freeze.
 
-- [ ] **Step 6: Generate `report_data.json`, evidence, HTML, and PDF**
+- [ ] **Step 6: Generate report data, evidence, and requested renderers**
 
-Write JSON with `sort_keys=True`, UTF-8, and indentation. Render only requested formats. If both flags are absent at CLI parse time, normalize them to both enabled before calling the freezer.
+Write `report_data.json` with UTF-8, indentation, and stable key ordering. Render only requested formats. CLI normalization decides whether both formats are enabled before the freezer is called.
 
-- [ ] **Step 7: Write `freeze_manifest.json` last, including generated hashes**
+- [ ] **Step 7: Write `freeze_manifest.json` last with generated hashes**
 
-The manifest must include:
+The concrete schema starts with:
 
 ```json
 {
   "schema_version": 1,
   "state": "COMPLETE",
-  "source_run": "...",
-  "run_id": "...",
-  "freeze_timestamp_utc": "...",
-  "benchmark_git": {"branch": "...", "commit": "...", "dirty": false},
+  "source_run": "/home/yangxuan/lio_benchmark_runs/greenhouse_full623_round1_001",
+  "run_id": "greenhouse_full623_round1_001",
+  "freeze_timestamp_utc": "2026-08-29T08:00:00+00:00",
+  "benchmark_git": {
+    "branch": "feat/phase-aware-benchmark",
+    "commit": "12d1e9f930207fb2c52262a4ef2d7e36688585ab",
+    "dirty": false
+  },
   "baseline": "fast_livo2",
   "metric_class": "relative-to-baseline/diagnostic/non-ground-truth",
   "language": "zh-CN",
-  "dataset": {"path": "...", "size_bytes": 0, "sha256": "..."},
+  "dataset": {
+    "path": "/home/yangxuan/lio_benchmark_tools/date/green-house",
+    "size_bytes": 1,
+    "sha256": "64-character-sha256-hex-string-is-written-at-runtime"
+  },
   "source_artifacts": [],
   "generated_artifacts": []
 }
 ```
 
-If the benchmark repo is dirty, record `dirty=true`; do not silently pretend the snapshot came from a clean commit.
+The example `size_bytes`/hash are illustrative schema values only; implementation writes measured values. If the benchmark repo is dirty, record `dirty=true` and never imply a clean commit.
 
-- [ ] **Step 8: Run orchestration/CLI tests**
+- [ ] **Step 8: Re-run orchestration/CLI tests and verify PASS**
 
 Run the Step 3 command.
 
-Expected: PASS.
-
-- [ ] **Step 9: Commit freeze orchestration**
+- [ ] **Step 9: Commit Task 6**
 
 ```bash
-git add \
-  evaluators/freeze_experiment.py \
-  benchmark_base/lio_benchmark/entry.py \
-  benchmark_base/lio_benchmark/postprocess.py \
-  tests/test_freeze_experiment.py \
-  tests/test_entry.py \
-  tests/test_postprocess.py
+git add evaluators/freeze_experiment.py benchmark_base/lio_benchmark/entry.py \
+  benchmark_base/lio_benchmark/postprocess.py tests/test_freeze_experiment.py \
+  tests/test_entry.py tests/test_postprocess.py
 git commit -m "feat: freeze reproducible benchmark experiment"
 ```
 
 ---
 
-### Task 7: Add full validation, documentation, and freeze the greenhouse Round1 result
+### Task 7: Add full validation/docs and freeze greenhouse Round1
 
 **Files:**
 - Modify: `evaluators/check_phase_pipeline.sh`
 - Modify: `benchmark_base/docs/RERUN_DIAGNOSTIC_VIEWER.md`
 - Create: `benchmark_base/docs/FROZEN_EXPERIMENT_REPORT.md`
-
-**Interfaces:**
-- Python self-test covers report data/evidence/renderers/freezer.
-- Report dependency install command is explicit and separate from core benchmark dependencies.
 
 - [ ] **Step 1: Add report modules/tests to the Python gate**
 
@@ -642,21 +650,17 @@ tests/test_freeze_experiment.py
 
 - [ ] **Step 2: Document dependency and font preflight**
 
-Exact host setup:
-
 ```bash
 source ~/lio_benchmark_tools/.venv-viewer/bin/activate
 python -m pip install -r benchmark_base/requirements-report.txt
 fc-match "Noto Sans CJK SC"
 ```
 
-If the font is missing:
+If CJK font is missing:
 
 ```bash
 sudo apt install fonts-noto-cjk
 ```
-
-Do not add the font to the repository.
 
 - [ ] **Step 3: Run the complete Python gate**
 
@@ -667,16 +671,16 @@ PYTHONNOUSERSITE=1 bash evaluators/check_phase_pipeline.sh
 git diff --check
 ```
 
-Expected: all tests pass; no whitespace errors.
+Expected: all tests PASS and `git diff --check` has no output.
 
-- [ ] **Step 4: Run the Round1 freeze command**
+- [ ] **Step 4: Install report deps into the viewer venv and run Round1 freeze**
 
 ```bash
 source ~/lio_benchmark_tools/.venv-viewer/bin/activate
+python -m pip install -r benchmark_base/requirements-report.txt
 source /opt/ros/humble/setup.bash
 source /home/yangxuan/agt_navigation_v2/install/setup.bash
 source /home/yangxuan/lio_benchmark_algorithms/adapter_ws/install/setup.bash
-
 RUN=/home/yangxuan/lio_benchmark_runs/greenhouse_full623_round1_001
 
 benchmark_base/bin/lio-benchmark freeze \
@@ -688,16 +692,16 @@ benchmark_base/bin/lio-benchmark freeze \
   --max-cases 6
 ```
 
-Expected: command returns zero and prints one final `<RUN>/frozen/...` directory.
+Expected: exit zero and one new final `<RUN>/frozen/<snapshot>` path.
 
-- [ ] **Step 5: Validate the frozen directory structurally**
+- [ ] **Step 5: Validate frozen directory structure**
 
 ```bash
 SNAPSHOT=$(find "$RUN/frozen" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | sort | tail -1)
 find "$SNAPSHOT" -maxdepth 3 -type f | sort
 ```
 
-Required files:
+Required:
 
 ```text
 freeze_manifest.json
@@ -708,16 +712,18 @@ report/report.pdf
 viewer/experiment.rrd
 ```
 
-and evidence images under `evidence/`.
+plus evidence images under `evidence/`.
 
-- [ ] **Step 6: Validate semantic invariants in the frozen data**
+- [ ] **Step 6: Validate frozen semantic invariants**
 
 ```bash
 python3 - "$SNAPSHOT" <<'PY'
-import json, pathlib, sys
+import json
+import pathlib
+import sys
 root = pathlib.Path(sys.argv[1])
-manifest = json.loads((root / "freeze_manifest.json").read_text())
-data = json.loads((root / "report_data.json").read_text())
+manifest = json.loads((root / "freeze_manifest.json").read_text(encoding="utf-8"))
+data = json.loads((root / "report_data.json").read_text(encoding="utf-8"))
 assert manifest["state"] == "COMPLETE"
 assert manifest["metric_class"] == "relative-to-baseline/diagnostic/non-ground-truth"
 assert data["metric_class"] == manifest["metric_class"]
@@ -727,7 +733,7 @@ print("semantic freeze checks: PASS")
 PY
 ```
 
-- [ ] **Step 7: Inspect the generated reports manually**
+- [ ] **Step 7: Inspect HTML/PDF manually**
 
 ```bash
 xdg-open "$SNAPSHOT/report/index.html"
@@ -736,30 +742,32 @@ xdg-open "$SNAPSHOT/report/report.pdf"
 
 Acceptance checklist:
 
-- Chinese headings render correctly in HTML and PDF;
-- overview/comparison/map/resource images are embedded;
-- selected anomaly cases include position/yaw/crash coverage when available;
-- GLIM `353-354 s` appears if selected by deterministic case rules or is at minimum present in the full HTML anomaly table;
-- report wording says baseline-relative diagnostic/non-ground-truth and never calls FAST-LIVO2 ground truth;
-- DLIO lifecycle failure is not compared as a healthy full-run candidate;
-- reconstructed maps are described as comparison visualizations, not native algorithm maps.
+- Chinese headings render correctly in both formats;
+- trajectory/map/resource/diagnostic images are present;
+- selected detailed cases cover position/yaw/crash evidence when those categories exist;
+- GLIM `353-354 s` is present in the full HTML anomaly table even if deterministic top-6 rules choose other detailed cases;
+- wording says baseline-relative diagnostic/non-ground-truth and never calls FAST-LIVO2 ground truth;
+- DLIO runtime failure is excluded from healthy whole-run recommendation;
+- reconstructed maps are described as comparison visualizations rather than native algorithm maps.
 
-- [ ] **Step 8: Verify immutability/no-overwrite behavior**
+- [ ] **Step 8: Verify no-overwrite behavior**
 
-Immediately run the same freeze command again. It must create a distinct timestamped snapshot; it must not modify the first final directory. Compare the first snapshot manifest hash before/after:
+Before running freeze a second time, save:
 
 ```bash
-sha256sum "$SNAPSHOT/freeze_manifest.json"
+FIRST_MANIFEST_SHA=$(sha256sum "$SNAPSHOT/freeze_manifest.json" | awk '{print $1}')
 ```
 
-The digest must remain unchanged.
+Run the same freeze command again. It must create a different timestamped snapshot. Then verify:
+
+```bash
+test "$FIRST_MANIFEST_SHA" = "$(sha256sum "$SNAPSHOT/freeze_manifest.json" | awk '{print $1}')"
+```
 
 - [ ] **Step 9: Commit docs/gate after real-host acceptance**
 
 ```bash
-git add \
-  evaluators/check_phase_pipeline.sh \
-  benchmark_base/docs/RERUN_DIAGNOSTIC_VIEWER.md \
+git add evaluators/check_phase_pipeline.sh benchmark_base/docs/RERUN_DIAGNOSTIC_VIEWER.md \
   benchmark_base/docs/FROZEN_EXPERIMENT_REPORT.md
 git commit -m "docs: validate frozen benchmark reports"
 ```
@@ -770,13 +778,13 @@ git commit -m "docs: validate frozen benchmark reports"
 
 The freeze/report feature is complete only when:
 
-- Plan A completion gate is already green.
+- Plan A completion gate is green.
 - All Python phase/comparison/viewer/report tests pass on the Ubuntu benchmark host.
-- `lio-benchmark freeze` returns zero for greenhouse Round1 and creates a unique final snapshot.
-- `freeze_manifest.json` records source and generated SHA-256 provenance including the source bag without copying the full bag.
+- `lio-benchmark freeze` succeeds for greenhouse Round1 and creates a unique final snapshot.
+- `freeze_manifest.json` records source/generated SHA-256 provenance including source-bag hash without copying the full bag.
 - `report_data.json` is the shared semantic source for both renderers.
-- HTML opens offline and contains embedded/local evidence only.
+- HTML opens offline using local evidence only.
 - PDF renders Chinese with a local system CJK font and no repository font asset.
 - The RRD opens independently with the pinned Rerun version.
 - Re-running freeze does not mutate the first snapshot.
-- No report statement upgrades baseline-relative diagnostic results into absolute accuracy claims.
+- No report statement upgrades baseline-relative diagnostics into absolute accuracy claims.
