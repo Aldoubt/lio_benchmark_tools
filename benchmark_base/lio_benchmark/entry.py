@@ -15,6 +15,7 @@ POSTPROCESS_COMMANDS = {
     "compare",
     "phase-analysis",
     "diagnostics",
+    "viewer",
 }
 
 
@@ -43,6 +44,19 @@ def _postprocess_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hz", type=float, default=10.0, help="fixed trajectory diagnostic rate")
     parser.add_argument("--window-gap", type=float, default=1.0, help="merge anomaly events separated by at most this many seconds")
     parser.add_argument("--with-pointcloud-index", action="store_true", help="also deserialize LiDAR headers and build an on-demand rosbag frame index")
+    parser.add_argument("--dry-run", action="store_true")
+
+    parser = sub.add_parser("viewer")
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--baseline", default="fast_livo2")
+    parser.add_argument("--algorithms", help="comma-separated algorithms; default: all diagnostic algorithms")
+    parser.add_argument("--no-maps", action="store_true", help="skip reconstructed PLY maps")
+    parser.add_argument("--pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly")
+    parser.add_argument("--pointcloud-period", type=float, default=1.0, help="seconds between raw scans in sampled mode")
+    parser.add_argument("--point-step", type=int, default=20, help="display every Nth raw LiDAR point")
+    parser.add_argument("--map-point-step", type=int, default=4, help="display every Nth reconstructed map point")
+    parser.add_argument("--save", type=Path, help="write a .rrd recording instead of spawning the viewer")
+    parser.add_argument("--no-spawn", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
 
     parser = sub.add_parser("report")
@@ -92,6 +106,18 @@ def main(argv: list[str] | None = None) -> int:
             "anomaly_window_gap_s": args.window_gap,
             "with_pointcloud_index": args.with_pointcloud_index,
         })
+    elif args.command == "viewer":
+        kwargs.update({
+            "baseline": args.baseline,
+            "viewer_algorithms": args.algorithms,
+            "viewer_with_maps": not args.no_maps,
+            "viewer_pointcloud_mode": args.pointcloud_mode,
+            "viewer_pointcloud_period_s": args.pointcloud_period,
+            "viewer_point_step": args.point_step,
+            "viewer_map_point_step": args.map_point_step,
+            "viewer_save": args.save,
+            "viewer_spawn": not args.no_spawn,
+        })
     elif args.command == "report":
         kwargs["no_plot"] = args.no_plot
     elif args.command == "phase-analysis":
@@ -102,6 +128,6 @@ def main(argv: list[str] | None = None) -> int:
         })
     try:
         return execute_stage(args.run, args.command, **kwargs)
-    except (ValueError, FileNotFoundError) as exc:
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
         print(f"错误: {exc}", file=sys.stderr)
         return 2
