@@ -24,6 +24,7 @@ python3 -m py_compile \
   evaluators/trajectory_discontinuity.py \
   evaluators/diagnostic_timeline.py \
   evaluators/pointcloud_frame_index.py \
+  evaluators/rerun_diagnostic_viewer.py \
   benchmark_base/lio_benchmark/entry.py \
   benchmark_base/lio_benchmark/postprocess.py
 
@@ -51,7 +52,8 @@ python3 -m pytest -q \
   tests/test_map_reconstruction_selection.py \
   tests/test_trajectory_discontinuity.py \
   tests/test_diagnostic_timeline.py \
-  tests/test_pointcloud_frame_index.py
+  tests/test_pointcloud_frame_index.py \
+  tests/test_rerun_diagnostic_viewer.py
 
 cat <<'EOF'
 
@@ -66,13 +68,18 @@ Core comparison semantics:
   - anomaly events are clustered into review windows instead of flooding a viewer with isolated markers
   - resource sample history is mapped through clock anchors + recorded/header evidence onto the same bag-relative timeline
   - pointcloud frame indexing stores only rosbag message ids/timestamps; raw point-cloud bytes remain in the source bag
+  - the Rerun viewer consumes these frozen artifacts and does not change benchmark metric definitions
 
 Useful offline commands:
   benchmark_base/bin/lio-benchmark phase-analysis --run <RUN_DIR> --baseline fast_livo2
   benchmark_base/bin/lio-benchmark diagnostics --run <RUN_DIR> --baseline fast_livo2 --hz 10
+  benchmark_base/bin/lio-benchmark viewer --run <RUN_DIR> --baseline fast_livo2
 
-Pointcloud indexing additionally requires the ROS overlay that provides the bag's exact LiDAR message type:
+Pointcloud indexing/viewing additionally requires the ROS overlay that provides the bag's exact LiDAR message type:
   benchmark_base/bin/lio-benchmark diagnostics --run <RUN_DIR> --baseline fast_livo2 --hz 10 --with-pointcloud-index
+
+Rerun viewer dependency used by this branch:
+  python3 -m pip install 'rerun-sdk==0.36.3'
 
 Smoke coverage policy:
   - short smoke runs are compared with smoke_duration_s and allow a 5 s startup margin
