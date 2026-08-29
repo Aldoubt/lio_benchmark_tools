@@ -11,11 +11,16 @@ import {
   type ViewerState,
 } from "./state";
 
-const controls = document.querySelector<HTMLElement>("#controls");
-const viewerHost = document.querySelector<HTMLElement>("#rerun-viewer");
-if (controls === null || viewerHost === null) {
-  throw new Error("web viewer host elements are missing");
+function requiredElement<T extends Element>(selector: string): T {
+  const node = document.querySelector<T>(selector);
+  if (node === null) {
+    throw new Error(`web viewer host element is missing: ${selector}`);
+  }
+  return node;
 }
+
+const controls = requiredElement<HTMLElement>("#controls");
+const viewerHost = requiredElement<HTMLElement>("#rerun-viewer");
 
 let config: ViewerConfig;
 let state: ViewerState;
