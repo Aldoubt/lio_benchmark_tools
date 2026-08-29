@@ -84,6 +84,8 @@ def test_viewer_dispatches_display_options(monkeypatch, tmp_path):
         "--pointcloud-period", "2.0",
         "--point-step", "25",
         "--point-lods", "10,20,80",
+        "--world-pointcloud-mode", "sampled",
+        "--world-algorithm", "point_lio",
         "--map-point-step", "5",
         "--save", str(tmp_path / "viewer.rrd"),
         "--no-spawn",
@@ -98,6 +100,8 @@ def test_viewer_dispatches_display_options(monkeypatch, tmp_path):
     assert captured["viewer_pointcloud_period_s"] == 2.0
     assert captured["viewer_point_step"] == 25
     assert captured["viewer_point_lods"] == "10,20,80"
+    assert captured["viewer_world_pointcloud_mode"] == "sampled"
+    assert captured["viewer_world_algorithm"] == "point_lio"
     assert captured["viewer_map_point_step"] == 5
     assert captured["viewer_save"] == Path(tmp_path / "viewer.rrd")
     assert captured["viewer_spawn"] is False
