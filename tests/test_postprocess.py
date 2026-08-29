@@ -109,6 +109,7 @@ def test_viewer_stage_only_launches_rerun_consumer(tmp_path):
         "viewer",
         baseline="fast_livo2",
         viewer_algorithms="fast_livo2,point_lio",
+        viewer_language="en",
         viewer_with_maps=False,
         viewer_pointcloud_mode="sampled",
         viewer_pointcloud_period_s=2.0,
@@ -121,6 +122,7 @@ def test_viewer_stage_only_launches_rerun_consumer(tmp_path):
     assert names(commands) == ["rerun_diagnostic_viewer.py"]
     command = commands[0]
     assert "--algorithms" in command and "fast_livo2,point_lio" in command
+    assert "--lang" in command and "en" in command
     assert "--no-maps" in command
     assert "--pointcloud-mode" in command and "sampled" in command
     assert "--pointcloud-period" in command and "2.0" in command
