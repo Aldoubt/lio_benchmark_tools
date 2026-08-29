@@ -52,19 +52,86 @@ Default behavior:
 - current algorithm positions are logged on the shared `bag_time` timeline;
 - CPU, RSS, thread count, 10 Hz position step, yaw step, and speed are logged as synchronized scalar series;
 - anomaly windows are logged as timestamped events;
-- raw LiDAR uses `pointcloud-mode=anomaly` by default, so only indexed scans near anomaly windows are deserialized and logged.
+- raw LiDAR uses `pointcloud-mode=anomaly` by default, so only indexed scans near anomaly windows are deserialized and logged;
+- each selected raw LiDAR frame is stored in three display LODs: `dense`, `medium`, `sparse`, default strides `10,20,80`;
+- the Rerun Blueprint panel starts expanded so algorithms and LiDAR LODs can be hidden/shown interactively.
 
 No rosbag replay and no LIO algorithm process is started.
 
-## Useful modes
+## Choose algorithms
 
-Focus on a small candidate set:
+Limit what is loaded at launch time:
 
 ```bash
 benchmark_base/bin/lio-benchmark viewer \
   --run "$RUN" \
   --algorithms fast_livo2,point_lio,lio_sam_no_loop,glim_full_slam
 ```
+
+Inside Rerun, use the Blueprint panel eye icons for temporary comparison changes without restarting the viewer.
+
+The spatial entities are grouped as:
+
+```text
+world/
+  algorithms/
+    fast_livo2/
+      trajectory
+      current
+      map
+    point_lio/
+      trajectory
+      current
+      map
+    ...
+```
+
+Clicking the eye icon on one algorithm group hides/shows that algorithm's map, full trajectory, and current pose together in the `Map + trajectories` view. CPU/RSS/motion plots expose their per-algorithm entities in their own view trees, so individual curves can also be hidden with the eye icon.
+
+Use `--algorithms` for a persistent small working set and Blueprint eye toggles for quick runtime exploration.
+
+## Raw LiDAR density / LOD
+
+Each selected rosbag frame is deserialized only once at the densest requested stride. The viewer derives medium and sparse versions from that dense cloud rather than rereading the rosbag message.
+
+Default:
+
+```text
+dense  = every 10th point
+medium = every 20th point
+sparse = every 80th point
+```
+
+The `Current raw LiDAR` view defaults to **medium**. In the Blueprint panel expand:
+
+```text
+Current raw LiDAR
+  raw_lidar
+    dense
+    medium
+    sparse
+```
+
+and use the eye icons to switch density. Normally keep only one LOD visible at a time.
+
+Override the three strides when launching:
+
+```bash
+benchmark_base/bin/lio-benchmark viewer \
+  --run "$RUN" \
+  --point-lods 5,20,100
+```
+
+Rules:
+
+- exactly three positive integer strides;
+- order is `dense,medium,sparse`;
+- values must increase;
+- medium/sparse strides must be integer multiples of the dense stride so coarser LODs can be derived without rereading the bag message.
+
+`--point-step` remains accepted for compatibility with earlier viewer commands, but `--point-lods` is the active LOD control.
+
+## Useful pointcloud modes
 
 Disable raw LiDAR completely for the fastest launch:
 
@@ -81,7 +148,7 @@ benchmark_base/bin/lio-benchmark viewer \
   --run "$RUN" \
   --pointcloud-mode sampled \
   --pointcloud-period 1.0 \
-  --point-step 20
+  --point-lods 10,20,80
 ```
 
 This still uses the SQLite frame index and reads only selected message IDs. It does not replay the bag or pre-extract the full point cloud.
@@ -108,15 +175,17 @@ benchmark_base/bin/lio-benchmark viewer \
 rerun "$OUT"
 ```
 
+The postprocess command boundary stringifies filesystem paths before serializing the command plan, so `--save` works with the CLI's `Path` values.
+
 This is useful for preserving a reproducible inspection artifact without changing the benchmark run itself.
 
 ## Intended UI contract
 
 The MVP blueprint is intentionally thin:
 
-- `Map + trajectories`: baseline-aligned reconstructed maps and full trajectories, with the current 10 Hz pose highlighted as the time cursor moves;
-- `Current raw LiDAR`: selected raw LiDAR frame in sensor-local coordinates;
-- `CPU` / `RSS` / `Motion anomalies`: synchronized performance and trajectory-diagnostic curves;
+- `Map + trajectories`: baseline-aligned reconstructed maps and full trajectories, with the current 10 Hz pose highlighted as the time cursor moves; spatial entities are grouped by algorithm for one-click visibility toggles;
+- `Current raw LiDAR`: selected raw LiDAR frame in sensor-local coordinates with dense/medium/sparse LOD entities, medium visible by default;
+- `CPU` / `RSS` / `Motion anomalies`: synchronized performance and trajectory-diagnostic curves, each with per-algorithm entities that can be hidden/shown;
 - `Anomaly windows`: timestamped event records such as the GLIM full-SLAM correction near 353–354 s.
 
 Rerun's global time cursor provides the interaction. Moving or clicking the `bag_time` cursor updates current poses, scalar curves, and whichever indexed raw LiDAR frame has been logged at that time.
