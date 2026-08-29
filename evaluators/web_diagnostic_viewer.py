@@ -24,6 +24,8 @@ from rerun_diagnostic_viewer import (
 )
 from viewer_i18n import SUPPORTED_LANGUAGES
 
+RERUN_LABEL_LANGUAGE = "en"
+
 
 def load_json(path: Path, default: Any = None) -> Any:
     try:
@@ -71,7 +73,8 @@ def main() -> int:
     dist_dir = web_root / "dist"
     if not (dist_dir / "index.html").is_file():
         raise FileNotFoundError(
-            f"web viewer build is missing: {dist_dir}. Run `cd {web_root} && npm ci && npm run build`."
+            f"web viewer build is missing: {dist_dir}. "
+            f"Web mode requires Node >=22.12; run `cd {web_root} && npm ci && npm run build`."
         )
 
     timeline = load_json(run / "metrics" / "diagnostic_timeline.json", {}) or {}
@@ -93,6 +96,9 @@ def main() -> int:
     }
 
     def apply_state(state: dict[str, object]) -> None:
+        # The browser shell is fully localized at runtime. Rerun's own labels stay
+        # English because the native/WebViewer font stack can render CJK as tofu
+        # squares on some Ubuntu systems. This keeps entity recognition stable.
         send_blueprint(
             rr,
             rrb,
@@ -100,7 +106,7 @@ def main() -> int:
             visible_algorithms=set(str(item) for item in state["visibleAlgorithms"]),
             world_algorithm=str(state["worldAlgorithm"]),
             point_lod=str(state["pointLod"]),
-            language=str(state["language"]),
+            language=RERUN_LABEL_LANGUAGE,
         )
 
     config: dict[str, object] = {
@@ -139,7 +145,7 @@ def main() -> int:
         point_lods=point_lods,
         world_pointcloud_mode=args.world_pointcloud_mode,
         world_algorithm=world_algorithm,
-        language=args.lang,
+        language=RERUN_LABEL_LANGUAGE,
         save=None,
         spawn=False,
         initialize=False,
@@ -152,6 +158,8 @@ def main() -> int:
             {
                 **result,
                 "mode": "web",
+                "shell_language": args.lang,
+                "rerun_label_language": RERUN_LABEL_LANGUAGE,
                 "web_url": server.url,
                 "grpc_url": grpc_uri,
                 "anomaly_windows_available": len(windows),
