@@ -22,6 +22,8 @@ python3 -m py_compile \
   evaluators/map_consistency.py \
   evaluators/enhance_map_comparison.py \
   evaluators/trajectory_discontinuity.py \
+  evaluators/diagnostic_timeline.py \
+  evaluators/pointcloud_frame_index.py \
   benchmark_base/lio_benchmark/entry.py \
   benchmark_base/lio_benchmark/postprocess.py
 
@@ -47,34 +49,30 @@ python3 -m pytest -q \
   tests/test_map_consistency.py \
   tests/test_map_comparison_enhancement.py \
   tests/test_map_reconstruction_selection.py \
-  tests/test_trajectory_discontinuity.py
+  tests/test_trajectory_discontinuity.py \
+  tests/test_diagnostic_timeline.py \
+  tests/test_pointcloud_frame_index.py
 
 cat <<'EOF'
 
 phase/comparison pipeline static/self tests passed.
 
-Next, inspect an existing run without changing it:
-  benchmark_base/bin/lio-benchmark phase-analysis --run <RUN_DIR> --baseline fast_livo2 --dry-run
-
-Then execute the offline analysis:
-  benchmark_base/bin/lio-benchmark phase-analysis --run <RUN_DIR> --baseline fast_livo2
-
-Expected visualization behavior:
-  - primary trajectory figures contain health-valid algorithms only
-  - *_all trajectory figures retain health-fail runs for diagnosis
-  - PRE_MOTION_STATIC and POST_MOTION_STATIC remain in the timeline but are excluded from primary trajectory plots
-  - trajectory-only runs do not keep stale cpu_by_phase.png or rss_growth_by_phase.png
-
-Current-run comparison/report behavior:
+Core comparison semantics:
   - comprehensive report values come only from the selected run
-  - whole-run baseline-relative RMSE/P95 are recomputed from current standardized CSVs
-  - compare/visualize generate timestamped trajectory-discontinuity timelines and per-step CSVs
-  - discontinuity time prefers bag LiDAR header start, so relative time maps directly to rosbag regions when bag_analysis exists
-  - compare --with-maps computes robust P99-P1 extents, baseline voxel IoU and symmetric nearest-neighbour metrics
-  - map health remains separate from trajectory health
-  - primary map figures require trajectory+map health; *_all retains every reconstructable map
-  - missing current-run map metadata is reported as N/A rather than backfilled
-  - the legacy generate_comprehensive_report.py filename/API delegates to current-run-only data
+  - baseline-relative trajectory/map quantities are diagnostic/non-ground-truth
+  - map health remains separate from trajectory lifecycle/health
+  - raw per-output-step trajectory discontinuities are retained for audit
+  - unified diagnostic timelines resample every trajectory on the same bag-anchored 10 Hz grid by default
+  - anomaly events are clustered into review windows instead of flooding a viewer with isolated markers
+  - resource sample history is mapped through clock anchors + recorded/header evidence onto the same bag-relative timeline
+  - pointcloud frame indexing stores only rosbag message ids/timestamps; raw point-cloud bytes remain in the source bag
+
+Useful offline commands:
+  benchmark_base/bin/lio-benchmark phase-analysis --run <RUN_DIR> --baseline fast_livo2
+  benchmark_base/bin/lio-benchmark diagnostics --run <RUN_DIR> --baseline fast_livo2 --hz 10
+
+Pointcloud indexing additionally requires the ROS overlay that provides the bag's exact LiDAR message type:
+  benchmark_base/bin/lio-benchmark diagnostics --run <RUN_DIR> --baseline fast_livo2 --hz 10 --with-pointcloud-index
 
 Smoke coverage policy:
   - short smoke runs are compared with smoke_duration_s and allow a 5 s startup margin
@@ -83,8 +81,4 @@ Smoke coverage policy:
 LIO-SAM 6-axis compatibility:
   - patches/lio_sam/allow_6axis_imu.patch must be applied to the locked LIO-SAM source before rebuilding
   - allow6AxisImu=true is explicit in both no-loop and loop benchmark params
-
-For a new strict-clock smoke run, run one algorithm for 20-30 s first, then verify:
-  raw/<algorithm>/clock_anchors.json
-contains status=finished, samples>2, and no unexpected time backtracks.
 EOF
