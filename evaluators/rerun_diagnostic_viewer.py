@@ -19,6 +19,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from plot_comparison_dashboard import LABELS, load_trajectory
+from viewer_i18n import SUPPORTED_LANGUAGES, tr, translate_anomaly_types
 
 
 COLOR_RGB = {
@@ -334,9 +335,9 @@ def _series_value(row: dict[str, str], key: str) -> float | None:
     return number if np.isfinite(number) else None
 
 
-def _send_blueprint(rr: Any, rrb: Any) -> None:
+def _send_blueprint(rr: Any, rrb: Any, language: str) -> None:
     sensor_view = rrb.Spatial3DView(
-        name="Current raw LiDAR — toggle dense/medium/sparse in Blueprint",
+        name=f"{tr(language, 'view.raw_lidar')} — {tr(language, 'lod.dense')}/{tr(language, 'lod.medium')}/{tr(language, 'lod.sparse')}",
         origin="/sensor",
         overrides={
             "/sensor/raw_lidar/dense": rrb.EntityBehavior(visible=False),
@@ -347,18 +348,18 @@ def _send_blueprint(rr: Any, rrb: Any) -> None:
     blueprint = rrb.Blueprint(
         rrb.Vertical(
             rrb.Horizontal(
-                rrb.Spatial3DView(name="Map + trajectories", origin="/world"),
+                rrb.Spatial3DView(name=tr(language, "view.map_trajectories"), origin="/world"),
                 rrb.Vertical(
-                    rrb.TimeSeriesView(name="CPU", origin="/metrics/cpu"),
-                    rrb.TimeSeriesView(name="RSS", origin="/metrics/rss"),
-                    rrb.TimeSeriesView(name="Motion anomalies", origin="/metrics/motion"),
+                    rrb.TimeSeriesView(name=tr(language, "view.cpu"), origin="/metrics/cpu"),
+                    rrb.TimeSeriesView(name=tr(language, "view.rss"), origin="/metrics/rss"),
+                    rrb.TimeSeriesView(name=tr(language, "view.motion"), origin="/metrics/motion"),
                     row_shares=[1, 1, 1],
                 ),
                 column_shares=[2, 1],
             ),
             rrb.Horizontal(
                 sensor_view,
-                rrb.TextLogView(name="Anomaly windows", origin="/events"),
+                rrb.TextLogView(name=tr(language, "view.anomaly_windows"), origin="/events"),
                 column_shares=[2, 1],
             ),
             row_shares=[3, 2],
@@ -379,6 +380,7 @@ def log_recording(
     pointcloud_period_s: float,
     point_step: int,
     point_lods: dict[str, int],
+    language: str,
     save: Path | None,
     spawn: bool,
 ) -> dict[str, Any]:
@@ -401,10 +403,8 @@ def log_recording(
         save = Path(save).expanduser().resolve()
         save.parent.mkdir(parents=True, exist_ok=True)
         rr.save(str(save))
-    _send_blueprint(rr, rrb)
+    _send_blueprint(rr, rrb, language)
 
-    # Group spatial entities by algorithm so the Blueprint panel exposes a
-    # single recursive eye toggle for that algorithm's map/trajectory/current pose.
     for algorithm in algorithms:
         paths = algorithm_entity_paths(algorithm)
         trajectory = load_trajectory(
@@ -454,8 +454,6 @@ def log_recording(
                 static=True,
             )
 
-    # Use already synchronized 10 Hz motion rows and strict clock-aligned
-    # resource CSVs. These are display-only consumers of frozen diagnostics.
     for algorithm in algorithms:
         timeline_rows = load_csv(
             run / "metrics" / "diagnostic_timeline" / f"{algorithm}.csv"
@@ -506,12 +504,13 @@ def log_recording(
     for window in selected_windows:
         start = float(window["start_bag_time_s"])
         rr.set_time("bag_time", duration=start)
+        types_display = ",".join(translate_anomaly_types(language, list(window["types"])))
         rr.log(
             "events/anomaly_windows",
             rr.TextLog(
                 f"{window['window_id']} | {LABELS.get(window['algorithm'], window['algorithm'])} | "
                 f"{window['start_bag_time_s']:.2f}-{window['end_bag_time_s']:.2f}s | "
-                f"types={','.join(window['types'])} | severity={window['severity']:.2f}"
+                f"types={types_display} | severity={window['severity']:.2f}"
             ),
         )
         rr.log(
@@ -553,6 +552,7 @@ def log_recording(
         "run": str(run),
         "algorithms": algorithms,
         "baseline": baseline,
+        "language": language,
         "anomaly_windows": len(selected_windows),
         "pointcloud_mode": pointcloud_mode,
         "pointcloud_frames_logged": pointcloud_frames_logged,
@@ -572,6 +572,7 @@ def main() -> int:
         "--algorithms",
         help="comma-separated algorithm keys; default: all algorithms in diagnostic_timeline.json",
     )
+    parser.add_argument("--lang", choices=SUPPORTED_LANGUAGES, default="zh-CN")
     parser.add_argument("--no-maps", action="store_true", help="skip reconstructed PLY maps")
     parser.add_argument(
         "--map-point-step", type=int, default=4, help="display every Nth PLY point"
@@ -617,6 +618,7 @@ def main() -> int:
         pointcloud_period_s=args.pointcloud_period,
         point_step=args.point_step,
         point_lods=point_lods,
+        language=args.lang,
         save=args.save,
         spawn=not args.no_spawn,
     )
