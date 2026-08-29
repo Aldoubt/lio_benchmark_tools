@@ -50,6 +50,7 @@ def _postprocess_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--baseline", default="fast_livo2")
     parser.add_argument("--algorithms", help="comma-separated algorithms; default: all diagnostic algorithms")
+    parser.add_argument("--lang", choices=("zh-CN", "en"), default="zh-CN", help="repository-owned viewer language")
     parser.add_argument("--no-maps", action="store_true", help="skip reconstructed PLY maps")
     parser.add_argument("--pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly")
     parser.add_argument("--pointcloud-period", type=float, default=1.0, help="seconds between raw scans in sampled mode")
@@ -111,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         kwargs.update({
             "baseline": args.baseline,
             "viewer_algorithms": args.algorithms,
+            "viewer_language": args.lang,
             "viewer_with_maps": not args.no_maps,
             "viewer_pointcloud_mode": args.pointcloud_mode,
             "viewer_pointcloud_period_s": args.pointcloud_period,
