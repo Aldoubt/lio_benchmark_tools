@@ -100,6 +100,34 @@ def test_diagnostics_stage_is_lightweight_and_pointcloud_index_is_opt_in(tmp_pat
     ]
 
 
+def test_viewer_stage_only_launches_rerun_consumer(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    commands = build_stage_commands(
+        run,
+        "viewer",
+        baseline="fast_livo2",
+        viewer_algorithms="fast_livo2,point_lio",
+        viewer_with_maps=False,
+        viewer_pointcloud_mode="sampled",
+        viewer_pointcloud_period_s=2.0,
+        viewer_point_step=25,
+        viewer_map_point_step=5,
+        viewer_save=tmp_path / "viewer.rrd",
+        viewer_spawn=False,
+    )
+    assert names(commands) == ["rerun_diagnostic_viewer.py"]
+    command = commands[0]
+    assert "--algorithms" in command and "fast_livo2,point_lio" in command
+    assert "--no-maps" in command
+    assert "--pointcloud-mode" in command and "sampled" in command
+    assert "--pointcloud-period" in command and "2.0" in command
+    assert "--point-step" in command and "25" in command
+    assert "--map-point-step" in command and "5" in command
+    assert "--save" in command
+    assert "--no-spawn" in command
+
+
 def test_report_bootstraps_comparison_then_generates_current_run_report(tmp_path):
     run = tmp_path / "run"
     run.mkdir()
