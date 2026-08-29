@@ -18,6 +18,21 @@ def _summary_command(run: Path) -> list[str]:
     return _python("summarize_smoke_run.py", run, "--name", "full_comparison")
 
 
+def _diagnostic_timeline_command(
+    run: Path,
+    baseline: str,
+    hz: float,
+    window_gap_s: float,
+) -> list[str]:
+    return _python(
+        "diagnostic_timeline.py",
+        "--run", run,
+        "--baseline", baseline,
+        "--hz", hz,
+        "--window-gap", window_gap_s,
+    )
+
+
 def build_stage_commands(
     run: Path,
     stage: str,
@@ -29,13 +44,29 @@ def build_stage_commands(
     scan_step: int = 5,
     point_step: int = 20,
     voxel: float = 0.12,
+    diagnostic_hz: float = 10.0,
+    anomaly_window_gap_s: float = 1.0,
+    with_pointcloud_index: bool = False,
 ) -> list[list[str]]:
     """Build deterministic post-processing commands without executing them."""
     run = run.resolve()
-    if stage not in {"standardize", "evaluate", "visualize", "report", "compare", "phase-analysis"}:
+    allowed = {
+        "standardize",
+        "evaluate",
+        "visualize",
+        "report",
+        "compare",
+        "phase-analysis",
+        "diagnostics",
+    }
+    if stage not in allowed:
         raise ValueError(f"unknown postprocess stage: {stage}")
     if scan_step < 1 or point_step < 1 or voxel <= 0:
         raise ValueError("scan_step and point_step must be >= 1; voxel must be > 0")
+    if diagnostic_hz <= 0:
+        raise ValueError("diagnostic_hz must be > 0")
+    if anomaly_window_gap_s < 0:
+        raise ValueError("anomaly_window_gap_s must be >= 0")
 
     commands: list[list[str]] = []
     if stage == "phase-analysis":
@@ -45,6 +76,20 @@ def build_stage_commands(
         commands.append(command)
         if not no_plot:
             commands.append(_python("plot_phase_analysis.py", "--run", run))
+        return commands
+
+    if stage == "diagnostics":
+        commands.append(_python("trajectory_discontinuity.py", "--run", run, "--baseline", baseline))
+        commands.append(
+            _diagnostic_timeline_command(
+                run,
+                baseline,
+                diagnostic_hz,
+                anomaly_window_gap_s,
+            )
+        )
+        if with_pointcloud_index:
+            commands.append(_python("pointcloud_frame_index.py", "--run", run))
         return commands
 
     metrics_ready = (run / "metrics" / "full_comparison.json").is_file()
@@ -58,6 +103,14 @@ def build_stage_commands(
         commands.append(_python("plot_comparison_dashboard.py", "--run", run, "--baseline", baseline))
         commands.append(_python("plot_resource_curves.py", "--run", run))
         commands.append(_python("trajectory_discontinuity.py", "--run", run, "--baseline", baseline))
+        commands.append(
+            _diagnostic_timeline_command(
+                run,
+                baseline,
+                diagnostic_hz,
+                anomaly_window_gap_s,
+            )
+        )
         if with_maps:
             commands.append(_python(
                 "reconstruct_comparison_maps.py",
@@ -97,6 +150,9 @@ def execute_stage(
     scan_step: int = 5,
     point_step: int = 20,
     voxel: float = 0.12,
+    diagnostic_hz: float = 10.0,
+    anomaly_window_gap_s: float = 1.0,
+    with_pointcloud_index: bool = False,
 ) -> int:
     run = run.resolve()
     if not run.is_dir():
@@ -113,6 +169,9 @@ def execute_stage(
         scan_step=scan_step,
         point_step=point_step,
         voxel=voxel,
+        diagnostic_hz=diagnostic_hz,
+        anomaly_window_gap_s=anomaly_window_gap_s,
+        with_pointcloud_index=with_pointcloud_index,
     )
     print(json.dumps({"stage": stage, "run": str(run), "dry_run": dry_run, "commands": commands}, ensure_ascii=False, indent=2))
     if dry_run:
