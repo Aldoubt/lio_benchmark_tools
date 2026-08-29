@@ -48,6 +48,7 @@ def _postprocess_parser() -> argparse.ArgumentParser:
 
     parser = sub.add_parser("viewer")
     parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--mode", choices=("native", "web"), default="native")
     parser.add_argument("--baseline", default="fast_livo2")
     parser.add_argument("--algorithms", help="comma-separated algorithms; default: all diagnostic algorithms")
     parser.add_argument("--lang", choices=("zh-CN", "en"), default="zh-CN", help="repository-owned viewer language")
@@ -59,8 +60,8 @@ def _postprocess_parser() -> argparse.ArgumentParser:
     parser.add_argument("--world-pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly")
     parser.add_argument("--world-algorithm", help="world LiDAR algorithm visible by default; default: baseline")
     parser.add_argument("--map-point-step", type=int, default=4, help="display every Nth reconstructed map point")
-    parser.add_argument("--save", type=Path, help="write a .rrd recording instead of spawning the viewer")
-    parser.add_argument("--no-spawn", action="store_true")
+    parser.add_argument("--save", type=Path, help="native mode only: write a .rrd recording")
+    parser.add_argument("--no-spawn", action="store_true", help="native: no app spawn; web: no browser auto-open")
     parser.add_argument("--dry-run", action="store_true")
 
     parser = sub.add_parser("report")
@@ -113,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "viewer":
         kwargs.update({
             "baseline": args.baseline,
+            "viewer_mode": args.mode,
             "viewer_algorithms": args.algorithms,
             "viewer_language": args.lang,
             "viewer_with_maps": not args.no_maps,
