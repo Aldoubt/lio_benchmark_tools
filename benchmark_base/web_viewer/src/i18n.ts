@@ -6,7 +6,7 @@ const TRANSLATIONS: Record<ViewerLanguage, Record<string, string>> = {
     "control.algorithms": "算法显示",
     "control.world_algorithm": "世界点云算法",
     "control.point_lod": "点云密度",
-    "control.language": "语言",
+    "control.language": "界面语言",
     "view.map_trajectories": "地图与轨迹",
     "view.raw_lidar": "当前原始激光点云",
     "view.world_lidar": "世界坐标点云",
@@ -19,13 +19,14 @@ const TRANSLATIONS: Record<ViewerLanguage, Record<string, string>> = {
     "state.connecting": "正在连接实验记录…",
     "state.ready": "已连接",
     "state.no_recording": "当前没有活动的 Rerun 记录",
+    "state.rerun_english_note": "Rerun 内部视图与实体名称保持英文，以避免部分 Ubuntu 字体环境出现中文方块；左侧控制区可随时切换中英文。",
   },
   en: {
     "app.title": "LIO Offline Diagnostics",
     "control.algorithms": "Algorithms",
     "control.world_algorithm": "World LiDAR algorithm",
     "control.point_lod": "Point density",
-    "control.language": "Language",
+    "control.language": "Interface language",
     "view.map_trajectories": "Map + trajectories",
     "view.raw_lidar": "Current raw LiDAR",
     "view.world_lidar": "World LiDAR",
@@ -38,6 +39,7 @@ const TRANSLATIONS: Record<ViewerLanguage, Record<string, string>> = {
     "state.connecting": "Connecting to experiment recording…",
     "state.ready": "Connected",
     "state.no_recording": "No active Rerun recording",
+    "state.rerun_english_note": "Rerun view/entity names stay in English to avoid missing CJK glyphs on some Ubuntu font stacks. The control shell can switch languages at runtime.",
   },
 };
 
