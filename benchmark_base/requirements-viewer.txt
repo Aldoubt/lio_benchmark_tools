@@ -1,0 +1,2 @@
+# Offline diagnostic viewer only. Core benchmark/postprocess does not require Rerun.
+rerun-sdk==0.36.3
