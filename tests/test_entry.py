@@ -63,3 +63,38 @@ def test_diagnostics_dispatches_fixed_rate_and_pointcloud_index_options(monkeypa
     assert captured["anomaly_window_gap_s"] == 0.8
     assert captured["with_pointcloud_index"] is True
     assert captured["dry_run"] is True
+
+
+def test_viewer_dispatches_display_options(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_execute(run, stage, **kwargs):
+        captured.update({"run": run, "stage": stage, **kwargs})
+        return 0
+
+    monkeypatch.setattr(entry, "execute_stage", fake_execute)
+    result = entry.main([
+        "viewer",
+        "--run", str(tmp_path),
+        "--baseline", "fast_livo2",
+        "--algorithms", "fast_livo2,point_lio",
+        "--no-maps",
+        "--pointcloud-mode", "sampled",
+        "--pointcloud-period", "2.0",
+        "--point-step", "25",
+        "--map-point-step", "5",
+        "--save", str(tmp_path / "viewer.rrd"),
+        "--no-spawn",
+        "--dry-run",
+    ])
+    assert result == 0
+    assert captured["stage"] == "viewer"
+    assert captured["viewer_algorithms"] == "fast_livo2,point_lio"
+    assert captured["viewer_with_maps"] is False
+    assert captured["viewer_pointcloud_mode"] == "sampled"
+    assert captured["viewer_pointcloud_period_s"] == 2.0
+    assert captured["viewer_point_step"] == 25
+    assert captured["viewer_map_point_step"] == 5
+    assert captured["viewer_save"] == Path(tmp_path / "viewer.rrd")
+    assert captured["viewer_spawn"] is False
+    assert captured["dry_run"] is True
