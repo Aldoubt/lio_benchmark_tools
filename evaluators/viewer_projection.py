@@ -10,6 +10,7 @@ import csv
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
@@ -76,11 +77,11 @@ def pose_at(
         if max_gap_s <= 0:
             raise ValueError("max_gap_s must be > 0 when provided")
         indices = np.searchsorted(model.timestamp_s, times, side="right")
-        exact_last = times == model.timestamp_s[-1]
         left = np.clip(indices - 1, 0, len(model.timestamp_s) - 1)
         right = np.clip(indices, 0, len(model.timestamp_s) - 1)
         interval = model.timestamp_s[right] - model.timestamp_s[left]
-        interval[exact_last] = 0.0
+        exact_left = np.isclose(times, model.timestamp_s[left], rtol=0.0, atol=1e-12)
+        interval[exact_left] = 0.0
         valid &= interval <= float(max_gap_s)
 
     if np.any(valid):
@@ -98,7 +99,7 @@ def pose_at(
 def initial_yaw_translation_alignment(
     reference: TrajectoryModel,
     candidate: TrajectoryModel,
-) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     start = max(float(reference.timestamp_s[0]), float(candidate.timestamp_s[0]))
     end = min(float(reference.timestamp_s[-1]), float(candidate.timestamp_s[-1]))
     if end <= start:
@@ -140,7 +141,7 @@ def initial_yaw_translation_alignment(
         "common_start_s": start,
         "common_end_s": end,
         "common_duration_s": end - start,
-        "samples": float(np.count_nonzero(mask)),
+        "samples": int(np.count_nonzero(mask)),
         "rmse_m": float(np.sqrt(np.mean(errors**2))),
         "mean_m": float(np.mean(errors)),
         "p95_m": float(np.percentile(errors, 95)),
