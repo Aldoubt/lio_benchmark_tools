@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Index raw LiDAR bag frames without copying point-cloud payloads.
+
+The index lets a future interactive viewer seek from a bag-relative timestamp
+to the exact rosbag2 message id and its recorded/header timestamps. Message
+payloads remain in the original sqlite bag and can be loaded on demand.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import sqlite3
+from pathlib import Path
+from typing import Any, Iterable
+
+
+SCHEMA_VERSION = 1
+
+
+def load_json(path: Path, default: Any = None) -> Any:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def frame_index_row(
+    *,
+    message_id: int,
+    recorded_timestamp_ns: int,
+    header_timestamp_s: float,
+    origin_timestamp_s: float,
+) -> dict[str, Any]:
+    recorded = int(recorded_timestamp_ns) / 1_000_000_000.0
+    header = float(header_timestamp_s)
+    return {
+        "message_id": int(message_id),
+        "recorded_timestamp_s": recorded,
+        "header_timestamp_s": header,
+        "bag_time_s": header - float(origin_timestamp_s),
+    }
+
+
+def select_topic_message_rows(
+    connection: sqlite3.Connection,
+    topic: str,
+) -> tuple[str, Iterable[tuple[int, int, bytes]]]:
+    """Return the topic type and a streaming cursor of id/timestamp/payload rows."""
+    topic_row = connection.execute(
+        "SELECT id, type FROM topics WHERE name = ?",
+        (topic,),
+    ).fetchone()
+    if topic_row is None:
+        raise ValueError(f"missing topic {topic}")
+    topic_id, topic_type = topic_row
+    cursor = connection.execute(
+        "SELECT id, timestamp, data FROM messages WHERE topic_id = ? ORDER BY id",
+        (int(topic_id),),
+    )
+    return str(topic_type), cursor
+
+
+def _header_timestamp_s(message: Any) -> float:
+    header = getattr(message, "header", None)
+    stamp = getattr(header, "stamp", None)
+    if stamp is None or not hasattr(stamp, "sec") or not hasattr(stamp, "nanosec"):
+        raise ValueError(f"LiDAR message has no standard header stamp: {type(message)!r}")
+    return float(stamp.sec) + float(stamp.nanosec) * 1e-9
+
+
+def _bag_origin(run: Path, lidar_topic: str) -> tuple[float | None, str | None]:
+    analysis = load_json(run / "metrics" / "bag_analysis.json", {}) or {}
+    topic = (analysis.get("topics") or {}).get(lidar_topic) or {}
+    value = topic.get("header_first_s")
+    if value is None:
+        return None, None
+    try:
+        return float(value), f"bag_analysis:{lidar_topic}:header_first_s"
+    except (TypeError, ValueError):
+        return None, None
+
+
+def _write_csv(path: Path, frames: list[dict[str, Any]]) -> None:
+    fields = [
+        "message_id",
+        "recorded_timestamp_s",
+        "header_timestamp_s",
+        "bag_time_s",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(frames)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run", type=Path, required=True)
+    args = parser.parse_args()
+
+    run = args.run.resolve()
+    manifest = load_json(run / "manifest.json", {}) or {}
+    dataset = manifest.get("dataset") or {}
+    bag = Path(str(dataset.get("bag_dir") or "")).expanduser().resolve()
+    lidar_topic = str(dataset.get("lidar_topic") or "")
+    if not lidar_topic:
+        raise ValueError("manifest dataset.lidar_topic is missing")
+    if not bag.is_dir():
+        raise FileNotFoundError(f"bag directory does not exist: {bag}")
+    db_files = sorted(bag.glob("*.db3"))
+    if len(db_files) != 1:
+        raise ValueError(f"expected one sqlite3 bag file, found {len(db_files)} in {bag}")
+
+    # ROS imports stay inside main so pure indexing helpers remain testable on
+    # non-ROS hosts. The actual index command needs the source workspace that
+    # provides the bag's exact message type (e.g. livox_ros_driver2).
+    from rclpy.serialization import deserialize_message
+    from rosidl_runtime_py.utilities import get_message
+
+    connection = sqlite3.connect(f"file:{db_files[0]}?mode=ro", uri=True)
+    try:
+        topic_type, rows = select_topic_message_rows(connection, lidar_topic)
+        try:
+            message_class = get_message(topic_type)
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise RuntimeError(
+                f"message type support unavailable for {topic_type}; source the dataset ROS overlays before indexing"
+            ) from exc
+
+        origin, origin_source = _bag_origin(run, lidar_topic)
+        pending: list[tuple[int, int, float]] = []
+        frames: list[dict[str, Any]] = []
+        previous_recorded: float | None = None
+        previous_header: float | None = None
+        recorded_backtracks = 0
+        header_backtracks = 0
+
+        for message_id, recorded_timestamp_ns, payload in rows:
+            message = deserialize_message(payload, message_class)
+            header_time = _header_timestamp_s(message)
+            if origin is None:
+                origin = header_time
+                origin_source = f"bag:{lidar_topic}:first_deserialized_header"
+            pending.append((int(message_id), int(recorded_timestamp_ns), header_time))
+
+        if origin is None:
+            raise ValueError(f"no LiDAR messages found for {lidar_topic}")
+
+        for message_id, recorded_timestamp_ns, header_time in pending:
+            item = frame_index_row(
+                message_id=message_id,
+                recorded_timestamp_ns=recorded_timestamp_ns,
+                header_timestamp_s=header_time,
+                origin_timestamp_s=origin,
+            )
+            recorded = float(item["recorded_timestamp_s"])
+            header = float(item["header_timestamp_s"])
+            if previous_recorded is not None and recorded < previous_recorded:
+                recorded_backtracks += 1
+            if previous_header is not None and header < previous_header:
+                header_backtracks += 1
+            previous_recorded, previous_header = recorded, header
+            frames.append(item)
+    finally:
+        connection.close()
+
+    output_csv = run / "metrics" / "pointcloud_frame_index.csv"
+    output_json = run / "metrics" / "pointcloud_frame_index.json"
+    _write_csv(output_csv, frames)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "bag": str(bag),
+        "sqlite_db": str(db_files[0]),
+        "lidar_topic": lidar_topic,
+        "lidar_type": topic_type,
+        "origin_timestamp_s": float(origin),
+        "origin_source": origin_source,
+        "frame_count": len(frames),
+        "recorded_time_backtracks": recorded_backtracks,
+        "header_time_backtracks": header_backtracks,
+        "first_frame": frames[0] if frames else None,
+        "last_frame": frames[-1] if frames else None,
+        "frames": frames,
+        "payload_policy": "index-only; point-cloud bytes remain in the source rosbag2 sqlite database",
+    }
+    output_json.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "csv": str(output_csv),
+                "json": str(output_json),
+                "frames": len(frames),
+                "origin_timestamp_s": float(origin),
+                "origin_source": origin_source,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
