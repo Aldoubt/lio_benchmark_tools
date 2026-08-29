@@ -6,10 +6,13 @@ from pathlib import Path
 import numpy as np
 
 from rerun_diagnostic_viewer import (
+    algorithm_entity_paths,
     apply_alignment,
     initial_yaw_translation_transform,
     load_binary_little_endian_ply,
     nearest_frame,
+    parse_point_lods,
+    point_lod_clouds,
     resolve_algorithms,
     select_pointcloud_frames,
 )
@@ -65,6 +68,45 @@ def test_select_pointcloud_frames_combines_periodic_and_anomaly_frames_without_d
     )
 
     assert [item["message_id"] for item in selected] == [0, 2, 3, 5, 6]
+
+
+def test_parse_point_lods_requires_three_increasing_multiples():
+    assert parse_point_lods("10,20,80") == {
+        "dense": 10,
+        "medium": 20,
+        "sparse": 80,
+    }
+
+    for value in ("10,20", "20,10,80", "10,25,80", "0,20,80"):
+        try:
+            parse_point_lods(value)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid point LODs must be rejected: {value}")
+
+
+def test_point_lod_clouds_reuses_dense_cloud_for_coarser_levels():
+    dense = np.arange(16 * 3, dtype=np.float64).reshape(16, 3)
+    lods = point_lod_clouds(
+        dense,
+        {"dense": 10, "medium": 20, "sparse": 80},
+    )
+    assert len(lods["dense"]) == 16
+    assert len(lods["medium"]) == 8
+    assert len(lods["sparse"]) == 2
+    assert np.array_equal(lods["medium"], dense[::2])
+    assert np.array_equal(lods["sparse"], dense[::8])
+
+
+def test_algorithm_entity_paths_group_spatial_items_by_algorithm():
+    paths = algorithm_entity_paths("point_lio")
+    assert paths == {
+        "root": "world/algorithms/point_lio",
+        "trajectory": "world/algorithms/point_lio/trajectory",
+        "current": "world/algorithms/point_lio/current",
+        "map": "world/algorithms/point_lio/map",
+    }
 
 
 def test_initial_yaw_translation_transform_aligns_candidate_start_and_heading():
