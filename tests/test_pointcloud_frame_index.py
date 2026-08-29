@@ -31,10 +31,11 @@ def test_select_topic_message_rows_reads_only_selected_topic(tmp_path):
     connection.commit()
 
     topic_type, rows = select_topic_message_rows(connection, "/lidar")
+    selected = [(row[0], row[1]) for row in rows]
     connection.close()
 
     assert topic_type == "pkg/msg/Lidar"
-    assert [(row[0], row[1]) for row in rows] == [
+    assert selected == [
         (10, 1000000000),
         (12, 1200000000),
     ]
