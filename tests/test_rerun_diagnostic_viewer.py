@@ -2,8 +2,10 @@ import json
 import math
 import struct
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from rerun_diagnostic_viewer import (
     algorithm_entity_paths,
@@ -14,7 +16,9 @@ from rerun_diagnostic_viewer import (
     parse_point_lods,
     point_lod_clouds,
     resolve_algorithms,
+    scan_from_livox_message,
     select_pointcloud_frames,
+    world_entity_paths,
 )
 
 
@@ -107,6 +111,38 @@ def test_algorithm_entity_paths_group_spatial_items_by_algorithm():
         "current": "world/algorithms/point_lio/current",
         "map": "world/algorithms/point_lio/map",
     }
+
+
+def test_world_entity_paths_are_grouped_by_algorithm():
+    assert world_entity_paths("glim_full_slam") == {
+        "dense": "world_lidar/glim_full_slam/dense",
+        "medium": "world_lidar/glim_full_slam/medium",
+        "sparse": "world_lidar/glim_full_slam/sparse",
+    }
+
+
+def test_livox_scan_preserves_header_plus_offset_time():
+    stamp = SimpleNamespace(sec=100, nanosec=0)
+    message = SimpleNamespace(
+        header=SimpleNamespace(stamp=stamp),
+        points=[
+            SimpleNamespace(
+                x=float(i),
+                y=0.0,
+                z=0.0,
+                offset_time=i * 1000,
+                reflectivity=i,
+            )
+            for i in range(21)
+        ],
+    )
+    frame = {"message_id": 11, "bag_time_s": 0.0}
+    scan = scan_from_livox_message(message, frame, dense_step=10)
+    assert scan.points_xyz.shape == (3, 3)
+    assert scan.point_times_s.tolist() == pytest.approx(
+        [100.0, 100.00001, 100.00002]
+    )
+    assert scan.intensity.tolist() == [0.0, 10.0, 20.0]
 
 
 def test_initial_yaw_translation_transform_aligns_candidate_start_and_heading():
