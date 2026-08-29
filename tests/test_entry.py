@@ -110,7 +110,19 @@ def test_viewer_dispatches_display_options(monkeypatch, tmp_path):
     assert captured["dry_run"] is True
 
 
-def test_web_viewer_mode_dispatches_without_rrd_save(monkeypatch, tmp_path):
+def test_viewer_auto_language_uses_english_for_native(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_execute(run, stage, **kwargs):
+        captured.update({"run": run, "stage": stage, **kwargs})
+        return 0
+
+    monkeypatch.setattr(entry, "execute_stage", fake_execute)
+    assert entry.main(["viewer", "--run", str(tmp_path), "--mode", "native", "--dry-run"]) == 0
+    assert captured["viewer_language"] == "en"
+
+
+def test_web_viewer_mode_dispatches_chinese_shell_by_default(monkeypatch, tmp_path):
     captured = {}
 
     def fake_execute(run, stage, **kwargs):
@@ -123,4 +135,5 @@ def test_web_viewer_mode_dispatches_without_rrd_save(monkeypatch, tmp_path):
     ])
     assert result == 0
     assert captured["viewer_mode"] == "web"
+    assert captured["viewer_language"] == "zh-CN"
     assert captured["viewer_save"] is None
