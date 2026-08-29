@@ -53,7 +53,8 @@ def _postprocess_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-maps", action="store_true", help="skip reconstructed PLY maps")
     parser.add_argument("--pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly")
     parser.add_argument("--pointcloud-period", type=float, default=1.0, help="seconds between raw scans in sampled mode")
-    parser.add_argument("--point-step", type=int, default=20, help="display every Nth raw LiDAR point")
+    parser.add_argument("--point-step", type=int, default=20, help="legacy raw LiDAR display stride")
+    parser.add_argument("--point-lods", default="10,20,80", help="dense,medium,sparse LiDAR point strides")
     parser.add_argument("--map-point-step", type=int, default=4, help="display every Nth reconstructed map point")
     parser.add_argument("--save", type=Path, help="write a .rrd recording instead of spawning the viewer")
     parser.add_argument("--no-spawn", action="store_true")
@@ -114,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             "viewer_pointcloud_mode": args.pointcloud_mode,
             "viewer_pointcloud_period_s": args.pointcloud_period,
             "viewer_point_step": args.point_step,
+            "viewer_point_lods": args.point_lods,
             "viewer_map_point_step": args.map_point_step,
             "viewer_save": args.save,
             "viewer_spawn": not args.no_spawn,
