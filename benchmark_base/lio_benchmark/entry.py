@@ -51,7 +51,12 @@ def _postprocess_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=("native", "web"), default="native")
     parser.add_argument("--baseline", default="fast_livo2")
     parser.add_argument("--algorithms", help="comma-separated algorithms; default: all diagnostic algorithms")
-    parser.add_argument("--lang", choices=("zh-CN", "en"), default="zh-CN", help="repository-owned viewer language")
+    parser.add_argument(
+        "--lang",
+        choices=("auto", "zh-CN", "en"),
+        default="auto",
+        help="display language; auto uses English for native Rerun labels and Chinese for the web shell",
+    )
     parser.add_argument("--no-maps", action="store_true", help="skip reconstructed PLY maps")
     parser.add_argument("--pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly")
     parser.add_argument("--pointcloud-period", type=float, default=1.0, help="seconds between raw scans in sampled mode")
@@ -112,11 +117,14 @@ def main(argv: list[str] | None = None) -> int:
             "with_pointcloud_index": args.with_pointcloud_index,
         })
     elif args.command == "viewer":
+        viewer_language = args.lang
+        if viewer_language == "auto":
+            viewer_language = "en" if args.mode == "native" else "zh-CN"
         kwargs.update({
             "baseline": args.baseline,
             "viewer_mode": args.mode,
             "viewer_algorithms": args.algorithms,
-            "viewer_language": args.lang,
+            "viewer_language": viewer_language,
             "viewer_with_maps": not args.no_maps,
             "viewer_pointcloud_mode": args.pointcloud_mode,
             "viewer_pointcloud_period_s": args.pointcloud_period,
