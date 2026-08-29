@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import webbrowser
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BENCHMARK_BASE = REPO_ROOT / "benchmark_base"
+if str(BENCHMARK_BASE) not in sys.path:
+    sys.path.insert(0, str(BENCHMARK_BASE))
 
 from lio_benchmark.web_viewer_server import WebViewerServer
 from rerun_diagnostic_viewer import (
@@ -61,7 +67,7 @@ def main() -> int:
     if world_algorithm not in algorithms:
         raise ValueError(f"world algorithm must be in selected algorithms: {world_algorithm}")
 
-    web_root = Path(__file__).resolve().parents[1] / "benchmark_base" / "web_viewer"
+    web_root = REPO_ROOT / "benchmark_base" / "web_viewer"
     dist_dir = web_root / "dist"
     if not (dist_dir / "index.html").is_file():
         raise FileNotFoundError(
