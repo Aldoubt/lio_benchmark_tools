@@ -57,6 +57,12 @@ def _postprocess_parser() -> argparse.ArgumentParser:
         default="auto",
         help="display language; auto uses English for native Rerun labels and Chinese for the web shell",
     )
+    parser.add_argument(
+        "--web-profile",
+        choices=("empty", "trajectory", "scalar", "pose", "full"),
+        default="full",
+        help="web diagnostic recording ladder; ignored by native mode",
+    )
     maps = parser.add_mutually_exclusive_group()
     maps.add_argument(
         "--with-maps",
@@ -157,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
             "viewer_mode": args.mode,
             "viewer_algorithms": args.algorithms,
             "viewer_language": viewer_language,
+            "viewer_web_profile": args.web_profile,
             "viewer_with_maps": viewer_with_maps,
             "viewer_pointcloud_mode": viewer_pointcloud_mode,
             "viewer_pointcloud_period_s": args.pointcloud_period,
