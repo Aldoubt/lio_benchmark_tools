@@ -17,12 +17,12 @@ if str(BENCHMARK_BASE) not in sys.path:
 from lio_benchmark.web_viewer_server import WebViewerServer
 from rerun_diagnostic_viewer import (
     DEFAULT_POINT_LODS,
-    log_recording,
     parse_point_lods,
     resolve_algorithms,
     send_blueprint,
 )
 from viewer_i18n import SUPPORTED_LANGUAGES
+from web_rerun_recorder import log_recording_web_safe
 
 RERUN_LABEL_LANGUAGE = "en"
 
@@ -133,7 +133,8 @@ def main() -> int:
     grpc_uri = _browser_grpc_uri(grpc_uri)
     server.update_config(grpcUrl=grpc_uri)
 
-    result = log_recording(
+    result = log_recording_web_safe(
+        rr,
         run,
         algorithms,
         baseline=args.baseline,
@@ -141,15 +142,10 @@ def main() -> int:
         map_point_step=args.map_point_step,
         pointcloud_mode=args.pointcloud_mode,
         pointcloud_period_s=args.pointcloud_period,
-        point_step=args.point_step,
         point_lods=point_lods,
         world_pointcloud_mode=args.world_pointcloud_mode,
         world_algorithm=world_algorithm,
         language=RERUN_LABEL_LANGUAGE,
-        save=None,
-        spawn=False,
-        initialize=False,
-        send_blueprint_layout=False,
     )
     apply_state(initial_state)
 
