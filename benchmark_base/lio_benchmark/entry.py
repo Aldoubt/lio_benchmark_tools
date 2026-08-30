@@ -57,12 +57,35 @@ def _postprocess_parser() -> argparse.ArgumentParser:
         default="auto",
         help="display language; auto uses English for native Rerun labels and Chinese for the web shell",
     )
-    parser.add_argument("--no-maps", action="store_true", help="skip reconstructed PLY maps")
-    parser.add_argument("--pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly")
+    maps = parser.add_mutually_exclusive_group()
+    maps.add_argument(
+        "--with-maps",
+        dest="viewer_maps",
+        action="store_true",
+        help="include reconstructed PLY maps; opt-in for web mode",
+    )
+    maps.add_argument(
+        "--no-maps",
+        dest="viewer_maps",
+        action="store_false",
+        help="skip reconstructed PLY maps",
+    )
+    parser.set_defaults(viewer_maps=None)
+    parser.add_argument(
+        "--pointcloud-mode",
+        choices=("none", "anomaly", "sampled"),
+        default=None,
+        help="raw LiDAR mode; default: anomaly in native mode, none in web mode",
+    )
     parser.add_argument("--pointcloud-period", type=float, default=1.0, help="seconds between raw scans in sampled mode")
     parser.add_argument("--point-step", type=int, default=20, help="legacy raw LiDAR display stride")
     parser.add_argument("--point-lods", default="10,20,80", help="dense,medium,sparse LiDAR point strides")
-    parser.add_argument("--world-pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly")
+    parser.add_argument(
+        "--world-pointcloud-mode",
+        choices=("none", "anomaly", "sampled"),
+        default=None,
+        help="world LiDAR mode; default: anomaly in native mode, none in web mode",
+    )
     parser.add_argument("--world-algorithm", help="world LiDAR algorithm visible by default; default: baseline")
     parser.add_argument("--map-point-step", type=int, default=4, help="display every Nth reconstructed map point")
     parser.add_argument("--save", type=Path, help="native mode only: write a .rrd recording")
@@ -120,17 +143,26 @@ def main(argv: list[str] | None = None) -> int:
         viewer_language = args.lang
         if viewer_language == "auto":
             viewer_language = "en" if args.mode == "native" else "zh-CN"
+        viewer_with_maps = args.viewer_maps
+        if viewer_with_maps is None:
+            viewer_with_maps = args.mode == "native"
+        viewer_pointcloud_mode = args.pointcloud_mode
+        if viewer_pointcloud_mode is None:
+            viewer_pointcloud_mode = "anomaly" if args.mode == "native" else "none"
+        viewer_world_pointcloud_mode = args.world_pointcloud_mode
+        if viewer_world_pointcloud_mode is None:
+            viewer_world_pointcloud_mode = "anomaly" if args.mode == "native" else "none"
         kwargs.update({
             "baseline": args.baseline,
             "viewer_mode": args.mode,
             "viewer_algorithms": args.algorithms,
             "viewer_language": viewer_language,
-            "viewer_with_maps": not args.no_maps,
-            "viewer_pointcloud_mode": args.pointcloud_mode,
+            "viewer_with_maps": viewer_with_maps,
+            "viewer_pointcloud_mode": viewer_pointcloud_mode,
             "viewer_pointcloud_period_s": args.pointcloud_period,
             "viewer_point_step": args.point_step,
             "viewer_point_lods": args.point_lods,
-            "viewer_world_pointcloud_mode": args.world_pointcloud_mode,
+            "viewer_world_pointcloud_mode": viewer_world_pointcloud_mode,
             "viewer_world_algorithm": args.world_algorithm,
             "viewer_map_point_step": args.map_point_step,
             "viewer_save": args.save,
