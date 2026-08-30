@@ -58,6 +58,7 @@ def build_stage_commands(
     viewer_world_pointcloud_mode: str = "anomaly",
     viewer_world_algorithm: str | None = None,
     viewer_map_point_step: int = 4,
+    viewer_web_profile: str = "full",
     viewer_save: Path | None = None,
     viewer_spawn: bool = True,
 ) -> list[list[str]]:
@@ -145,8 +146,10 @@ def build_stage_commands(
                 command.extend(["--save", str(viewer_save)])
             if not viewer_spawn:
                 command.append("--no-spawn")
-        elif not viewer_spawn:
-            command.append("--no-browser")
+        else:
+            command.extend(["--web-profile", str(viewer_web_profile)])
+            if not viewer_spawn:
+                command.append("--no-browser")
         return [command]
 
     metrics_ready = (run / "metrics" / "full_comparison.json").is_file()
@@ -221,6 +224,7 @@ def execute_stage(
     viewer_world_pointcloud_mode: str = "anomaly",
     viewer_world_algorithm: str | None = None,
     viewer_map_point_step: int = 4,
+    viewer_web_profile: str = "full",
     viewer_save: Path | None = None,
     viewer_spawn: bool = True,
 ) -> int:
@@ -253,6 +257,7 @@ def execute_stage(
         viewer_world_pointcloud_mode=viewer_world_pointcloud_mode,
         viewer_world_algorithm=viewer_world_algorithm,
         viewer_map_point_step=viewer_map_point_step,
+        viewer_web_profile=viewer_web_profile,
         viewer_save=viewer_save,
         viewer_spawn=viewer_spawn,
     )
