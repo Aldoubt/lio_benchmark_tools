@@ -134,9 +134,23 @@ A freeze begins as `freeze_state = INCOMPLETE` and is promoted atomically to `fr
 
 Small report-critical JSON/CSV/config files are copied into the bundle. Large source assets are referenced by provenance path, byte size, and SHA-256 unless explicitly selected for copying later.
 
+### 7.4 Algorithm inclusion policy
+
+By default, Freeze includes every algorithm for which the source run has standardized/diagnostic artifacts. Failed, crashed, or truncated algorithms are not silently discarded: their available evidence remains in the manifest/report and is labeled with its actual run health. Whole-run recommendation logic continues to exclude algorithms that did not complete when existing health policy says so.
+
+Freeze does not rerun a missing algorithm merely to make the snapshot look complete.
+
+### 7.5 Required and optional source evidence
+
+P0 Freeze requires the source run manifest and the core comparison/diagnostic artifacts needed to preserve the current benchmark interpretation. If those core artifacts are missing, Freeze fails with an instruction to run the appropriate existing post-processing command first.
+
+Maps, phase analysis, point-cloud index, and pre-existing static figures are optional evidence. If optional evidence is absent, Freeze omits that layer and records the absence in `freeze_manifest.json`; it does not silently modify the source run or launch an expensive replay/reconstruction job.
+
+Report/evidence files that can be deterministically rendered from already-present core artifacts may be generated directly inside the new frozen directory.
+
 ## 8. Freeze manifest
 
-`freeze_manifest.json` is provenance, not narrative analysis. Required fields include schema version, freeze state/timestamp, source run ID/path/state, benchmark branch/commit, baseline, metric class, report language, source bag/config hashes, algorithm provenance, calibration disclosure, copied/referenced/generated artifact hashes, selected anomaly window IDs, and the Rerun SDK version used to generate the recording.
+`freeze_manifest.json` is provenance, not narrative analysis. Required fields include schema version, freeze state/timestamp, source run ID/path/state, benchmark branch/commit, baseline, metric class, report language, source bag/config hashes, algorithm provenance, calibration disclosure, copied/referenced/generated artifact hashes, optional-evidence availability, selected anomaly window IDs, and the Rerun SDK version used to generate the recording.
 
 All paths inside the bundle are relative where possible. External source paths remain explicit provenance references.
 
@@ -144,9 +158,9 @@ All paths inside the bundle are relative where possible. External source paths r
 
 Freeze generates `viewer/diagnostic.rrd` using the stable Native recording builder, not the Web-specific recorder.
 
-The recording should contain bounded evidence sufficient to reopen the experiment meaningfully without replaying the bag: selected trajectories, current poses, CPU/RSS/thread series, anomaly events, reconstructed comparison maps when reasonable, and bounded raw/world LiDAR evidence using existing point-cloud modes and LODs.
+The recording contains available bounded evidence sufficient to reopen the experiment meaningfully without replaying the bag: trajectories, current poses, CPU/RSS/thread series, anomaly events, reconstructed comparison maps when available/reasonable, and bounded raw/world LiDAR evidence when the point-cloud index/source access needed for that evidence is available.
 
-Freeze must not silently enable an unbounded full-bag point-cloud recording. Default LiDAR evidence stays anomaly-near or explicitly sampled.
+Freeze must not silently enable an unbounded full-bag point-cloud recording. Default LiDAR evidence stays anomaly-near or explicitly sampled. Missing optional LiDAR/map evidence does not invalidate an otherwise complete trajectory/resource diagnostic freeze; the omission is disclosed in the manifest/report.
 
 ## 10. `open` command
 
@@ -166,7 +180,7 @@ Behavior:
 
 `report_data.json` is the only semantic input for both HTML and PDF rendering. It reuses existing current-run report/diagnostic semantics rather than recomputing an independent interpretation.
 
-Required sections include experiment metadata, dataset/timing evidence, calibration disclosure, algorithm provenance, runtime health, trajectory summary, baseline-relative diagnostics, map health, resource summary, phase summary when available, anomaly summary, representative cases, evidence-based conclusions, reproducibility checklist, and the explicit no-GT disclaimer.
+Required sections include experiment metadata, dataset/timing evidence, calibration disclosure, algorithm provenance, runtime health, trajectory summary, baseline-relative diagnostics, map health when available, resource summary, phase summary when available, anomaly summary, representative cases, evidence-based conclusions, reproducibility checklist, optional-evidence availability, and the explicit no-GT disclaimer.
 
 When `ground_truth_available=false`, all accuracy-style conclusions remain baseline-relative diagnostic language.
 
@@ -250,13 +264,13 @@ Do not continue growing the Web server or Web recorder as part of P0.
 
 ## 17. Error handling
 
-Freeze fails clearly when required run artifacts are missing, never overwrites a snapshot, and never marks partial output complete. Hashing/report/RRD failures preserve `INCOMPLETE` state and identify the failed artifact.
+Freeze fails clearly when required core run artifacts are missing, never overwrites a snapshot, and never marks partial output complete. Hashing/report/RRD failures preserve `INCOMPLETE` state and identify the failed artifact. Missing optional evidence is disclosed rather than promoted to a failure.
 
 `open` fails on incomplete/missing frozen RRD. `export` fails on missing/invalid frozen artifacts rather than falling back to mutable live-run state.
 
 ## 18. Testing strategy
 
-Implementation follows TDD. Required coverage includes freeze naming/no-overwrite, INCOMPLETE-to-COMPLETE lifecycle, SHA-256/provenance correctness, large-asset reference policy, Native `.rrd` generation, `open` behavior without replay, no-GT report semantics, deterministic anomaly selection, offline HTML, PDF/CJK failure path, export-from-frozen-only behavior, Native viewer regression, and unchanged benchmark metric/diagnostic tests.
+Implementation follows TDD. Required coverage includes freeze naming/no-overwrite, INCOMPLETE-to-COMPLETE lifecycle, SHA-256/provenance correctness, required-vs-optional evidence behavior, algorithm inclusion/failed-run labeling, large-asset reference policy, Native `.rrd` generation, `open` behavior without replay, no-GT report semantics, deterministic anomaly selection, offline HTML, PDF/CJK failure path, export-from-frozen-only behavior, Native viewer regression, and unchanged benchmark metric/diagnostic tests.
 
 WebViewer tests may remain, but are not P0 acceptance gates.
 
@@ -268,11 +282,12 @@ Using one existing completed benchmark run, P0 must be able to:
 2. run `lio-benchmark freeze --run <RUN>` without modifying source results;
 3. produce a new immutable `COMPLETE` frozen directory;
 4. verify provenance/hashes for generated/captured artifacts;
-5. reopen `viewer/diagnostic.rrd` with `lio-benchmark open <frozen-run>` without bag replay;
-6. read offline HTML and PDF reports;
-7. run `lio-benchmark export <frozen-run>` to a separate delivery directory;
-8. preserve explicit non-ground-truth diagnostic wording;
-9. pass existing benchmark and Native viewer regressions.
+5. preserve failed/truncated algorithm evidence without ranking it as a healthy whole-run result;
+6. reopen `viewer/diagnostic.rrd` with `lio-benchmark open <frozen-run>` without bag replay;
+7. read offline HTML and PDF reports;
+8. run `lio-benchmark export <frozen-run>` to a separate delivery directory;
+9. preserve explicit non-ground-truth diagnostic wording;
+10. pass existing benchmark and Native viewer regressions.
 
 ## 20. Implementation order
 
