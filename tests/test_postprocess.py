@@ -155,6 +155,21 @@ def test_web_viewer_stage_launches_web_controller(tmp_path):
     assert "--save" not in commands[0]
 
 
+def test_web_viewer_stage_forwards_recording_profile(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    commands = build_stage_commands(
+        run,
+        "viewer",
+        viewer_mode="web",
+        viewer_web_profile="empty",
+        viewer_spawn=False,
+    )
+    command = commands[0]
+    profile_index = command.index("--web-profile")
+    assert command[profile_index + 1] == "empty"
+
+
 def test_web_viewer_rejects_rrd_save(tmp_path):
     run = tmp_path / "run"
     run.mkdir()
