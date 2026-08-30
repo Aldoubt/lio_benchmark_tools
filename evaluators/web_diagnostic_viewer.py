@@ -25,6 +25,7 @@ from viewer_i18n import SUPPORTED_LANGUAGES
 from web_rerun_recorder import log_recording_web_safe
 
 RERUN_LABEL_LANGUAGE = "en"
+WEB_PROFILES = ("empty", "trajectory", "scalar", "pose", "full")
 
 
 def load_json(path: Path, default: Any = None) -> Any:
@@ -38,12 +39,13 @@ def _browser_grpc_uri(value: str) -> str:
     return str(value).replace("0.0.0.0", "127.0.0.1").replace("[::]", "127.0.0.1")
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Open the interactive LIO WebViewer")
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--baseline", default="fast_livo2")
     parser.add_argument("--algorithms")
     parser.add_argument("--lang", choices=SUPPORTED_LANGUAGES, default="zh-CN")
+    parser.add_argument("--web-profile", choices=WEB_PROFILES, default="full")
     parser.add_argument("--no-maps", action="store_true")
     parser.add_argument("--map-point-step", type=int, default=4)
     parser.add_argument("--pointcloud-mode", choices=("none", "anomaly", "sampled"), default="anomaly")
@@ -56,7 +58,11 @@ def main() -> int:
     parser.add_argument("--http-port", type=int, default=0)
     parser.add_argument("--grpc-port", type=int, default=9876)
     parser.add_argument("--no-browser", action="store_true")
-    args = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def main() -> int:
+    args = parse_args()
 
     if args.map_point_step < 1 or args.point_step < 1 or args.pointcloud_period <= 0:
         raise ValueError("map/point steps must be >=1 and pointcloud period must be >0")
