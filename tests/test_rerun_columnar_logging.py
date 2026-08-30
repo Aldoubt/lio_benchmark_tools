@@ -1,6 +1,6 @@
 import numpy as np
 
-from rerun_diagnostic_viewer import (
+from web_rerun_recorder import (
     send_point_series_columns,
     send_scalar_series_columns,
 )
