@@ -33,6 +33,23 @@ from viewer_i18n import tr, translate_anomaly_types
 from viewer_projection import project_points_to_display_world
 
 
+_WEB_PROFILE_LAYERS = {
+    "empty": frozenset(),
+    "trajectory": frozenset({"trajectory"}),
+    "scalar": frozenset({"trajectory", "scalar"}),
+    "pose": frozenset({"trajectory", "scalar", "pose"}),
+    "full": frozenset({"trajectory", "scalar", "pose", "anomaly", "heavy"}),
+}
+
+
+def web_profile_layers(profile: str) -> frozenset[str]:
+    """Return the cumulative data layers enabled by one Web diagnostic profile."""
+    try:
+        return _WEB_PROFILE_LAYERS[str(profile)]
+    except KeyError as exc:
+        raise ValueError(f"unknown web recording profile: {profile}") from exc
+
+
 def _finite_scalar_rows(
     times: np.ndarray,
     values: np.ndarray,
