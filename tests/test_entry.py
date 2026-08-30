@@ -120,6 +120,9 @@ def test_viewer_auto_language_uses_english_for_native(monkeypatch, tmp_path):
     monkeypatch.setattr(entry, "execute_stage", fake_execute)
     assert entry.main(["viewer", "--run", str(tmp_path), "--mode", "native", "--dry-run"]) == 0
     assert captured["viewer_language"] == "en"
+    assert captured["viewer_with_maps"] is True
+    assert captured["viewer_pointcloud_mode"] == "anomaly"
+    assert captured["viewer_world_pointcloud_mode"] == "anomaly"
 
 
 def test_web_viewer_mode_dispatches_chinese_shell_by_default(monkeypatch, tmp_path):
@@ -137,3 +140,29 @@ def test_web_viewer_mode_dispatches_chinese_shell_by_default(monkeypatch, tmp_pa
     assert captured["viewer_mode"] == "web"
     assert captured["viewer_language"] == "zh-CN"
     assert captured["viewer_save"] is None
+    assert captured["viewer_with_maps"] is False
+    assert captured["viewer_pointcloud_mode"] == "none"
+    assert captured["viewer_world_pointcloud_mode"] == "none"
+
+
+def test_web_viewer_can_explicitly_opt_into_heavy_layers(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_execute(run, stage, **kwargs):
+        captured.update({"run": run, "stage": stage, **kwargs})
+        return 0
+
+    monkeypatch.setattr(entry, "execute_stage", fake_execute)
+    result = entry.main([
+        "viewer",
+        "--run", str(tmp_path),
+        "--mode", "web",
+        "--with-maps",
+        "--pointcloud-mode", "anomaly",
+        "--world-pointcloud-mode", "anomaly",
+        "--dry-run",
+    ])
+    assert result == 0
+    assert captured["viewer_with_maps"] is True
+    assert captured["viewer_pointcloud_mode"] == "anomaly"
+    assert captured["viewer_world_pointcloud_mode"] == "anomaly"
