@@ -166,3 +166,22 @@ def test_web_viewer_can_explicitly_opt_into_heavy_layers(monkeypatch, tmp_path):
     assert captured["viewer_with_maps"] is True
     assert captured["viewer_pointcloud_mode"] == "anomaly"
     assert captured["viewer_world_pointcloud_mode"] == "anomaly"
+
+
+def test_web_viewer_dispatches_explicit_recording_profile(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_execute(run, stage, **kwargs):
+        captured.update({"run": run, "stage": stage, **kwargs})
+        return 0
+
+    monkeypatch.setattr(entry, "execute_stage", fake_execute)
+    result = entry.main([
+        "viewer",
+        "--run", str(tmp_path),
+        "--mode", "web",
+        "--web-profile", "empty",
+        "--dry-run",
+    ])
+    assert result == 0
+    assert captured["viewer_web_profile"] == "empty"
