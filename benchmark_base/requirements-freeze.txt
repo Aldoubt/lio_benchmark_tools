@@ -1,0 +1,10 @@
+# Dedicated immutable-freeze / Native Rerun environment.
+# Do not install this file into the ROS Humble system Python or ~/.local.
+# Rerun 0.36.3 requires NumPy 2, while Ubuntu 22.04's apt SciPy is built
+# against the NumPy 1.x ABI. Keep this stack inside .venv-freeze.
+numpy==2.2.6
+scipy==1.14.1
+matplotlib==3.10.5
+Jinja2==3.1.6
+reportlab==4.4.9
+rerun-sdk==0.36.3
