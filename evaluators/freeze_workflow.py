@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from freeze_experiment import finalize_freeze, prepare_freeze, write_json_atomic
-from freeze_rerun import build_frozen_rerun
+from freeze_rerun_visual_qa import build_frozen_rerun
 from report_data import build_report_data
 from report_evidence import build_report_evidence
 from report_html import render_report_html
