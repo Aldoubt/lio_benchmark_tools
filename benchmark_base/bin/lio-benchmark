@@ -2,10 +2,28 @@
 """Repository-local entry point for the LIO benchmark CLI."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ROOT.parent
+FREEZE_BIN = (REPO_ROOT / ".venv-freeze" / "bin").resolve()
+
+# The repository owns a dedicated freeze/viewer environment. Expose its bin
+# directory to child-process lookup even when this launcher itself was started
+# with the system Python. This lets `lio-benchmark open <frozen>` find the
+# pinned Native Rerun viewer without requiring users to activate the venv.
+path_value = os.environ.get("PATH", "")
+path_parts = [item for item in path_value.split(os.pathsep) if item]
+freeze_bin_text = str(FREEZE_BIN)
+if freeze_bin_text not in path_parts:
+    os.environ["PATH"] = (
+        freeze_bin_text
+        if not path_value
+        else freeze_bin_text + os.pathsep + path_value
+    )
+
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
