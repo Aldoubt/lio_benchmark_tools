@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from PIL import Image as PILImage
 
+import report_pdf
 from report_pdf import render_report_pdf, resolve_cjk_font
 
 
@@ -68,6 +69,21 @@ def test_resolve_cjk_font_uses_first_existing_candidate(tmp_path):
     existing = tmp_path / "font.ttf"
     existing.write_bytes(b"font")
     assert resolve_cjk_font((missing, existing)) == existing.resolve()
+
+
+def test_resolve_cjk_font_uses_fontconfig_after_fixed_candidates(tmp_path, monkeypatch):
+    discovered = tmp_path / "NotoSansCJKsc-Regular.ttf"
+    discovered.write_bytes(b"font")
+    monkeypatch.delenv("LIO_BENCHMARK_CJK_FONT", raising=False)
+    monkeypatch.setattr(report_pdf, "DEFAULT_CJK_FONT_CANDIDATES", ())
+    monkeypatch.setattr(
+        report_pdf,
+        "_fontconfig_cjk_candidates",
+        lambda: [discovered],
+        raising=False,
+    )
+
+    assert resolve_cjk_font() == discovered.resolve()
 
 
 def test_render_report_pdf_generates_and_registers_english_pdf(tmp_path):
