@@ -81,6 +81,20 @@ def _bag_origin(run: Path, lidar_topic: str) -> tuple[float | None, str | None]:
         return None, None
 
 
+def _resolve_bag_dir(run: Path, declared: Path) -> Path:
+    if declared.is_absolute():
+        return declared.resolve()
+
+    freeze_manifest = run.parent / "freeze_manifest.json"
+    if run.name == "source" and freeze_manifest.is_file():
+        payload = load_json(freeze_manifest, {}) or {}
+        source_run = payload.get("source_run") or {}
+        original = source_run.get("path") if isinstance(source_run, dict) else None
+        if original:
+            return (Path(str(original)).expanduser().resolve() / declared).resolve()
+    return (run / declared).resolve()
+
+
 def _write_csv(path: Path, frames: list[dict[str, Any]]) -> None:
     fields = [
         "message_id",
@@ -110,12 +124,11 @@ def build_pointcloud_frame_index(
     run = Path(run).resolve()
     manifest = load_json(run / "manifest.json", {}) or {}
     dataset = manifest.get("dataset") or {}
-    declared_bag = Path(str(dataset.get("bag_dir") or "")).expanduser()
-    bag = (
-        (run / declared_bag).resolve()
-        if declared_bag and not declared_bag.is_absolute()
-        else declared_bag.resolve()
-    )
+    declared_bag_text = str(dataset.get("bag_dir") or "")
+    if not declared_bag_text:
+        raise ValueError("manifest dataset.bag_dir is missing")
+    declared_bag = Path(declared_bag_text).expanduser()
+    bag = _resolve_bag_dir(run, declared_bag)
     lidar_topic = str(dataset.get("lidar_topic") or "")
     if not lidar_topic:
         raise ValueError("manifest dataset.lidar_topic is missing")
