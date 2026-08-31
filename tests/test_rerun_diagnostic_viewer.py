@@ -7,11 +7,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from freeze_rerun_visual_qa import classify_extent_xyz, default_spatial_visibility
 from rerun_diagnostic_viewer import (
     algorithm_entity_paths,
     apply_alignment,
-    classify_extent_xyz,
-    default_spatial_visibility,
     initial_yaw_translation_transform,
     load_binary_little_endian_ply,
     nearest_frame,
