@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Index raw LiDAR bag frames without copying point-cloud payloads.
 
-The index lets a future interactive viewer seek from a bag-relative timestamp
-to the exact rosbag2 message id and its recorded/header timestamps. Message
-payloads remain in the original sqlite bag and can be loaded on demand.
+The index lets an offline viewer seek from a bag-relative timestamp to the exact
+rosbag2 message id and its recorded/header timestamps. Message payloads remain
+in the original sqlite bag and are loaded on demand.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import csv
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 
 SCHEMA_VERSION = 1
@@ -95,15 +95,27 @@ def _write_csv(path: Path, frames: list[dict[str, Any]]) -> None:
         writer.writerows(frames)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--run", type=Path, required=True)
-    args = parser.parse_args()
+def build_pointcloud_frame_index(
+    run: Path,
+    *,
+    deserialize_message_fn: Callable[[bytes, Any], Any] | None = None,
+    get_message_fn: Callable[[str], Any] | None = None,
+) -> dict[str, Any]:
+    """Materialize an index under ``run/metrics`` while keeping bag bytes read-only.
 
-    run = args.run.resolve()
+    ``run`` may be an immutable-source compatibility copy such as
+    ``<frozen>/source``. Its manifest is allowed to point at the original bag;
+    only the compact JSON/CSV index is written below ``run``.
+    """
+    run = Path(run).resolve()
     manifest = load_json(run / "manifest.json", {}) or {}
     dataset = manifest.get("dataset") or {}
-    bag = Path(str(dataset.get("bag_dir") or "")).expanduser().resolve()
+    declared_bag = Path(str(dataset.get("bag_dir") or "")).expanduser()
+    bag = (
+        (run / declared_bag).resolve()
+        if declared_bag and not declared_bag.is_absolute()
+        else declared_bag.resolve()
+    )
     lidar_topic = str(dataset.get("lidar_topic") or "")
     if not lidar_topic:
         raise ValueError("manifest dataset.lidar_topic is missing")
@@ -113,17 +125,21 @@ def main() -> int:
     if len(db_files) != 1:
         raise ValueError(f"expected one sqlite3 bag file, found {len(db_files)} in {bag}")
 
-    # ROS imports stay inside main so pure indexing helpers remain testable on
-    # non-ROS hosts. The actual index command needs the source workspace that
-    # provides the bag's exact message type (e.g. livox_ros_driver2).
-    from rclpy.serialization import deserialize_message
-    from rosidl_runtime_py.utilities import get_message
+    if deserialize_message_fn is None or get_message_fn is None:
+        # ROS imports stay inside the reusable builder so pure helpers remain
+        # testable on non-ROS hosts. Real indexing requires the exact message
+        # package used by the bag (e.g. livox_ros_driver2).
+        from rclpy.serialization import deserialize_message
+        from rosidl_runtime_py.utilities import get_message
+
+        deserialize_message_fn = deserialize_message
+        get_message_fn = get_message
 
     connection = sqlite3.connect(f"file:{db_files[0]}?mode=ro", uri=True)
     try:
         topic_type, rows = select_topic_message_rows(connection, lidar_topic)
         try:
-            message_class = get_message(topic_type)
+            message_class = get_message_fn(topic_type)
         except (ImportError, ModuleNotFoundError) as exc:
             raise RuntimeError(
                 f"message type support unavailable for {topic_type}; source the dataset ROS overlays before indexing"
@@ -138,7 +154,7 @@ def main() -> int:
         header_backtracks = 0
 
         for message_id, recorded_timestamp_ns, payload in rows:
-            message = deserialize_message(payload, message_class)
+            message = deserialize_message_fn(payload, message_class)
             header_time = _header_timestamp_s(message)
             if origin is None:
                 origin = header_time
@@ -185,18 +201,39 @@ def main() -> int:
         "frames": frames,
         "payload_policy": "index-only; point-cloud bytes remain in the source rosbag2 sqlite database",
     }
+    output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    return {
+        "csv": str(output_csv),
+        "json": str(output_json),
+        "frames": len(frames),
+        "origin_timestamp_s": float(origin),
+        "origin_source": origin_source,
+        "artifacts": [
+            "metrics/pointcloud_frame_index.json",
+            "metrics/pointcloud_frame_index.csv",
+        ],
+        "payload": payload,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run", type=Path, required=True)
+    args = parser.parse_args()
+
+    result = build_pointcloud_frame_index(args.run)
     print(
         json.dumps(
             {
-                "csv": str(output_csv),
-                "json": str(output_json),
-                "frames": len(frames),
-                "origin_timestamp_s": float(origin),
-                "origin_source": origin_source,
+                "csv": result["csv"],
+                "json": result["json"],
+                "frames": result["frames"],
+                "origin_timestamp_s": result["origin_timestamp_s"],
+                "origin_source": result["origin_source"],
             },
             ensure_ascii=False,
         )
