@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 
+import freeze_rerun as legacy
+import freeze_rerun_visual_qa as visual_qa
+import rerun_diagnostic_viewer as viewer
 from freeze_rerun import ensure_pointcloud_source, ensure_static_maps
 from viewer_i18n import native_viewer_language
 
@@ -158,3 +161,72 @@ def test_historical_pointcloud_index_is_derived_inside_frozen_source(tmp_path, m
             "source-bag-read-only-index-v1",
         ),
     ]
+
+
+def test_visual_qa_adapter_injects_audit_summary_and_restores_legacy_hooks(tmp_path, monkeypatch):
+    frozen = tmp_path / "frozen"
+    source = frozen / "source"
+    source.mkdir(parents=True)
+    _write_json(
+        frozen / "freeze_manifest.json",
+        {
+            "schema_version": 1,
+            "freeze_state": "INCOMPLETE",
+            "algorithms": ["fast_livo2", "point_lio"],
+            "baseline": "fast_livo2",
+        },
+    )
+
+    def fake_ensure_static_maps(*args, **kwargs):
+        return {"derivation": {"method": "fake-map-builder"}}
+
+    def fake_viewer_api():
+        return (
+            lambda **kwargs: {"legacy_summary": True},
+            lambda value: {"dense": 10, "medium": 20, "sparse": 80},
+            "10,20,80",
+        )
+
+    captured = {}
+
+    def fake_legacy_builder(_frozen):
+        maps = legacy.ensure_static_maps(
+            frozen,
+            source,
+            algorithms=["fast_livo2", "point_lio"],
+            baseline="fast_livo2",
+        )
+        log_recording, _, _ = legacy._viewer_api()
+        summary = log_recording()
+        captured["maps"] = maps
+        captured["summary"] = summary
+        return {"recording": {"builder_summary": summary}}
+
+    qa = {
+        "fast_livo2": {"status": "ok"},
+        "point_lio": {"status": "suspect_extent"},
+    }
+    monkeypatch.setattr(legacy, "ensure_static_maps", fake_ensure_static_maps)
+    monkeypatch.setattr(legacy, "_viewer_api", fake_viewer_api)
+    monkeypatch.setattr(legacy, "build_frozen_rerun", fake_legacy_builder)
+    monkeypatch.setattr(
+        visual_qa,
+        "collect_map_extent_qa",
+        lambda *args, **kwargs: qa,
+    )
+
+    original_send_blueprint = viewer.send_blueprint
+    result = visual_qa.build_frozen_rerun(frozen)
+
+    assert captured["maps"]["derivation"]["extent_qa"] == qa
+    assert captured["maps"]["derivation"]["default_spatial_visibility"]["point_lio"] == {
+        "algorithm_visible": False,
+        "map_visible": False,
+        "reason": "suspect_extent",
+    }
+    assert captured["summary"]["map_extent_qa"] == qa
+    assert captured["summary"]["default_spatial_visibility"]["fast_livo2"]["map_visible"] is True
+    assert result["recording"]["builder_summary"]["spatial_qa_policy"]["suspect_ratio"] == 10.0
+    assert legacy.ensure_static_maps is fake_ensure_static_maps
+    assert legacy._viewer_api is fake_viewer_api
+    assert viewer.send_blueprint is original_send_blueprint
