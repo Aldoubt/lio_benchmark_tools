@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ POSTPROCESS_COMMANDS = {
     "viewer",
     "open",
     "export",
+    "freeze",
 }
 
 
@@ -106,6 +108,11 @@ def _postprocess_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
 
+    parser = sub.add_parser("freeze")
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--baseline", default="fast_livo2")
+    parser.add_argument("--lang", choices=("zh-CN", "en"), default="zh-CN")
+
     parser = sub.add_parser("open")
     parser.add_argument("frozen_run", type=Path)
 
@@ -120,6 +127,22 @@ def _postprocess_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return root
+
+
+def execute_freeze(run: Path, *, baseline: str, language: str) -> int:
+    repo_root = Path(__file__).resolve().parents[2]
+    command = [
+        sys.executable,
+        str(repo_root / "evaluators" / "freeze_workflow.py"),
+        "--run",
+        str(run),
+        "--baseline",
+        baseline,
+        "--lang",
+        language,
+    ]
+    result = subprocess.run(command, check=False)
+    return int(result.returncode or 0)
 
 
 def _legacy_main(argv: list[str]) -> int:
@@ -140,6 +163,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _postprocess_parser().parse_args(argsv)
     try:
+        if args.command == "freeze":
+            return execute_freeze(
+                args.run, baseline=args.baseline, language=args.lang
+            )
         if args.command == "open":
             return open_frozen_recording(args.frozen_run)
         if args.command == "export":

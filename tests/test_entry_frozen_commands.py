@@ -48,3 +48,20 @@ def test_entry_reports_frozen_command_errors_without_traceback(monkeypatch, tmp_
 
     assert result == 2
     assert "not COMPLETE" in capsys.readouterr().err
+
+
+def test_entry_parses_and_dispatches_freeze(monkeypatch, tmp_path):
+    run = tmp_path / "run"
+    calls = []
+    monkeypatch.setattr(
+        entry,
+        "execute_freeze",
+        lambda path, *, baseline, language: calls.append((path, baseline, language)) or 0,
+        raising=False,
+    )
+    monkeypatch.setattr(entry, "_legacy_main", lambda argv: (_ for _ in ()).throw(AssertionError(f"legacy path used: {argv}")))
+
+    result = entry.main(["freeze", "--run", str(run), "--baseline", "point_lio", "--lang", "en"])
+
+    assert result == 0
+    assert calls == [(run, "point_lio", "en")]
