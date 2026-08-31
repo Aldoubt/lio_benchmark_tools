@@ -396,7 +396,7 @@ def build_frozen_rerun(frozen: Path) -> dict[str, Any]:
         if frozen_source.is_dir() and (frozen_source / "manifest.json").is_file()
         else run
     )
-    diagnostic_run = viewer_run
+    diagnostic_run = frozen_source if frozen_source.is_dir() else run
 
     algorithms = manifest.get("algorithms")
     if not isinstance(algorithms, list) or not algorithms:
@@ -463,7 +463,7 @@ def build_frozen_rerun(frozen: Path) -> dict[str, Any]:
         "sdk_version": sdk_version,
         "path": "viewer/diagnostic.rrd",
         "diagnostic_source": (
-            "frozen/source" if viewer_run == frozen_source else "source_run"
+            "frozen/source" if diagnostic_run == frozen_source else "source_run"
         ),
         "report_language": report_language,
         "native_viewer_language": display_language,
