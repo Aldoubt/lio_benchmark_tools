@@ -19,6 +19,7 @@ def test_missing_static_maps_are_derived_inside_frozen_source(tmp_path, monkeypa
     frozen = tmp_path / "frozen"
     source = frozen / "source"
     source.mkdir(parents=True)
+    _write_json(source / "manifest.json", {"dataset": {"bag_dir": "/source/bag"}})
     _write_json(
         frozen / "freeze_manifest.json",
         {
@@ -80,6 +81,7 @@ def test_historical_pointcloud_index_is_derived_inside_frozen_source(tmp_path, m
     frozen = tmp_path / "frozen"
     source = frozen / "source"
     source.mkdir(parents=True)
+    _write_json(source / "manifest.json", {"dataset": {"bag_dir": "/source/bag"}})
     _write_json(
         frozen / "freeze_manifest.json",
         {
