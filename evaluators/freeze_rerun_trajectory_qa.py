@@ -13,6 +13,7 @@ from freeze_experiment import write_json_atomic
 DEFAULT_TRAJECTORY_WARNING_RATIO = 3.0
 DEFAULT_TRAJECTORY_SUSPECT_RATIO = 5.0
 DEFAULT_TRAJECTORY_REFERENCE_FLOOR_M = (5.0, 5.0, 5.0)
+_BASE_MAP_VISIBILITY = map_qa_adapter.default_spatial_visibility
 
 
 def classify_trajectory_extent_xyz(
@@ -107,7 +108,10 @@ def default_spatial_visibility(
     trajectory_qa: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Combine map QA with trajectory QA while preserving all recorded evidence."""
-    policy = map_qa_adapter.default_spatial_visibility(
+    # Use the import-time base function instead of the module attribute because
+    # build_frozen_rerun temporarily replaces map_qa_adapter.default_spatial_visibility.
+    # Calling the patched attribute from here would recurse back into this adapter.
+    policy = _BASE_MAP_VISIBILITY(
         algorithms,
         baseline=baseline,
         visible_algorithms=visible_algorithms,
