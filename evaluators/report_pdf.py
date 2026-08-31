@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Iterable
 from xml.sax.saxutils import escape
@@ -11,6 +13,8 @@ from freeze_experiment import register_generated_artifact
 
 
 DEFAULT_CJK_FONT_CANDIDATES = (
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf"),
     Path("/usr/share/fonts/truetype/arphic-gbsn00lp/gbsn00lp.ttf"),
     Path("/usr/share/fonts/truetype/arphic-gkai00mp/gkai00mp.ttf"),
     Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"),
@@ -24,16 +28,66 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
-def resolve_cjk_font(candidates: Iterable[Path] | None = None) -> Path | None:
-    if candidates is None:
-        values: list[Path] = []
-        configured = os.environ.get("LIO_BENCHMARK_CJK_FONT")
-        if configured:
-            values.append(Path(configured).expanduser())
-        values.extend(DEFAULT_CJK_FONT_CANDIDATES)
-    else:
-        values = [Path(item).expanduser() for item in candidates]
+def _fontconfig_cjk_candidates() -> list[Path]:
+    executable = shutil.which("fc-match")
+    if executable is None:
+        return []
+    try:
+        result = subprocess.run(
+            [
+                executable,
+                "-s",
+                "--format=%{file}\\n",
+                "sans-serif:lang=zh-cn",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    output: list[Path] = []
+    seen: set[str] = set()
+    for line in result.stdout.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(path)
+    return output
+
+
+def _cjk_font_candidates(candidates: Iterable[Path] | None) -> list[Path]:
+    if candidates is not None:
+        return [Path(item).expanduser() for item in candidates]
+
+    values: list[Path] = []
+    configured = os.environ.get("LIO_BENCHMARK_CJK_FONT")
+    if configured:
+        values.append(Path(configured).expanduser())
+    values.extend(DEFAULT_CJK_FONT_CANDIDATES)
+    values.extend(_fontconfig_cjk_candidates())
+
+    result: list[Path] = []
+    seen: set[str] = set()
     for path in values:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def resolve_cjk_font(candidates: Iterable[Path] | None = None) -> Path | None:
+    for path in _cjk_font_candidates(candidates):
         if path.is_file():
             return path.resolve()
     return None
@@ -78,23 +132,35 @@ def _font_setup(
     if language != "zh-CN":
         raise ValueError(f"unsupported report language: {language}")
 
-    font_path = resolve_cjk_font(cjk_font_candidates)
-    if font_path is None:
+    existing = [
+        path.resolve()
+        for path in _cjk_font_candidates(cjk_font_candidates)
+        if path.is_file()
+    ]
+    if not existing:
         raise RuntimeError(
             "A locally installed CJK font is required for zh-CN PDF reports. "
-            "Install a CJK TTF or set LIO_BENCHMARK_CJK_FONT."
+            "Install a CJK TTF/TTC/OTF or set LIO_BENCHMARK_CJK_FONT."
         )
-    try:
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
 
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    load_errors: list[str] = []
+    for font_path in existing:
         digest = hashlib.sha256(str(font_path).encode("utf-8")).hexdigest()[:10]
         font_name = f"LIO-CJK-{digest}"
-        if font_name not in pdfmetrics.getRegisteredFontNames():
-            pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
-    except Exception as exc:
-        raise RuntimeError(f"CJK font could not be loaded: {font_path}") from exc
-    return font_name, str(font_path)
+        try:
+            if font_name not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
+            return font_name, str(font_path)
+        except Exception as exc:
+            load_errors.append(f"{font_path}: {type(exc).__name__}")
+
+    raise RuntimeError(
+        "CJK fonts were found but none could be loaded by ReportLab: "
+        + "; ".join(load_errors)
+    )
 
 
 def _paragraph(text: Any, style: Any) -> Any:
