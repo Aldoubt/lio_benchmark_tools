@@ -197,9 +197,8 @@ def build_frozen_rerun(frozen: Path) -> dict[str, Any]:
     run = Path(str(run_path)).expanduser().resolve()
     if not run.is_dir():
         raise FileNotFoundError(f"source run is unavailable: {run}")
-    diagnostic_run = (frozen / "source").resolve()
-    if not diagnostic_run.is_dir():
-        raise FileNotFoundError(f"frozen diagnostic source is unavailable: {diagnostic_run}")
+    frozen_source = (frozen / "source").resolve()
+    diagnostic_run = frozen_source if frozen_source.is_dir() else run
 
     algorithms = manifest.get("algorithms")
     if not isinstance(algorithms, list) or not algorithms:
@@ -258,7 +257,9 @@ def build_frozen_rerun(frozen: Path) -> dict[str, Any]:
     manifest["rerun_recording"] = {
         "sdk_version": sdk_version,
         "path": "viewer/diagnostic.rrd",
-        "diagnostic_source": "frozen/source",
+        "diagnostic_source": (
+            "frozen/source" if diagnostic_run == frozen_source else "source_run"
+        ),
         "bounded_policy": "anomaly-near",
         "map_evidence": {
             "optional": True,
