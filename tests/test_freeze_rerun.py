@@ -108,7 +108,7 @@ def test_build_frozen_rerun_omits_optional_pointcloud_and_registers_rrd(tmp_path
     assert captured["run"] == run.resolve()
     assert captured["algorithms"] == ["fast_livo2", "dlio"]
     assert captured["baseline"] == "fast_livo2"
-    assert captured["language"] == "zh-CN"
+    assert captured["language"] == "en"
     assert captured["pointcloud_mode"] == "none"
     assert captured["world_pointcloud_mode"] == "none"
     assert captured["spawn"] is False
@@ -119,6 +119,8 @@ def test_build_frozen_rerun_omits_optional_pointcloud_and_registers_rrd(tmp_path
     assert manifest["freeze_state"] == "INCOMPLETE"
     assert manifest["generated_artifacts"][0]["path"] == "viewer/diagnostic.rrd"
     assert manifest["rerun_recording"]["sdk_version"] == "0.36.3"
+    assert manifest["rerun_recording"]["report_language"] == "zh-CN"
+    assert manifest["rerun_recording"]["native_viewer_language"] == "en"
     assert manifest["rerun_recording"]["pointcloud_evidence"]["enabled"] is False
     assert manifest["rerun_recording"]["pointcloud_evidence"]["omission_reason"] == "pointcloud_frame_index_missing"
 
