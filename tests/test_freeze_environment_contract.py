@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+from freeze_experiment import discover_freeze_sources
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,3 +83,42 @@ def test_freeze_python_path_normalization_does_not_resolve_venv_symlink():
     )
     assert "os.path.abspath" in normalization_line
     assert ".resolve()" not in normalization_line
+
+
+def test_modern_unified_timeline_supersedes_missing_raw_discontinuity(tmp_path):
+    run = tmp_path / "run"
+    (run / "metadata").mkdir(parents=True)
+    (run / "metrics" / "diagnostic_timeline").mkdir(parents=True)
+    (run / "standardized" / "trajectories").mkdir(parents=True)
+    (run / "manifest.json").write_text(
+        json.dumps({"dataset": {}, "algorithms": {"fast_livo2": {}}}),
+        encoding="utf-8",
+    )
+    (run / "metadata" / "run_status.json").write_text(
+        json.dumps({"run_id": "legacy-run", "state": "completed"}),
+        encoding="utf-8",
+    )
+    (run / "metrics" / "full_comparison.json").write_text("{}", encoding="utf-8")
+    (run / "metrics" / "diagnostic_timeline.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "algorithm_order": ["fast_livo2"],
+                "anomaly_windows": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run / "standardized" / "trajectories" / "fast_livo2.csv").write_text(
+        "timestamp,x,y,z\n0,0,0,0\n",
+        encoding="utf-8",
+    )
+    (run / "metrics" / "diagnostic_timeline" / "fast_livo2.csv").write_text(
+        "bag_time_s,x_m,y_m,z_m\n0,0,0,0\n",
+        encoding="utf-8",
+    )
+
+    sources = discover_freeze_sources(run)
+    assert sources["optional_evidence"]["trajectory_discontinuity"] is False
+    required = {path.relative_to(run).as_posix() for path in sources["required_files"]}
+    assert "metrics/trajectory_discontinuity.json" not in required
