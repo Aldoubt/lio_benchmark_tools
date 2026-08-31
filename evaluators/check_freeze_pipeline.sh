@@ -17,7 +17,8 @@ usage() {
 Usage:
   evaluators/check_freeze_pipeline.sh [options]
 
-Static/unit gate (no real run required):
+Static/unit gate (isolated freeze venv required):
+  evaluators/setup_freeze_venv.sh
   evaluators/check_freeze_pipeline.sh
 
 Real completed-run acceptance:
@@ -30,12 +31,13 @@ Options:
   --lang LANG           report language: zh-CN or en (default: zh-CN)
   --freeze-python FILE  isolated freeze Python (default: .venv-freeze/bin/python)
   --export-output DIR   explicit export destination for real-run acceptance
-  --open                 launch Native Rerun after freeze validation
-  -h, --help             show this help
+  --open                launch Native Rerun after freeze validation
+  -h, --help            show this help
 
 Environment policy:
-  - static/unit tests use the ROS/system Python with PYTHONNOUSERSITE=1
-  - real freeze/viewer work uses the isolated freeze Python
+  - ROS/legacy scientific-stack regression uses system Python with PYTHONNOUSERSITE=1
+  - freeze/report/Native Rerun regression and real freeze work use isolated freeze Python
+  - freeze dependency installation and runtime both ignore ~/.local
   - do not install rerun-sdk / NumPy 2 into the ROS system or ~/.local stack
 EOF
 }
@@ -76,7 +78,44 @@ _ = cKDTree([[0.0, 0.0, 0.0]])
 print(f"system scientific stack: numpy={numpy.__version__} scipy={scipy.__version__}")
 PY
 
-system_py -m py_compile \
+freeze_python=$(system_py -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$freeze_python")
+if [[ ! -x "$freeze_python" ]]; then
+  cat >&2 <<EOF
+isolated freeze Python is unavailable: $freeze_python
+Create or repair it first with:
+  ./evaluators/setup_freeze_venv.sh
+Or pass an equivalent environment with:
+  --freeze-python /path/to/venv/bin/python
+EOF
+  exit 2
+fi
+
+freeze_bin_dir=$(dirname "$freeze_python")
+freeze_py() {
+  env PYTHONNOUSERSITE=1 PATH="$freeze_bin_dir:$PATH" "$freeze_python" "$@"
+}
+
+freeze_py - <<'PY'
+import jinja2
+import matplotlib
+import numpy
+import pyarrow
+import rerun
+import scipy
+from scipy.spatial import cKDTree
+
+_ = cKDTree([[0.0, 0.0, 0.0]])
+if int(numpy.__version__.split('.', 1)[0]) < 2:
+    raise SystemExit(f"freeze Python must use NumPy 2 for rerun-sdk 0.36.3: {numpy.__version__}")
+print(
+    "freeze scientific stack: "
+    f"numpy={numpy.__version__} scipy={scipy.__version__} "
+    f"matplotlib={matplotlib.__version__} jinja2={jinja2.__version__} "
+    f"pyarrow={pyarrow.__version__} rerun={rerun.__version__}"
+)
+PY
+
+freeze_py -m py_compile \
   evaluators/freeze_experiment.py \
   evaluators/freeze_rerun.py \
   evaluators/freeze_workflow.py \
@@ -87,8 +126,18 @@ system_py -m py_compile \
   benchmark_base/lio_benchmark/entry.py \
   benchmark_base/lio_benchmark/frozen_bundle.py
 
+# The contract itself and legacy benchmark boundary tests must remain valid with
+# the ROS/system NumPy/SciPy stack and with ~/.local hidden.
 system_py -m pytest -q \
   tests/test_freeze_environment_contract.py \
+  tests/test_viewer_projection.py \
+  tests/test_entry.py \
+  tests/test_postprocess.py \
+  tests/test_current_run_report.py \
+  tests/test_diagnostic_timeline.py
+
+# Freeze/report/Rerun tests intentionally run in the dedicated NumPy-2 venv.
+freeze_py -m pytest -q \
   tests/test_freeze_experiment.py \
   tests/test_freeze_failure_audit.py \
   tests/test_freeze_provenance.py \
@@ -101,12 +150,7 @@ system_py -m pytest -q \
   tests/test_frozen_bundle.py \
   tests/test_entry_frozen_commands.py \
   tests/test_freeze_workflow.py \
-  tests/test_viewer_projection.py \
-  tests/test_rerun_diagnostic_viewer.py \
-  tests/test_entry.py \
-  tests/test_postprocess.py \
-  tests/test_current_run_report.py \
-  tests/test_diagnostic_timeline.py
+  tests/test_rerun_diagnostic_viewer.py
 
 git diff --check
 
@@ -125,36 +169,6 @@ if [[ ! -d "$run_dir" || ! -f "$run_dir/manifest.json" ]]; then
   echo "invalid benchmark run: $run_dir" >&2
   exit 2
 fi
-
-freeze_python=$(system_py -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$freeze_python")
-if [[ ! -x "$freeze_python" ]]; then
-  cat >&2 <<EOF
-isolated freeze Python is unavailable: $freeze_python
-Create it first with:
-  ./evaluators/setup_freeze_venv.sh
-Or pass an equivalent environment with:
-  --freeze-python /path/to/venv/bin/python
-EOF
-  exit 2
-fi
-
-freeze_bin_dir=$(dirname "$freeze_python")
-env PYTHONNOUSERSITE=1 "$freeze_python" - <<'PY'
-import matplotlib
-import numpy
-import rerun
-import scipy
-from scipy.spatial import cKDTree
-
-_ = cKDTree([[0.0, 0.0, 0.0]])
-if int(numpy.__version__.split('.', 1)[0]) < 2:
-    raise SystemExit(f"freeze Python must use NumPy 2 for rerun-sdk 0.36.3: {numpy.__version__}")
-print(
-    "freeze scientific stack: "
-    f"numpy={numpy.__version__} scipy={scipy.__version__} "
-    f"matplotlib={matplotlib.__version__} rerun={rerun.__version__}"
-)
-PY
 
 before_hashes=$(mktemp)
 after_hashes=$(mktemp)
@@ -236,7 +250,7 @@ if ! cmp -s "$before_hashes" "$after_hashes"; then
   exit 1
 fi
 
-system_py - "$frozen" <<'PY'
+freeze_py - "$frozen" <<'PY'
 import json, sys
 from pathlib import Path
 from lio_benchmark.frozen_bundle import verify_registered_artifact
