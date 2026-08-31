@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .postprocess import execute_stage
+from .frozen_bundle import export_frozen_bundle, open_frozen_recording
 
 POSTPROCESS_COMMANDS = {
     "standardize",
@@ -16,6 +17,8 @@ POSTPROCESS_COMMANDS = {
     "phase-analysis",
     "diagnostics",
     "viewer",
+    "open",
+    "export",
 }
 
 
@@ -103,6 +106,13 @@ def _postprocess_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
 
+    parser = sub.add_parser("open")
+    parser.add_argument("frozen_run", type=Path)
+
+    parser = sub.add_parser("export")
+    parser.add_argument("frozen_run", type=Path)
+    parser.add_argument("--output", type=Path)
+
     parser = sub.add_parser("phase-analysis")
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--baseline", default="fast_livo2")
@@ -129,6 +139,17 @@ def main(argv: list[str] | None = None) -> int:
         return _legacy_main(argsv)
 
     args = _postprocess_parser().parse_args(argsv)
+    try:
+        if args.command == "open":
+            return open_frozen_recording(args.frozen_run)
+        if args.command == "export":
+            output = export_frozen_bundle(args.frozen_run, output=args.output)
+            print(output)
+            return 0
+    except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 2
+
     kwargs = {"dry_run": args.dry_run}
     if args.command in {"visualize", "compare"}:
         kwargs.update({
