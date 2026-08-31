@@ -129,6 +129,7 @@ freeze_py -m py_compile \
   evaluators/freeze_experiment.py \
   evaluators/freeze_map_compat.py \
   evaluators/freeze_rerun.py \
+  evaluators/freeze_rerun_visual_qa.py \
   evaluators/freeze_workflow.py \
   evaluators/pointcloud_frame_index.py \
   evaluators/rerun_diagnostic_viewer.py \
