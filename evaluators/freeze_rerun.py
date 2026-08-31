@@ -158,7 +158,10 @@ def finalize_saved_rerun_recording() -> str:
             "Rerun SDK is not installed. Install the tested viewer dependency with: "
             "python3 -m pip install 'rerun-sdk==0.36.3'"
         ) from exc
-    rr.flush()
+
+    # rerun-sdk 0.36.3 does not expose a module-level rr.flush(). The file sink
+    # created by rr.save() is finalized by rr.disconnect(), which closes open
+    # files before we hash/register the .rrd artifact.
     rr.disconnect()
     return str(getattr(rr, "__version__", "unknown"))
 
