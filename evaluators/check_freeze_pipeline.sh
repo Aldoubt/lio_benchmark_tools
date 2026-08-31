@@ -70,15 +70,22 @@ system_py() {
 }
 
 system_py - <<'PY'
+import sys
 import numpy
 import scipy
 from scipy.spatial import cKDTree
 
 _ = cKDTree([[0.0, 0.0, 0.0]])
-print(f"system scientific stack: numpy={numpy.__version__} scipy={scipy.__version__}")
+print(
+    f"system scientific stack: python={sys.executable} "
+    f"numpy={numpy.__version__} scipy={scipy.__version__}"
+)
 PY
 
-freeze_python=$(system_py -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$freeze_python")
+# Keep the venv launcher path itself. A venv's bin/python is normally a symlink
+# to the base interpreter; Path.resolve()/realpath would follow it and silently
+# turn the freeze interpreter back into /usr/bin/python3.
+freeze_python=$(system_py -c 'import os, sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "$freeze_python")
 if [[ ! -x "$freeze_python" ]]; then
   cat >&2 <<EOF
 isolated freeze Python is unavailable: $freeze_python
@@ -96,6 +103,7 @@ freeze_py() {
 }
 
 freeze_py - <<'PY'
+import sys
 import jinja2
 import matplotlib
 import numpy
@@ -109,6 +117,7 @@ if int(numpy.__version__.split('.', 1)[0]) < 2:
     raise SystemExit(f"freeze Python must use NumPy 2 for rerun-sdk 0.36.3: {numpy.__version__}")
 print(
     "freeze scientific stack: "
+    f"python={sys.executable} "
     f"numpy={numpy.__version__} scipy={scipy.__version__} "
     f"matplotlib={matplotlib.__version__} jinja2={jinja2.__version__} "
     f"pyarrow={pyarrow.__version__} rerun={rerun.__version__}"
