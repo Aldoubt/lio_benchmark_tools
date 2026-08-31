@@ -130,6 +130,7 @@ freeze_py -m py_compile \
   evaluators/freeze_map_compat.py \
   evaluators/freeze_rerun.py \
   evaluators/freeze_rerun_visual_qa.py \
+  evaluators/freeze_rerun_trajectory_qa.py \
   evaluators/freeze_workflow.py \
   evaluators/pointcloud_frame_index.py \
   evaluators/rerun_diagnostic_viewer.py \
@@ -159,6 +160,7 @@ freeze_py -m pytest -q \
   tests/test_freeze_provenance.py \
   tests/test_freeze_rerun.py \
   tests/test_native_visual_acceptance.py \
+  tests/test_native_trajectory_qa.py \
   tests/test_pointcloud_frame_index.py \
   tests/test_viewer_i18n.py \
   tests/test_report_data.py \
