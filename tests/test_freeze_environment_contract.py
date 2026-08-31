@@ -51,6 +51,14 @@ def test_freeze_venv_dependency_resolution_ignores_user_site():
     assert "import jinja2" in script
 
 
+def test_freeze_setup_does_not_global_pip_check_inherited_ros_packages():
+    script = (ROOT / "evaluators/setup_freeze_venv.sh").read_text(encoding="utf-8")
+    assert "-m pip check" not in script
+    assert "from scipy.spatial import cKDTree" in script
+    assert "import rerun" in script
+    assert "import pyarrow" in script
+
+
 def test_report_and_rerun_tests_run_in_freeze_python_not_system_python():
     script = (ROOT / "evaluators/check_freeze_pipeline.sh").read_text(encoding="utf-8")
     marker = "freeze_py -m pytest -q"
