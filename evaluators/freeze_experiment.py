@@ -89,13 +89,49 @@ def _schema_version_at_least(payload: dict[str, Any], minimum: int) -> bool:
         return False
 
 
+def _fallback_algorithm_order(
+    run: Path,
+    manifest: dict[str, Any],
+    comparison: dict[str, Any],
+) -> tuple[list[str], str, list[str]]:
+    comparison_order = [
+        str(item.get("algorithm"))
+        for item in (comparison.get("algorithms") or [])
+        if isinstance(item, dict) and item.get("algorithm")
+    ]
+    manifest_algorithms = manifest.get("algorithms")
+    manifest_order = (
+        [str(item) for item in manifest_algorithms]
+        if isinstance(manifest_algorithms, dict)
+        else []
+    )
+    candidates = comparison_order or manifest_order
+    source = "full_comparison" if comparison_order else "manifest"
+    available = [
+        algorithm
+        for algorithm in candidates
+        if (run / "standardized" / "trajectories" / f"{algorithm}.csv").is_file()
+    ]
+    omitted = [algorithm for algorithm in candidates if algorithm not in available]
+    if not available:
+        discovered = sorted(
+            path.stem
+            for path in (run / "standardized" / "trajectories").glob("*.csv")
+        )
+        if discovered:
+            return discovered, "standardized_trajectories", omitted
+        raise ValueError(
+            "historical run has no algorithms with standardized trajectories for diagnostic rebuild"
+        )
+    return available, source, omitted
+
+
 def discover_freeze_sources(run: Path) -> dict[str, Any]:
     run = Path(run).resolve()
     base_core_paths = [
         run / "manifest.json",
         run / "metadata/run_status.json",
         run / "metrics/full_comparison.json",
-        run / "metrics/diagnostic_timeline.json",
     ]
     for path in base_core_paths:
         if not path.is_file():
@@ -105,36 +141,48 @@ def discover_freeze_sources(run: Path) -> dict[str, Any]:
 
     manifest = _load_json(run / "manifest.json")
     run_status = _load_json(run / "metadata/run_status.json")
-    diagnostic_timeline = _load_json(run / "metrics/diagnostic_timeline.json")
+    comparison = _load_json(run / "metrics/full_comparison.json")
+    timeline_path = run / "metrics/diagnostic_timeline.json"
+    timeline_present = timeline_path.is_file()
+    diagnostic_timeline = _load_json(timeline_path) if timeline_present else {}
     raw_discontinuity = run / "metrics/trajectory_discontinuity.json"
 
-    # diagnostic_timeline schema v1 is the normalized, fixed-rate diagnostic
-    # source used by the frozen report and Native Rerun viewer. Historical runs
-    # may therefore lack the older raw per-output-step discontinuity summary.
-    # Keep requiring the raw file for pre-unified timelines, but do not mutate a
-    # historical source run merely to manufacture redundant evidence.
-    unified_timeline = _schema_version_at_least(diagnostic_timeline, 1)
+    unified_timeline = timeline_present and _schema_version_at_least(
+        diagnostic_timeline, 1
+    )
+    rebuild_required = not timeline_present
     core_paths = list(base_core_paths)
-    if not unified_timeline:
-        core_paths.append(raw_discontinuity)
-        if not raw_discontinuity.is_file():
-            raise FileNotFoundError(
-                "required freeze source artifact is missing: metrics/trajectory_discontinuity.json"
-            )
+    omitted_algorithms: list[str] = []
 
-    raw_algorithms = diagnostic_timeline.get("algorithm_order")
-    if not isinstance(raw_algorithms, list) or not raw_algorithms:
-        raise ValueError("metrics/diagnostic_timeline.json must contain a non-empty algorithm_order")
-    algorithms = [str(item) for item in raw_algorithms]
+    if timeline_present:
+        core_paths.append(timeline_path)
+        raw_algorithms = diagnostic_timeline.get("algorithm_order")
+        if not isinstance(raw_algorithms, list) or not raw_algorithms:
+            raise ValueError(
+                "metrics/diagnostic_timeline.json must contain a non-empty algorithm_order"
+            )
+        algorithms = [str(item) for item in raw_algorithms]
+        algorithm_source = "diagnostic_timeline"
+        if not unified_timeline:
+            core_paths.append(raw_discontinuity)
+            if not raw_discontinuity.is_file():
+                raise FileNotFoundError(
+                    "required freeze source artifact is missing: metrics/trajectory_discontinuity.json"
+                )
+    else:
+        algorithms, algorithm_source, omitted_algorithms = _fallback_algorithm_order(
+            run, manifest, comparison
+        )
 
     required_files = list(core_paths)
     for algorithm in algorithms:
-        required_files.extend(
-            [
-                run / "standardized/trajectories" / f"{algorithm}.csv",
-                run / "metrics/diagnostic_timeline" / f"{algorithm}.csv",
-            ]
+        required_files.append(
+            run / "standardized" / "trajectories" / f"{algorithm}.csv"
         )
+        if timeline_present:
+            required_files.append(
+                run / "metrics" / "diagnostic_timeline" / f"{algorithm}.csv"
+            )
     for path in required_files:
         if not path.is_file():
             raise FileNotFoundError(
@@ -143,34 +191,44 @@ def discover_freeze_sources(run: Path) -> dict[str, Any]:
 
     pointcloud_index = run / "metrics/pointcloud_frame_index.json"
     phase_analysis = run / "metrics/phase_analysis.json"
+    bag_analysis = run / "metrics/bag_analysis.json"
     map_metrics = run / "figures/fast_livo2_baseline_maps/map_comparison_metrics.json"
     optional_candidates = [
+        raw_discontinuity,
         pointcloud_index,
         phase_analysis,
+        bag_analysis,
         map_metrics,
     ]
-    if unified_timeline:
-        optional_candidates.insert(0, raw_discontinuity)
-
     resource_paths = [
         run / "metrics/diagnostic_timeline/resources" / f"{algorithm}.csv"
         for algorithm in algorithms
     ]
-    optional_files = [path for path in optional_candidates + resource_paths if path.is_file()]
+    optional_files = [
+        path for path in optional_candidates + resource_paths if path.is_file()
+    ]
     optional_evidence = {
         "maps": map_metrics.is_file(),
         "phase_analysis": phase_analysis.is_file(),
         "pointcloud_index": pointcloud_index.is_file(),
-        "resource_timelines": all(path.is_file() for path in resource_paths),
+        "resource_timelines": timeline_present
+        and all(path.is_file() for path in resource_paths),
     }
     if unified_timeline:
         optional_evidence["trajectory_discontinuity"] = raw_discontinuity.is_file()
 
     compatibility = {
+        "source_timeline_present": timeline_present,
         "unified_diagnostic_timeline": unified_timeline,
-        "diagnostic_timeline_schema_version": diagnostic_timeline.get("schema_version"),
+        "diagnostic_timeline_schema_version": (
+            diagnostic_timeline.get("schema_version") if timeline_present else None
+        ),
+        "rebuild_required": rebuild_required,
+        "algorithm_source": algorithm_source,
+        "omitted_algorithms_without_trajectory": omitted_algorithms,
         "raw_trajectory_discontinuity_present": raw_discontinuity.is_file(),
-        "raw_trajectory_discontinuity_required": not unified_timeline,
+        "raw_trajectory_discontinuity_required": timeline_present
+        and not unified_timeline,
     }
     return {
         "algorithms": algorithms,
@@ -251,6 +309,21 @@ def _copy_algorithm_configs(
     return output
 
 
+def _compatibility_artifact_record(
+    frozen: Path, source_relative_path: str
+) -> dict[str, Any]:
+    bundle_relative = (Path("source") / source_relative_path).as_posix()
+    target = frozen / bundle_relative
+    digest, size = sha256_path(target)
+    return {
+        "bundle_path": bundle_relative,
+        "role": "compatibility_derived_diagnostic_timeline",
+        "derivation": "standardized-trajectories-fixed-rate-v1",
+        "size_bytes": size,
+        "sha256": digest,
+    }
+
+
 def _verify_captured_artifacts(frozen: Path, manifest: dict[str, Any]) -> None:
     for record in manifest.get("source_artifacts") or []:
         if not isinstance(record, dict) or not record.get("bundle_path"):
@@ -259,6 +332,15 @@ def _verify_captured_artifacts(frozen: Path, manifest: dict[str, Any]) -> None:
         current_sha, current_size = sha256_path(target)
         if record.get("sha256") != current_sha or record.get("size_bytes") != current_size:
             raise ValueError(f"source artifact changed after capture: {relative}")
+    for record in manifest.get("compatibility_artifacts") or []:
+        if not isinstance(record, dict) or not record.get("bundle_path"):
+            continue
+        relative, target = _resolve_bundle_relative(frozen, str(record["bundle_path"]))
+        current_sha, current_size = sha256_path(target)
+        if record.get("sha256") != current_sha or record.get("size_bytes") != current_size:
+            raise ValueError(
+                f"compatibility artifact changed after derivation: {relative}"
+            )
     configs = manifest.get("config_sources") or {}
     if isinstance(configs, dict):
         for algorithm, record in configs.items():
@@ -287,6 +369,11 @@ def prepare_freeze(
     run_id = str(run_status.get("run_id") or run.name)
     run_state = str(run_status.get("state") or "UNKNOWN")
 
+    if baseline not in sources["algorithms"]:
+        raise FileNotFoundError(
+            f"freeze baseline standardized trajectory is unavailable: {baseline}"
+        )
+
     if created_at is None:
         created_at = dt.datetime.now(dt.timezone.utc)
     if created_at.tzinfo is None:
@@ -307,7 +394,9 @@ def prepare_freeze(
     bag_path: Path | None = None
     if bag_dir:
         candidate = Path(str(bag_dir)).expanduser()
-        bag_path = (run / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+        bag_path = (
+            (run / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+        )
 
     manifest_algorithms = manifest.get("algorithms")
     if not isinstance(manifest_algorithms, dict):
@@ -346,6 +435,7 @@ def prepare_freeze(
             "sha256": None,
         },
         "source_artifacts": [],
+        "compatibility_artifacts": [],
         "generated_artifacts": [],
         "failure": None,
     }
@@ -357,6 +447,26 @@ def prepare_freeze(
             _copy_source_artifact(run, frozen, path)
             for path in sources["required_files"] + sources["optional_files"]
         ]
+
+        if bool(sources["diagnostic_compatibility"].get("rebuild_required")):
+            stage = "diagnostic_compatibility"
+            from freeze_compat import build_compat_diagnostic_timeline
+
+            derivation = build_compat_diagnostic_timeline(
+                frozen / "source",
+                algorithms=algorithms,
+                baseline=baseline,
+            )
+            payload["compatibility_artifacts"] = [
+                _compatibility_artifact_record(frozen, relative)
+                for relative in derivation["artifacts"]
+            ]
+            payload["diagnostic_compatibility"] = {
+                **dict(payload["diagnostic_compatibility"]),
+                "rebuild_completed": True,
+                "derivation": derivation,
+            }
+            write_json_atomic(frozen / "freeze_manifest.json", payload)
 
         stage = "config_sources"
         payload["config_sources"] = _copy_algorithm_configs(
@@ -412,7 +522,9 @@ def _resolve_bundle_relative(frozen: Path, relative_path: str) -> tuple[str, Pat
     try:
         target.relative_to(frozen)
     except ValueError as exc:
-        raise ValueError(f"generated artifact must stay under frozen bundle: {relative_path}") from exc
+        raise ValueError(
+            f"generated artifact must stay under frozen bundle: {relative_path}"
+        ) from exc
     return normalized, target
 
 
@@ -434,7 +546,9 @@ def register_generated_artifact(
     if not isinstance(existing, list):
         existing = []
     manifest["generated_artifacts"] = [
-        item for item in existing if not isinstance(item, dict) or item.get("path") != normalized
+        item
+        for item in existing
+        if not isinstance(item, dict) or item.get("path") != normalized
     ] + [record]
     manifest["freeze_state"] = "INCOMPLETE"
     manifest["completed_at_utc"] = None
