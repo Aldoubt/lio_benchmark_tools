@@ -13,7 +13,7 @@ from freeze_rerun import (
 
 
 def _write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
