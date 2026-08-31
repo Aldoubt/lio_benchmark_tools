@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any
@@ -144,7 +145,7 @@ def _fmt(value: Any) -> str:
     return f"{number:.3f}".rstrip("0").rstrip(".")
 
 
-def _safe_bundle_asset(frozen: Path, bundle_path: str) -> dict[str, str]:
+def _safe_bundle_file(frozen: Path, bundle_path: str) -> tuple[Path, Path]:
     relative = Path(str(bundle_path))
     if relative.is_absolute() or ".." in relative.parts or str(relative) in {"", "."}:
         raise ValueError(f"invalid bundle evidence path: {bundle_path}")
@@ -155,7 +156,24 @@ def _safe_bundle_asset(frozen: Path, bundle_path: str) -> dict[str, str]:
         raise ValueError(f"evidence path escapes frozen bundle: {bundle_path}") from exc
     if not target.is_file():
         raise FileNotFoundError(bundle_path)
-    return {"label": relative.as_posix(), "href": "../" + relative.as_posix()}
+    return relative, target
+
+
+def _safe_bundle_asset(frozen: Path, bundle_path: str) -> dict[str, str]:
+    relative, target = _safe_bundle_file(frozen, bundle_path)
+    mime = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml",
+    }.get(target.suffix.lower())
+    if mime is None:
+        raise ValueError(f"unsupported HTML evidence image type: {bundle_path}")
+    encoded = base64.b64encode(target.read_bytes()).decode("ascii")
+    return {
+        "label": relative.as_posix(),
+        "href": f"data:{mime};base64,{encoded}",
+    }
 
 
 def _algorithm_rows(report_data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -172,20 +190,22 @@ def _algorithm_rows(report_data: dict[str, Any]) -> list[dict[str, Any]]:
         rel = dict(relative.get(algorithm) or {}) if isinstance(relative, dict) else {}
         res = dict(resources.get(algorithm) or {}) if isinstance(resources, dict) else {}
         diag = dict(diagnostics.get(algorithm) or {}) if isinstance(diagnostics, dict) else {}
-        rows.append({
-            "algorithm": algorithm,
-            "status": h.get("status"),
-            "health": bool(h.get("trajectory_health_pass")),
-            "eligible": bool(h.get("recommendation_eligible")),
-            "path_length_m": t.get("path_length_m"),
-            "z_range_m": t.get("z_range_m"),
-            "mean_cpu_percent": res.get("mean_cpu_percent"),
-            "peak_rss_mib": res.get("peak_rss_mib"),
-            "rmse_m": rel.get("rmse_m"),
-            "p95_m": rel.get("p95_m"),
-            "position_jump_count": diag.get("position_jump_count", 0),
-            "yaw_jump_count": diag.get("yaw_jump_count", 0),
-        })
+        rows.append(
+            {
+                "algorithm": algorithm,
+                "status": h.get("status"),
+                "health": bool(h.get("trajectory_health_pass")),
+                "eligible": bool(h.get("recommendation_eligible")),
+                "path_length_m": t.get("path_length_m"),
+                "z_range_m": t.get("z_range_m"),
+                "mean_cpu_percent": res.get("mean_cpu_percent"),
+                "peak_rss_mib": res.get("peak_rss_mib"),
+                "rmse_m": rel.get("rmse_m"),
+                "p95_m": rel.get("p95_m"),
+                "position_jump_count": diag.get("position_jump_count", 0),
+                "yaw_jump_count": diag.get("yaw_jump_count", 0),
+            }
+        )
     return rows
 
 
@@ -215,7 +235,7 @@ def render_report_html(frozen: Path) -> dict[str, Any]:
     ]
     for item in evidence.get("anomaly_cases") or []:
         if isinstance(item, dict) and item.get("bundle_path"):
-            _safe_bundle_asset(frozen, str(item["bundle_path"]))
+            _safe_bundle_file(frozen, str(item["bundle_path"]))
 
     dataset_timing = dict(report_data.get("dataset_timing") or {})
     dataset = dict(dataset_timing.get("dataset") or {})
@@ -246,5 +266,7 @@ def render_report_html(frozen: Path) -> dict[str, Any]:
     output = frozen / "report/index.html"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(html, encoding="utf-8")
-    artifact = register_generated_artifact(frozen, "report/index.html", "offline_html_report")
+    artifact = register_generated_artifact(
+        frozen, "report/index.html", "offline_html_report"
+    )
     return {"path": output, "artifact": artifact}

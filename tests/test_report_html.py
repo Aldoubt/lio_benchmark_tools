@@ -59,7 +59,8 @@ def test_render_report_html_is_offline_local_and_registers_artifact(tmp_path):
     assert "relative-to-baseline/diagnostic/non-ground-truth" in html
     assert "not ATE/RPE" in html
     assert "bad_algo" in html
-    assert "../evidence/overview/comparison_dashboard/diagnostic_dashboard.png" in html
+    assert "data:image/png;base64," in html
+    assert "../evidence/overview/comparison_dashboard/diagnostic_dashboard.png" not in html
     assert "http://" not in html
     assert "https://" not in html
     assert "<script src=" not in html
