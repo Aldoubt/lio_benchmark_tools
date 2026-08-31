@@ -10,6 +10,8 @@ import pytest
 from rerun_diagnostic_viewer import (
     algorithm_entity_paths,
     apply_alignment,
+    classify_extent_xyz,
+    default_spatial_visibility,
     initial_yaw_translation_transform,
     load_binary_little_endian_ply,
     nearest_frame,
@@ -42,6 +44,61 @@ def test_load_binary_little_endian_ply_reads_xyz_intensity(tmp_path):
     assert cloud.shape == (2, 4)
     assert np.allclose(cloud[0], [1.0, 2.0, 3.0, 4.0])
     assert np.allclose(cloud[1], [-1.0, -2.0, -3.0, 8.0])
+
+
+def test_map_extent_qa_marks_point_lio_scale_as_suspect():
+    baseline = [139.8955954339839, 138.00446113415796, 40.98942551677813]
+    point_lio = [59472.02826405508, 8087.60167741251, 15140.702544203477]
+
+    qa = classify_extent_xyz(point_lio, baseline)
+
+    assert qa["status"] == "suspect_extent"
+    assert qa["ratio_xyz"][0] > 400
+    assert qa["ratio_xyz"][1] > 50
+    assert qa["ratio_xyz"][2] > 300
+    assert qa["max_ratio"] == pytest.approx(max(qa["ratio_xyz"]))
+
+
+def test_map_extent_qa_keeps_moderate_dlio_height_as_non_suspect():
+    baseline = [139.8955954339839, 138.00446113415796, 40.98942551677813]
+    dlio = [96.87232369661749, 115.9204388565068, 148.5479131342942]
+
+    qa = classify_extent_xyz(dlio, baseline)
+
+    assert qa["status"] == "ok"
+    assert qa["max_ratio"] < 5.0
+
+
+def test_default_spatial_visibility_is_baseline_map_first_and_hides_suspect_algorithm():
+    algorithms = ["fast_livo2", "dlio", "point_lio"]
+    map_qa = {
+        "fast_livo2": {"status": "ok"},
+        "dlio": {"status": "ok"},
+        "point_lio": {"status": "suspect_extent"},
+    }
+
+    policy = default_spatial_visibility(
+        algorithms,
+        baseline="fast_livo2",
+        visible_algorithms=set(algorithms),
+        map_qa=map_qa,
+    )
+
+    assert policy["fast_livo2"] == {
+        "algorithm_visible": True,
+        "map_visible": True,
+        "reason": "baseline",
+    }
+    assert policy["dlio"] == {
+        "algorithm_visible": True,
+        "map_visible": False,
+        "reason": "nonbaseline_map_hidden",
+    }
+    assert policy["point_lio"] == {
+        "algorithm_visible": False,
+        "map_visible": False,
+        "reason": "suspect_extent",
+    }
 
 
 def test_nearest_frame_uses_closest_bag_time_not_only_previous():
