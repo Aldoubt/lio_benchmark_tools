@@ -198,26 +198,14 @@ def prepare_freeze(
     for name in ("source", "viewer", "evidence", "report"):
         (frozen / name).mkdir()
 
-    source_artifacts = [
-        _copy_source_artifact(run, frozen, path)
-        for path in sources["required_files"] + sources["optional_files"]
-    ]
-
     manifest = sources["manifest"]
     dataset = manifest.get("dataset")
-    if not isinstance(dataset, dict):
-        raise ValueError("manifest.json dataset must be an object")
-    bag_dir = dataset.get("bag_dir")
-    if not bag_dir:
-        raise ValueError("manifest.json dataset.bag_dir is required for freeze provenance")
-    bag_path = Path(str(bag_dir)).expanduser()
-    if not bag_path.is_absolute():
-        bag_path = (run / bag_path).resolve()
-    else:
-        bag_path = bag_path.resolve()
-    if not bag_path.exists():
-        raise FileNotFoundError(f"dataset bag_dir does not exist: {bag_path}")
-    bag_sha, bag_size = sha256_path(bag_path)
+    dataset_dict = dataset if isinstance(dataset, dict) else {}
+    bag_dir = dataset_dict.get("bag_dir")
+    bag_path: Path | None = None
+    if bag_dir:
+        candidate = Path(str(bag_dir)).expanduser()
+        bag_path = (run / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
 
     manifest_algorithms = manifest.get("algorithms")
     if not isinstance(manifest_algorithms, dict):
@@ -231,7 +219,7 @@ def prepare_freeze(
     if isinstance(evaluation, dict) and "ground_truth_available" in evaluation:
         ground_truth_available = bool(evaluation["ground_truth_available"])
     else:
-        ground_truth_available = bool(dataset.get("ground_truth"))
+        ground_truth_available = bool(dataset_dict.get("ground_truth"))
 
     payload = {
         "schema_version": 1,
@@ -248,15 +236,47 @@ def prepare_freeze(
         "algorithm_provenance": algorithm_provenance,
         "optional_evidence": sources["optional_evidence"],
         "dataset_source": {
+            "path": str(bag_path) if bag_path is not None else None,
+            "size_bytes": None,
+            "sha256": None,
+        },
+        "source_artifacts": [],
+        "generated_artifacts": [],
+        "failure": None,
+    }
+    write_json_atomic(frozen / "freeze_manifest.json", payload)
+
+    stage = "source_artifacts"
+    try:
+        payload["source_artifacts"] = [
+            _copy_source_artifact(run, frozen, path)
+            for path in sources["required_files"] + sources["optional_files"]
+        ]
+
+        stage = "dataset_source"
+        if not isinstance(dataset, dict):
+            raise ValueError("manifest.json dataset must be an object")
+        if not bag_dir:
+            raise ValueError("manifest.json dataset.bag_dir is required for freeze provenance")
+        assert bag_path is not None
+        if not bag_path.exists():
+            raise FileNotFoundError(f"dataset bag_dir does not exist: {bag_path}")
+        bag_sha, bag_size = sha256_path(bag_path)
+        payload["dataset_source"] = {
             "path": str(bag_path),
             "size_bytes": bag_size,
             "sha256": bag_sha,
-        },
-        "source_artifacts": source_artifacts,
-        "generated_artifacts": [],
-    }
-    write_json_atomic(frozen / "freeze_manifest.json", payload)
-    return frozen
+        }
+        write_json_atomic(frozen / "freeze_manifest.json", payload)
+        return frozen
+    except Exception as exc:
+        payload["failure"] = {
+            "stage": stage,
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+        write_json_atomic(frozen / "freeze_manifest.json", payload)
+        raise
 
 
 def _load_freeze_manifest(frozen: Path) -> dict[str, Any]:
