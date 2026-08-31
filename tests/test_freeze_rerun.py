@@ -1,13 +1,19 @@
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from freeze_rerun import build_frozen_rerun, pointcloud_source_status
+from freeze_rerun import (
+    build_frozen_rerun,
+    finalize_saved_rerun_recording,
+    pointcloud_source_status,
+)
 
 
 def _write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -207,3 +213,17 @@ def test_build_frozen_rerun_finalizes_file_sink_before_hash_registration(tmp_pat
     result = build_frozen_rerun(frozen)
 
     assert result["artifact"]["size_bytes"] == len(b"partialfooter")
+
+
+def test_finalize_saved_rerun_uses_disconnect_for_rerun_0363(monkeypatch):
+    calls: list[str] = []
+    fake_rerun = SimpleNamespace(
+        __version__="0.36.3",
+        disconnect=lambda: calls.append("disconnect"),
+    )
+    monkeypatch.setitem(sys.modules, "rerun", fake_rerun)
+
+    version = finalize_saved_rerun_recording()
+
+    assert version == "0.36.3"
+    assert calls == ["disconnect"]
