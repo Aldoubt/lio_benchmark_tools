@@ -9,6 +9,8 @@ def test_freeze_gate_separates_system_python_from_freeze_python():
     assert "PYTHONNOUSERSITE=1" in script
     assert "--freeze-python" in script
     assert ".venv-freeze/bin/python" in script
+    assert "freeze_py()" in script
+    assert "freeze_py -m pytest -q" in script
 
 
 def test_freeze_requirements_pin_numpy2_compatible_scientific_stack():
@@ -32,3 +34,32 @@ def test_freeze_venv_setup_is_repo_local_and_keeps_ros_system_packages_visible()
     assert ".venv-freeze" in script
     assert "benchmark_base/requirements-freeze.txt" in script
     assert "python3 -m pip install 'rerun-sdk==0.36.3'" not in script
+
+
+def test_freeze_venv_dependency_resolution_ignores_user_site():
+    script = (ROOT / "evaluators/setup_freeze_venv.sh").read_text(encoding="utf-8")
+    assert (
+        'env PYTHONNOUSERSITE=1 "$venv_dir/bin/python" -m pip install --upgrade pip'
+        in script
+    )
+    assert (
+        'env PYTHONNOUSERSITE=1 "$venv_dir/bin/python" -m pip install '
+        '-r benchmark_base/requirements-freeze.txt'
+        in script
+    )
+    assert "import pyarrow" in script
+    assert "import jinja2" in script
+
+
+def test_report_and_rerun_tests_run_in_freeze_python_not_system_python():
+    script = (ROOT / "evaluators/check_freeze_pipeline.sh").read_text(encoding="utf-8")
+    marker = "freeze_py -m pytest -q"
+    assert marker in script
+    freeze_section = script.split(marker, 1)[1]
+    for test_name in (
+        "tests/test_freeze_rerun.py",
+        "tests/test_report_html.py",
+        "tests/test_report_pdf.py",
+        "tests/test_report_pointcloud_evidence.py",
+    ):
+        assert test_name in freeze_section
