@@ -125,6 +125,7 @@ print(
 PY
 
 freeze_py -m py_compile \
+  evaluators/freeze_compat.py \
   evaluators/freeze_experiment.py \
   evaluators/freeze_rerun.py \
   evaluators/freeze_workflow.py \
@@ -147,6 +148,7 @@ system_py -m pytest -q \
 
 # Freeze/report/Rerun tests intentionally run in the dedicated NumPy-2 venv.
 freeze_py -m pytest -q \
+  tests/test_freeze_compat.py \
   tests/test_freeze_experiment.py \
   tests/test_freeze_failure_audit.py \
   tests/test_freeze_provenance.py \
