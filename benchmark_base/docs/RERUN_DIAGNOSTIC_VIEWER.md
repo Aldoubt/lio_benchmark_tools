@@ -1,12 +1,14 @@
-# Rerun offline diagnostic viewer
+# Native Rerun diagnostic viewer and frozen delivery
 
-The viewer is a display/inspection layer over frozen benchmark artifacts. It does not redefine trajectory health, map health, resource alignment, anomaly thresholds, or metric semantics.
+The Native Rerun path is the formal interactive diagnosis and frozen-delivery path for the current P0 benchmark workflow. It is a display/inspection layer over benchmark artifacts and does not redefine trajectory health, map health, resource alignment, anomaly thresholds, or metric semantics.
 
-Without independent ground truth, baseline-relative trajectory/map quantities remain `relative-to-baseline/diagnostic/non-ground-truth`.
+Without independent ground truth, baseline-relative trajectory/map quantities remain `relative-to-baseline/diagnostic/non-ground-truth`. They are not ATE/RPE or absolute-accuracy rankings.
 
-## 1. Prerequisites
+The WebViewer implementation remains available for experimentation and UI development, but it is **not** the P0 acceptance path and must not be used as a fallback when Native freeze/open/export fails.
 
-Generate the diagnostic timeline and LiDAR frame index first:
+## 1. Live-run prerequisites
+
+Before interactive diagnosis or freeze, generate the normal benchmark diagnostics. Build the point-cloud index only when bounded raw/world LiDAR evidence is wanted:
 
 ```bash
 RUN=/path/to/run
@@ -18,7 +20,9 @@ benchmark_base/bin/lio-benchmark diagnostics \
   --with-pointcloud-index
 ```
 
-Source the ROS overlays that provide the exact LiDAR message type in the bag:
+The core Freeze path requires the run manifest, run status, comparison metrics, trajectory-discontinuity diagnostics, unified diagnostic timeline, standardized trajectories, and per-algorithm diagnostic timeline CSVs. Maps, phase analysis, point-cloud index, resource curves, and static figures are optional evidence and are disclosed as such.
+
+When indexed LiDAR evidence is enabled, source the ROS overlays that provide the exact message type used by the bag:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -26,24 +30,15 @@ source /home/yangxuan/agt_navigation_v2/install/setup.bash
 source /home/yangxuan/lio_benchmark_algorithms/adapter_ws/install/setup.bash
 ```
 
-The tested Viewer SDK is pinned to:
+## 2. Tested Native viewer environment
+
+The tested Native Viewer SDK is pinned to:
 
 ```text
 rerun-sdk==0.36.3
-@rerun-io/web-viewer==0.36.3
 ```
 
-The WebViewer package version intentionally matches the Python Rerun SDK version.
-
-## 2. Python environment
-
-Keep the ROS/benchmark scientific Python stack separate from user-site packages. On the Ubuntu benchmark host, the known-good gate uses the system NumPy/SciPy environment:
-
-```bash
-PYTHONNOUSERSITE=1 bash evaluators/check_phase_pipeline.sh
-```
-
-A Viewer venv may inherit the ROS/system packages:
+Keep the ROS/benchmark scientific Python stack separate from incompatible user-site packages. A viewer venv may inherit ROS/system packages:
 
 ```bash
 python3 -m venv --system-site-packages .venv-viewer
@@ -51,28 +46,11 @@ source .venv-viewer/bin/activate
 python -m pip install --no-deps rerun-sdk==0.36.3
 ```
 
-No font binaries or large bag/point-cloud assets are added by the Viewer.
+Report dependencies are kept separate in `benchmark_base/requirements-report.txt`. Font binaries are never committed or distributed by this repository.
 
-## 3. Language policy and Native Viewer
+## 3. Native live viewer
 
-`lio-benchmark viewer` accepts:
-
-```text
---lang auto   mode-aware default
---lang zh-CN  Chinese control/presentation language where supported
---lang en     English
-```
-
-`auto` is the recommended default:
-
-```text
-native -> English Rerun labels
-web    -> Chinese benchmark control shell + English embedded Rerun labels
-```
-
-The reason for keeping Rerun-owned view/entity labels in English is practical: on some Ubuntu/Rerun font stacks CJK glyphs render as square tofu characters. English entity/view names keep the visualization recognizable on every tested host. The Web shell remains fully bilingual and can switch Chinese/English at runtime without restarting the benchmark process.
-
-Native mode remains the quick inspection path:
+Native mode is the normal inspection path before freezing:
 
 ```bash
 benchmark_base/bin/lio-benchmark viewer \
@@ -83,15 +61,19 @@ benchmark_base/bin/lio-benchmark viewer \
   --algorithms fast_livo2,point_lio,lio_sam_no_loop,glim_full_slam
 ```
 
-For the current Rerun 0.36.3 Ubuntu path, prefer `--lang auto` or `--lang en` in native mode. Explicit `--lang zh-CN` remains available for environments where the Rerun font stack renders CJK correctly, but it is not the compatibility default.
+Language policy:
 
-Machine-readable JSON/CSV keys always remain English.
+```text
+--lang auto   recommended mode-aware default
+--lang zh-CN  Chinese where the local Rerun font stack supports it
+--lang en     English
+```
 
-The Blueprint panel stays expanded so algorithm groups and point-cloud LODs can be shown/hidden interactively.
+For the tested Ubuntu/Rerun 0.36.3 path, Native labels default to English because some Rerun font stacks do not render CJK reliably. Machine-readable JSON/CSV keys always remain English.
 
-## 4. Raw LiDAR and point density
+## 4. Bounded raw LiDAR and point density
 
-Raw LiDAR remains in sensor-local coordinates under:
+Raw LiDAR stays in sensor-local coordinates:
 
 ```text
 sensor/raw_lidar/dense
@@ -113,9 +95,9 @@ Configure them with:
 --point-lods 10,20,80
 ```
 
-Each selected rosbag message is deserialized once at the dense stride. Medium/sparse LODs are derived from that dense selection in memory; the sqlite message is not reread for each LOD.
+Each selected sqlite message is deserialized once at the dense stride. Medium/sparse LODs are derived from that dense cloud in memory.
 
-Raw frame selection modes:
+Selection modes:
 
 ```text
 none     no raw LiDAR
@@ -123,22 +105,11 @@ anomaly  anomaly-near indexed frames only
 sampled  periodic frames plus anomaly-near frames
 ```
 
-Example:
-
-```bash
-benchmark_base/bin/lio-benchmark viewer \
-  --run "$RUN" \
-  --mode native \
-  --pointcloud-mode sampled \
-  --pointcloud-period 1.0 \
-  --point-lods 10,20,80
-```
-
-No rosbag replay is used.
+Freeze never silently enables unbounded full-bag point-cloud recording. Its default indexed LiDAR evidence is anomaly-near. If the index, sqlite source, ROS message runtime, or a valid pose is unavailable, the optional layer is omitted and the omission is recorded rather than invalidating the whole snapshot.
 
 ## 5. World LiDAR projection
 
-World LiDAR is logged separately from raw sensor-local LiDAR:
+World LiDAR uses:
 
 ```text
 world_lidar/<algorithm>/dense
@@ -146,11 +117,11 @@ world_lidar/<algorithm>/medium
 world_lidar/<algorithm>/sparse
 ```
 
-The projection deliberately reuses the comparison-map reconstruction chain:
+The projection chain is shared by Native visualization and deterministic static point-cloud report evidence:
 
 ```text
-Livox header + per-point offset_time
-  -> LiDAR point time
+LiDAR header + per-point offset_time
+  -> point timestamp
   -> manifest lidar_to_imu extrinsic
   -> standardized trajectory XYZ interpolation + quaternion Slerp
   -> algorithm pose
@@ -158,89 +129,16 @@ Livox header + per-point offset_time
   -> shared display origin
 ```
 
-The Viewer therefore answers: “where would this exact scan be placed in the displayed comparison world according to algorithm X?” It is not an independently verified absolute-world measurement.
+The result answers where the same measured scan would be placed in the displayed comparison world according to each algorithm. It is not independent ground truth.
 
-Pose interpolation respects `evaluation.max_pose_interpolation_gap_s`. If no valid pose covers a scan/point, the projected cloud is omitted instead of extrapolated.
+Pose interpolation respects `evaluation.max_pose_interpolation_gap_s`; points without a valid pose are omitted instead of extrapolated.
 
-World-cloud modes:
+## 6. Native `.rrd` output
 
-```text
-none     no projected world cloud
-anomaly  anomaly-near frames only (default)
-sampled  periodic plus anomaly-near frames
-```
-
-Select the initially visible algorithm with:
+A normal live-run recording can still be generated directly:
 
 ```bash
---world-algorithm point_lio
-```
-
-All startup-selected algorithms are prelogged for the bounded world-frame set, so Blueprint/Web controls can switch algorithms without rereading the bag.
-
-## 6. WebViewer with runtime language switching and anomaly click-to-seek
-
-The formal interactive mode uses a small localhost TypeScript/Vite shell around Rerun WebViewer. Rerun still renders 3D, plots, entities, selection, and the timeline; the shell owns benchmark-specific controls.
-
-Web development/build requires Node `>=22.12` for the pinned Vite 8 toolchain. Check before installation:
-
-```bash
-node --version
-npm --version
-```
-
-Install/build once:
-
-```bash
-cd benchmark_base/web_viewer
-npm ci
-npm test
-npm run build
-cd ../..
-```
-
-Launch with the mode-aware default language:
-
-```bash
-benchmark_base/bin/lio-benchmark viewer \
-  --run "$RUN" \
-  --mode web \
-  --baseline fast_livo2 \
-  --lang auto \
-  --algorithms fast_livo2,point_lio,lio_sam_no_loop,glim_full_slam \
-  --pointcloud-mode sampled \
-  --pointcloud-period 1.0 \
-  --world-pointcloud-mode anomaly
-```
-
-The shell exposes:
-
-- algorithm multi-select;
-- selected world-LiDAR algorithm;
-- Dense/Medium/Sparse LOD selection;
-- runtime Chinese/English selection;
-- anomaly-window buttons.
-
-Changing the shell language immediately rerenders benchmark-owned controls and anomaly descriptions. Rerun view/entity names intentionally remain English for font compatibility; machine keys remain unchanged.
-
-Clicking an anomaly button:
-
-1. selects the Rerun `bag_time` timeline;
-2. pauses playback;
-3. seeks to the anomaly-window midpoint in nanoseconds;
-4. ensures the anomaly algorithm is visible;
-5. changes the selected world-LiDAR algorithm to that anomaly algorithm.
-
-This interaction does not modify benchmark artifacts.
-
-`--mode web --save ...` is intentionally rejected. Use native mode for `.rrd` recording output.
-
-Use `--no-spawn` in web mode when you want the localhost server without automatically opening a browser.
-
-## 7. Native `.rrd` output
-
-```bash
-OUT="$RUN/viewer/greenhouse_round1.rrd"
+OUT="$RUN/viewer/diagnostic.rrd"
 mkdir -p "$(dirname "$OUT")"
 
 benchmark_base/bin/lio-benchmark viewer \
@@ -251,39 +149,133 @@ benchmark_base/bin/lio-benchmark viewer \
   --world-pointcloud-mode anomaly \
   --save "$OUT" \
   --no-spawn
-
-rerun "$OUT"
 ```
 
-The `.rrd` is a display artifact. It does not replace the original metrics, standardized trajectories, pointcloud frame index, or source rosbag.
+For delivery, prefer `lio-benchmark freeze`; it creates the `.rrd` together with provenance, report data, static evidence, HTML, and PDF under one immutable snapshot lifecycle.
 
-## 8. Algorithm visibility
+## 7. Immutable Freeze
 
-Startup scope is controlled by `--algorithms`:
+Create a new snapshot without modifying the source run:
 
 ```bash
---algorithms fast_livo2,point_lio,glim_full_slam
+benchmark_base/bin/lio-benchmark freeze \
+  --run "$RUN" \
+  --baseline fast_livo2 \
+  --lang zh-CN
 ```
 
-Native mode also exposes Rerun Blueprint eye toggles. Web mode exposes explicit algorithm checkboxes and sends only visibility/LOD/language state back to the Python process, which updates the Rerun blueprint. Metric data is never rewritten.
+Each invocation creates a new directory:
 
-## 9. Verification gates
+```text
+<RUN>/frozen/<run_id>_<utc_timestamp>_<benchmark_git_short_sha>/
+```
 
-Python/benchmark gate:
+The lifecycle is:
+
+```text
+prepare INCOMPLETE snapshot
+  -> copy/hash core source artifacts
+  -> copy/hash declared algorithm configs
+  -> record calibration and bag provenance
+  -> build bounded Native diagnostic.rrd
+  -> build shared report_data.json
+  -> copy/generate deterministic evidence
+  -> render offline HTML
+  -> render PDF
+  -> re-verify captured/generated SHA-256 + size
+  -> atomically promote to COMPLETE
+```
+
+A failed stage leaves an auditable `INCOMPLETE` snapshot with `failure.stage`, `failure.type`, and `failure.message`. Existing snapshots are never overwritten.
+
+The snapshot manifest records source-run identity, benchmark branch/commit, bag hash, algorithm provenance, calibration disclosure, copied config hashes, optional-evidence availability, selected anomaly windows, Rerun SDK metadata, and generated-artifact hashes.
+
+## 8. Deterministic report evidence
+
+`report_data.json` is the shared semantic input for HTML and PDF. It reuses current-run report/health semantics instead of recomputing an independent ranking.
+
+Representative anomalies are selected deterministically, with a maximum of six by default: severity first, preserve position/yaw coverage when available, preserve failed/crashed-algorithm evidence when available, and deduplicate window IDs.
+
+Static evidence is generated from benchmark/frozen data rather than screenshots of the Rerun UI. If indexed LiDAR is usable, the nearest indexed frame to each representative anomaly is rendered with raw XY plus baseline/target world projections using the shared projection helper. If that optional rendering cannot be produced, the evidence manifest records the omission.
+
+## 9. Open a frozen experiment
+
+Open only a completed frozen recording:
 
 ```bash
-cd ~/lio_benchmark_tools
-PYTHONNOUSERSITE=1 bash evaluators/check_phase_pipeline.sh
-git diff --check
+FROZEN=/path/to/run/frozen/<snapshot>
+benchmark_base/bin/lio-benchmark open "$FROZEN"
 ```
 
-Web gate:
+`open` requires:
+
+- `freeze_manifest.json`;
+- `freeze_state == COMPLETE`;
+- registered `viewer/diagnostic.rrd`;
+- matching recorded SHA-256 and byte size.
+
+Normal opening does **not** replay algorithms, read the original rosbag, or fall back to mutable live-run state.
+
+## 10. Export a delivery directory
+
+Materialize a shareable directory from frozen data only:
 
 ```bash
-cd benchmark_base/web_viewer
-node --version
-npm ci
-npm test
-npm run build
-test -f dist/index.html
+benchmark_base/bin/lio-benchmark export "$FROZEN" \
+  --output /path/to/delivery
 ```
+
+The delivery contains the frozen HTML/PDF, evidence figures, metric summary data, and freeze provenance. Export verifies registered hashes before copying and does not modify the immutable snapshot.
+
+The HTML report is self-contained for report images via local data URIs, so copying `report/index.html` to delivery `report.html` does not create broken evidence links. Evidence files are still exported separately for audit and manual inspection.
+
+## 11. Experimental WebViewer status
+
+WebViewer code remains in the repository for UI experiments and compatibility investigation. It is not a P0 acceptance gate, and new freeze/export implementation must not depend on the Web recorder/server.
+
+If explicitly testing the Web shell, keep the Rerun WebViewer package aligned with the Python SDK version and use the repository web tests. A Web failure must not trigger a silent replacement of the Native frozen-delivery path.
+
+## 12. Verification gates
+
+Focused frozen-delivery regression:
+
+```bash
+PYTHONPATH="$PWD/evaluators:$PWD/benchmark_base" python3 -m pytest -q \
+  tests/test_freeze_experiment.py \
+  tests/test_freeze_failure_audit.py \
+  tests/test_freeze_provenance.py \
+  tests/test_freeze_rerun.py \
+  tests/test_report_data.py \
+  tests/test_report_evidence.py \
+  tests/test_report_pointcloud_evidence.py \
+  tests/test_report_html.py \
+  tests/test_report_pdf.py \
+  tests/test_frozen_bundle.py \
+  tests/test_entry_frozen_commands.py \
+  tests/test_freeze_workflow.py
+```
+
+Existing Native/benchmark regressions remain required, especially:
+
+```bash
+python3 -m pytest -q \
+  tests/test_viewer_projection.py \
+  tests/test_rerun_diagnostic_viewer.py \
+  tests/test_entry.py \
+  tests/test_postprocess.py \
+  tests/test_current_run_report.py \
+  tests/test_diagnostic_timeline.py
+```
+
+Release acceptance must additionally use one real completed benchmark run to prove:
+
+1. normal Native viewer opens;
+2. `freeze` creates a new `COMPLETE` bundle without modifying the source run;
+3. hashes/provenance verify;
+4. failed/truncated algorithm evidence remains present but not ranked healthy;
+5. `open` reopens the frozen `.rrd` without bag replay;
+6. offline HTML/PDF are readable;
+7. `export` works from frozen data only;
+8. explicit no-ground-truth diagnostic wording is preserved.
+
+Do not mark those real-run gates complete from mocked/unit tests alone.
