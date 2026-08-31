@@ -127,8 +127,12 @@ PY
 freeze_py -m py_compile \
   evaluators/freeze_compat.py \
   evaluators/freeze_experiment.py \
+  evaluators/freeze_map_compat.py \
   evaluators/freeze_rerun.py \
   evaluators/freeze_workflow.py \
+  evaluators/pointcloud_frame_index.py \
+  evaluators/rerun_diagnostic_viewer.py \
+  evaluators/viewer_i18n.py \
   evaluators/report_data.py \
   evaluators/report_evidence.py \
   evaluators/report_html.py \
@@ -153,6 +157,9 @@ freeze_py -m pytest -q \
   tests/test_freeze_failure_audit.py \
   tests/test_freeze_provenance.py \
   tests/test_freeze_rerun.py \
+  tests/test_native_visual_acceptance.py \
+  tests/test_pointcloud_frame_index.py \
+  tests/test_viewer_i18n.py \
   tests/test_report_data.py \
   tests/test_report_evidence.py \
   tests/test_report_pointcloud_evidence.py \
@@ -196,9 +203,13 @@ paths = [
     run / "metrics/full_comparison.json",
     run / "metrics/trajectory_discontinuity.json",
     run / "metrics/diagnostic_timeline.json",
+    run / "metrics/pointcloud_frame_index.json",
+    run / "metrics/pointcloud_frame_index.csv",
 ]
 for trajectory in sorted((run / "standardized/trajectories").glob("*.csv")):
     paths.append(trajectory)
+for map_path in sorted((run / "figures/fast_livo2_baseline_maps").glob("*_map.ply")):
+    paths.append(map_path)
 result = {}
 for path in paths:
     if path.is_file():
@@ -245,9 +256,13 @@ paths = [
     run / "metrics/full_comparison.json",
     run / "metrics/trajectory_discontinuity.json",
     run / "metrics/diagnostic_timeline.json",
+    run / "metrics/pointcloud_frame_index.json",
+    run / "metrics/pointcloud_frame_index.csv",
 ]
 for trajectory in sorted((run / "standardized/trajectories").glob("*.csv")):
     paths.append(trajectory)
+for map_path in sorted((run / "figures/fast_livo2_baseline_maps").glob("*_map.ply")):
+    paths.append(map_path)
 result = {}
 for path in paths:
     if path.is_file():
