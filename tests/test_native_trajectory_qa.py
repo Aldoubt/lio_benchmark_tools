@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-import freeze_rerun_visual_qa as visual_qa
+import freeze_rerun_trajectory_qa as visual_qa
 
 
 def test_trajectory_extent_qa_uses_floor_for_near_planar_baseline():
