@@ -63,3 +63,12 @@ def test_report_and_rerun_tests_run_in_freeze_python_not_system_python():
         "tests/test_report_pointcloud_evidence.py",
     ):
         assert test_name in freeze_section
+
+
+def test_freeze_python_path_normalization_does_not_resolve_venv_symlink():
+    script = (ROOT / "evaluators/check_freeze_pipeline.sh").read_text(encoding="utf-8")
+    normalization_line = next(
+        line for line in script.splitlines() if line.startswith("freeze_python=$(")
+    )
+    assert "os.path.abspath" in normalization_line
+    assert ".resolve()" not in normalization_line
