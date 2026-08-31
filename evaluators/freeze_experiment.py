@@ -171,6 +171,69 @@ def _copy_source_artifact(run: Path, frozen: Path, source: Path) -> dict[str, An
     }
 
 
+def _copy_algorithm_configs(
+    repo_root: Path,
+    frozen: Path,
+    manifest_algorithms: dict[str, Any],
+    algorithms: list[str],
+) -> dict[str, dict[str, Any]]:
+    repo_root = Path(repo_root).resolve()
+    output: dict[str, dict[str, Any]] = {}
+    for algorithm in algorithms:
+        config = manifest_algorithms.get(algorithm) or {}
+        if not isinstance(config, dict):
+            config = {}
+        declared = config.get("config")
+        if not declared:
+            output[algorithm] = {"declared": False}
+            continue
+        source = Path(str(declared)).expanduser()
+        if not source.is_absolute():
+            source = (repo_root / source).resolve()
+        else:
+            source = source.resolve()
+        if not source.exists():
+            raise FileNotFoundError(
+                f"algorithm config does not exist for {algorithm}: {source}"
+            )
+        digest, size = sha256_path(source)
+        target = frozen / "source" / "configs" / algorithm / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy2(source, target)
+        output[algorithm] = {
+            "declared": True,
+            "source_path": str(source),
+            "bundle_path": target.relative_to(frozen).as_posix(),
+            "size_bytes": size,
+            "sha256": digest,
+        }
+    return output
+
+
+def _verify_captured_artifacts(frozen: Path, manifest: dict[str, Any]) -> None:
+    for record in manifest.get("source_artifacts") or []:
+        if not isinstance(record, dict) or not record.get("bundle_path"):
+            continue
+        relative, target = _resolve_bundle_relative(frozen, str(record["bundle_path"]))
+        current_sha, current_size = sha256_path(target)
+        if record.get("sha256") != current_sha or record.get("size_bytes") != current_size:
+            raise ValueError(f"source artifact changed after capture: {relative}")
+    configs = manifest.get("config_sources") or {}
+    if isinstance(configs, dict):
+        for algorithm, record in configs.items():
+            if not isinstance(record, dict) or not record.get("declared"):
+                continue
+            relative, target = _resolve_bundle_relative(frozen, str(record["bundle_path"]))
+            current_sha, current_size = sha256_path(target)
+            if record.get("sha256") != current_sha or record.get("size_bytes") != current_size:
+                raise ValueError(
+                    f"algorithm config changed after capture: {algorithm}: {relative}"
+                )
+
+
 def prepare_freeze(
     run: Path,
     *,
@@ -180,6 +243,7 @@ def prepare_freeze(
     created_at: dt.datetime | None = None,
 ) -> Path:
     run = Path(run).resolve()
+    repo_root = Path(repo_root).resolve()
     sources = discover_freeze_sources(run)
     run_status = sources["run_status"]
     run_id = str(run_status.get("run_id") or run.name)
@@ -234,6 +298,8 @@ def prepare_freeze(
         "ground_truth_available": ground_truth_available,
         "algorithms": algorithms,
         "algorithm_provenance": algorithm_provenance,
+        "calibration": dict(manifest.get("calibration") or {}),
+        "config_sources": {},
         "optional_evidence": sources["optional_evidence"],
         "dataset_source": {
             "path": str(bag_path) if bag_path is not None else None,
@@ -252,6 +318,12 @@ def prepare_freeze(
             _copy_source_artifact(run, frozen, path)
             for path in sources["required_files"] + sources["optional_files"]
         ]
+
+        stage = "config_sources"
+        payload["config_sources"] = _copy_algorithm_configs(
+            repo_root, frozen, manifest_algorithms, algorithms
+        )
+        write_json_atomic(frozen / "freeze_manifest.json", payload)
 
         stage = "dataset_source"
         if not isinstance(dataset, dict):
@@ -343,6 +415,8 @@ def finalize_freeze(
     records = manifest.get("generated_artifacts")
     if not isinstance(records, list):
         records = []
+
+    _verify_captured_artifacts(frozen, manifest)
 
     for relative in required_generated_paths:
         normalized, target = _resolve_bundle_relative(frozen, relative)
