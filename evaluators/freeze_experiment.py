@@ -82,16 +82,22 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _schema_version_at_least(payload: dict[str, Any], minimum: int) -> bool:
+    try:
+        return int(payload.get("schema_version") or 0) >= int(minimum)
+    except (TypeError, ValueError):
+        return False
+
+
 def discover_freeze_sources(run: Path) -> dict[str, Any]:
     run = Path(run).resolve()
-    core_paths = [
+    base_core_paths = [
         run / "manifest.json",
         run / "metadata/run_status.json",
         run / "metrics/full_comparison.json",
-        run / "metrics/trajectory_discontinuity.json",
         run / "metrics/diagnostic_timeline.json",
     ]
-    for path in core_paths:
+    for path in base_core_paths:
         if not path.is_file():
             raise FileNotFoundError(
                 f"required freeze source artifact is missing: {path.relative_to(run).as_posix()}"
@@ -100,6 +106,22 @@ def discover_freeze_sources(run: Path) -> dict[str, Any]:
     manifest = _load_json(run / "manifest.json")
     run_status = _load_json(run / "metadata/run_status.json")
     diagnostic_timeline = _load_json(run / "metrics/diagnostic_timeline.json")
+    raw_discontinuity = run / "metrics/trajectory_discontinuity.json"
+
+    # diagnostic_timeline schema v1 is the normalized, fixed-rate diagnostic
+    # source used by the frozen report and Native Rerun viewer. Historical runs
+    # may therefore lack the older raw per-output-step discontinuity summary.
+    # Keep requiring the raw file for pre-unified timelines, but do not mutate a
+    # historical source run merely to manufacture redundant evidence.
+    unified_timeline = _schema_version_at_least(diagnostic_timeline, 1)
+    core_paths = list(base_core_paths)
+    if not unified_timeline:
+        core_paths.append(raw_discontinuity)
+        if not raw_discontinuity.is_file():
+            raise FileNotFoundError(
+                "required freeze source artifact is missing: metrics/trajectory_discontinuity.json"
+            )
+
     raw_algorithms = diagnostic_timeline.get("algorithm_order")
     if not isinstance(raw_algorithms, list) or not raw_algorithms:
         raise ValueError("metrics/diagnostic_timeline.json must contain a non-empty algorithm_order")
@@ -119,27 +141,43 @@ def discover_freeze_sources(run: Path) -> dict[str, Any]:
                 f"required freeze source artifact is missing: {path.relative_to(run).as_posix()}"
             )
 
+    pointcloud_index = run / "metrics/pointcloud_frame_index.json"
+    phase_analysis = run / "metrics/phase_analysis.json"
+    map_metrics = run / "figures/fast_livo2_baseline_maps/map_comparison_metrics.json"
     optional_candidates = [
-        run / "metrics/pointcloud_frame_index.json",
-        run / "metrics/phase_analysis.json",
-        run / "figures/fast_livo2_baseline_maps/map_comparison_metrics.json",
+        pointcloud_index,
+        phase_analysis,
+        map_metrics,
     ]
+    if unified_timeline:
+        optional_candidates.insert(0, raw_discontinuity)
+
     resource_paths = [
         run / "metrics/diagnostic_timeline/resources" / f"{algorithm}.csv"
         for algorithm in algorithms
     ]
     optional_files = [path for path in optional_candidates + resource_paths if path.is_file()]
     optional_evidence = {
-        "maps": optional_candidates[2].is_file(),
-        "phase_analysis": optional_candidates[1].is_file(),
-        "pointcloud_index": optional_candidates[0].is_file(),
+        "maps": map_metrics.is_file(),
+        "phase_analysis": phase_analysis.is_file(),
+        "pointcloud_index": pointcloud_index.is_file(),
         "resource_timelines": all(path.is_file() for path in resource_paths),
+    }
+    if unified_timeline:
+        optional_evidence["trajectory_discontinuity"] = raw_discontinuity.is_file()
+
+    compatibility = {
+        "unified_diagnostic_timeline": unified_timeline,
+        "diagnostic_timeline_schema_version": diagnostic_timeline.get("schema_version"),
+        "raw_trajectory_discontinuity_present": raw_discontinuity.is_file(),
+        "raw_trajectory_discontinuity_required": not unified_timeline,
     }
     return {
         "algorithms": algorithms,
         "required_files": required_files,
         "optional_files": optional_files,
         "optional_evidence": optional_evidence,
+        "diagnostic_compatibility": compatibility,
         "run_status": run_status,
         "manifest": manifest,
         "diagnostic_timeline": diagnostic_timeline,
@@ -301,6 +339,7 @@ def prepare_freeze(
         "calibration": dict(manifest.get("calibration") or {}),
         "config_sources": {},
         "optional_evidence": sources["optional_evidence"],
+        "diagnostic_compatibility": sources["diagnostic_compatibility"],
         "dataset_source": {
             "path": str(bag_path) if bag_path is not None else None,
             "size_bytes": None,
