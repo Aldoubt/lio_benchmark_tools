@@ -4,7 +4,22 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from freeze_experiment import register_generated_artifact, write_json_atomic
+from freeze_experiment import (
+    register_generated_artifact,
+    sha256_path,
+    write_json_atomic,
+)
+from pointcloud_frame_index import build_pointcloud_frame_index
+from viewer_i18n import native_viewer_language
+
+
+def build_compat_maps(
+    source: Path, *, algorithms: list[str], baseline: str
+) -> dict[str, Any]:
+    """Lazy bridge so importing freeze_rerun does not require ROS modules."""
+    from freeze_map_compat import build_compat_maps as implementation
+
+    return implementation(source, algorithms=algorithms, baseline=baseline)
 
 
 def _load_json_object(path: Path) -> dict[str, Any] | None:
@@ -26,9 +41,14 @@ def _pointcloud_runtime_status(topic_type: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def pointcloud_source_status(run: Path) -> dict[str, Any]:
+def pointcloud_source_status(
+    run: Path,
+    *,
+    index_root: Path | None = None,
+) -> dict[str, Any]:
     run = Path(run).resolve()
-    index_path = run / "metrics" / "pointcloud_frame_index.json"
+    root = Path(index_root).resolve() if index_root is not None else run
+    index_path = root / "metrics" / "pointcloud_frame_index.json"
     if not index_path.is_file():
         return {
             "available": False,
@@ -50,7 +70,7 @@ def pointcloud_source_status(run: Path) -> dict[str, Any]:
 
     sqlite_db = Path(str(payload["sqlite_db"])).expanduser()
     if not sqlite_db.is_absolute():
-        sqlite_db = (run / sqlite_db).resolve()
+        sqlite_db = (root / sqlite_db).resolve()
     else:
         sqlite_db = sqlite_db.resolve()
     if not sqlite_db.is_file():
@@ -76,6 +96,179 @@ def pointcloud_source_status(run: Path) -> dict[str, Any]:
         "index_path": str(index_path),
         "sqlite_db": str(sqlite_db),
     }
+
+
+def _load_freeze_manifest(frozen: Path) -> dict[str, Any]:
+    path = Path(frozen) / "freeze_manifest.json"
+    payload = _load_json_object(path)
+    if payload is None:
+        raise ValueError(f"invalid or missing freeze manifest: {path}")
+    return payload
+
+
+def register_compatibility_artifact(
+    frozen: Path,
+    relative_path: str,
+    role: str,
+    derivation: str,
+) -> dict[str, Any]:
+    frozen = Path(frozen).resolve()
+    relative = Path(str(relative_path))
+    if relative.is_absolute() or ".." in relative.parts or str(relative) in {"", "."}:
+        raise ValueError(f"invalid compatibility artifact path: {relative_path}")
+    target = (frozen / relative).resolve()
+    try:
+        target.relative_to(frozen)
+    except ValueError as exc:
+        raise ValueError(
+            f"compatibility artifact escapes frozen bundle: {relative_path}"
+        ) from exc
+    digest, size = sha256_path(target)
+    manifest = _load_freeze_manifest(frozen)
+    record = {
+        "bundle_path": relative.as_posix(),
+        "role": str(role),
+        "derivation": str(derivation),
+        "size_bytes": size,
+        "sha256": digest,
+    }
+    existing = manifest.get("compatibility_artifacts")
+    if not isinstance(existing, list):
+        existing = []
+    manifest["compatibility_artifacts"] = [
+        item
+        for item in existing
+        if not isinstance(item, dict) or item.get("bundle_path") != record["bundle_path"]
+    ] + [record]
+    write_json_atomic(frozen / "freeze_manifest.json", manifest)
+    return record
+
+
+def ensure_pointcloud_source(run: Path, frozen: Path) -> dict[str, Any]:
+    """Use or derive a compact frame index without mutating the historical run."""
+    run = Path(run).resolve()
+    frozen = Path(frozen).resolve()
+    frozen_source = (frozen / "source").resolve()
+    index_root = frozen_source if frozen_source.is_dir() else run
+
+    status = pointcloud_source_status(run, index_root=index_root)
+    if status["available"]:
+        return {
+            **status,
+            "index_source": (
+                "frozen/source" if index_root == frozen_source else "source_run"
+            ),
+            "derived": False,
+            "derivation_error": None,
+        }
+
+    if (
+        status["reason"] != "pointcloud_frame_index_missing"
+        or index_root != frozen_source
+        or not (frozen_source / "manifest.json").is_file()
+    ):
+        return {
+            **status,
+            "index_source": (
+                "frozen/source" if index_root == frozen_source else "source_run"
+            ),
+            "derived": False,
+            "derivation_error": None,
+        }
+
+    try:
+        result = build_pointcloud_frame_index(frozen_source)
+        for relative in result.get("artifacts") or []:
+            register_compatibility_artifact(
+                frozen,
+                (Path("source") / str(relative)).as_posix(),
+                "compatibility_derived_pointcloud_index",
+                "source-bag-read-only-index-v1",
+            )
+        rebuilt = pointcloud_source_status(run, index_root=frozen_source)
+        return {
+            **rebuilt,
+            "index_source": "frozen/source",
+            "derived": bool(rebuilt["available"]),
+            "derivation_error": None,
+            "derivation": {
+                "method": "source-bag-read-only-index-v1",
+                "frames": result.get("frames"),
+                "origin_timestamp_s": result.get("origin_timestamp_s"),
+                "origin_source": result.get("origin_source"),
+            },
+        }
+    except Exception as exc:
+        # Pointcloud evidence remains optional. Preserve the completed freeze
+        # path while making the exact omission reason auditable.
+        return {
+            **status,
+            "index_source": "frozen/source",
+            "derived": False,
+            "derivation_error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def ensure_static_maps(
+    frozen: Path,
+    viewer_run: Path,
+    *,
+    algorithms: list[str],
+    baseline: str,
+) -> dict[str, Any]:
+    """Populate missing map PLYs in the frozen compatibility source only."""
+    frozen = Path(frozen).resolve()
+    viewer_run = Path(viewer_run).resolve()
+    map_dir = viewer_run / "figures" / "fast_livo2_baseline_maps"
+
+    def available() -> list[str]:
+        return [
+            algorithm
+            for algorithm in algorithms
+            if (map_dir / f"{algorithm}_map.ply").is_file()
+        ]
+
+    before = available()
+    if len(before) == len(algorithms):
+        return {
+            "available_algorithms": before,
+            "derived": False,
+            "derivation_error": None,
+        }
+
+    if viewer_run.name != "source" or not (viewer_run / "manifest.json").is_file():
+        return {
+            "available_algorithms": before,
+            "derived": False,
+            "derivation_error": "frozen_source_manifest_unavailable",
+        }
+
+    try:
+        result = build_compat_maps(
+            viewer_run,
+            algorithms=algorithms,
+            baseline=baseline,
+        )
+        for relative in result.get("artifacts") or []:
+            register_compatibility_artifact(
+                frozen,
+                (Path("source") / str(relative)).as_posix(),
+                "compatibility_derived_reconstructed_map",
+                "baseline-aligned-read-only-bag-map-v1",
+            )
+        after = available()
+        return {
+            "available_algorithms": after,
+            "derived": bool(result.get("artifacts")),
+            "derivation_error": None,
+            "derivation": result,
+        }
+    except Exception as exc:
+        return {
+            "available_algorithms": available(),
+            "derived": False,
+            "derivation_error": f"{type(exc).__name__}: {exc}",
+        }
 
 
 def _viewer_api() -> tuple[
@@ -107,8 +300,13 @@ def _viewer_api() -> tuple[
 
         def redirected_load_json(path: Path, default: Any = None) -> Any:
             relative = relative_to_original(Path(path))
-            if relative == Path("metrics/diagnostic_timeline.json"):
-                return original_load_json(diagnostic_root / relative, default)
+            if relative in {
+                Path("metrics/diagnostic_timeline.json"),
+                Path("metrics/pointcloud_frame_index.json"),
+            }:
+                redirected = diagnostic_root / relative
+                if redirected.is_file():
+                    return original_load_json(redirected, default)
             return original_load_json(path, default)
 
         def redirected_load_csv(path: Path) -> list[dict[str, str]]:
@@ -166,14 +364,6 @@ def finalize_saved_rerun_recording() -> str:
     return str(getattr(rr, "__version__", "unknown"))
 
 
-def _load_freeze_manifest(frozen: Path) -> dict[str, Any]:
-    path = Path(frozen) / "freeze_manifest.json"
-    payload = _load_json_object(path)
-    if payload is None:
-        raise ValueError(f"invalid or missing freeze manifest: {path}")
-    return payload
-
-
 def _record_rerun_failure(frozen: Path, exc: Exception) -> None:
     try:
         manifest = _load_freeze_manifest(frozen)
@@ -201,7 +391,12 @@ def build_frozen_rerun(frozen: Path) -> dict[str, Any]:
     if not run.is_dir():
         raise FileNotFoundError(f"source run is unavailable: {run}")
     frozen_source = (frozen / "source").resolve()
-    diagnostic_run = frozen_source if frozen_source.is_dir() else run
+    viewer_run = (
+        frozen_source
+        if frozen_source.is_dir() and (frozen_source / "manifest.json").is_file()
+        else run
+    )
+    diagnostic_run = viewer_run
 
     algorithms = manifest.get("algorithms")
     if not isinstance(algorithms, list) or not algorithms:
@@ -212,19 +407,26 @@ def build_frozen_rerun(frozen: Path) -> dict[str, Any]:
         raise ValueError("freeze manifest is missing baseline")
     if baseline not in algorithms:
         raise ValueError(f"freeze baseline is not present in algorithms: {baseline}")
-    language = str(manifest.get("language") or "")
-    if not language:
+    report_language = str(manifest.get("language") or "")
+    if not report_language:
         raise ValueError("freeze manifest is missing language")
+    display_language = native_viewer_language(report_language)
 
-    pointcloud = pointcloud_source_status(run)
+    pointcloud = ensure_pointcloud_source(run, frozen)
     pointcloud_mode = "anomaly" if pointcloud["available"] else "none"
+    maps = ensure_static_maps(
+        frozen,
+        viewer_run,
+        algorithms=algorithms,
+        baseline=baseline,
+    )
     log_recording, parse_point_lods, default_point_lods = _viewer_api()
     output = (frozen / "viewer" / "diagnostic.rrd").resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         summary = log_recording(
-            run=run,
+            run=viewer_run,
             diagnostic_run=diagnostic_run,
             algorithms=algorithms,
             baseline=baseline,
@@ -236,7 +438,7 @@ def build_frozen_rerun(frozen: Path) -> dict[str, Any]:
             point_lods=parse_point_lods(default_point_lods),
             world_pointcloud_mode=pointcloud_mode,
             world_algorithm=baseline,
-            language=language,
+            language=display_language,
             save=output,
             spawn=False,
         )
@@ -261,13 +463,22 @@ def build_frozen_rerun(frozen: Path) -> dict[str, Any]:
         "sdk_version": sdk_version,
         "path": "viewer/diagnostic.rrd",
         "diagnostic_source": (
-            "frozen/source" if diagnostic_run == frozen_source else "source_run"
+            "frozen/source" if viewer_run == frozen_source else "source_run"
         ),
+        "report_language": report_language,
+        "native_viewer_language": display_language,
+        "native_language_policy": "ascii-safe-labels-for-rerun-0.36",
         "bounded_policy": "anomaly-near",
         "map_evidence": {
             "optional": True,
             "requested": True,
-            "source": "original_run_read_only",
+            "source": (
+                "frozen/source" if viewer_run == frozen_source else "source_run"
+            ),
+            "available_algorithms": maps.get("available_algorithms") or [],
+            "derived": bool(maps.get("derived")),
+            "derivation_error": maps.get("derivation_error"),
+            "derivation": maps.get("derivation"),
         },
         "pointcloud_evidence": {
             "enabled": bool(pointcloud["available"]),
@@ -275,7 +486,11 @@ def build_frozen_rerun(frozen: Path) -> dict[str, Any]:
             "omission_reason": pointcloud["reason"],
             "index_path": pointcloud["index_path"],
             "sqlite_db": pointcloud["sqlite_db"],
-            "source": "original_run_read_only",
+            "index_source": pointcloud.get("index_source"),
+            "index_derived": bool(pointcloud.get("derived")),
+            "index_derivation_error": pointcloud.get("derivation_error"),
+            "index_derivation": pointcloud.get("derivation"),
+            "payload_source": "original_rosbag2_sqlite_read_only",
         },
         "builder_summary": summary,
     }
