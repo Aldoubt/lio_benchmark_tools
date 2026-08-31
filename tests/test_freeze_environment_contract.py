@@ -110,7 +110,7 @@ def test_modern_unified_timeline_supersedes_missing_raw_discontinuity(tmp_path):
         encoding="utf-8",
     )
     (run / "standardized" / "trajectories" / "fast_livo2.csv").write_text(
-        "timestamp,x,y,z\n0,0,0,0\n",
+        "timestamp_s,x_m,y_m,z_m,yaw_rad\n0,0,0,0,0\n1,1,0,0,0\n",
         encoding="utf-8",
     )
     (run / "metrics" / "diagnostic_timeline" / "fast_livo2.csv").write_text(
@@ -122,3 +122,44 @@ def test_modern_unified_timeline_supersedes_missing_raw_discontinuity(tmp_path):
     assert sources["optional_evidence"]["trajectory_discontinuity"] is False
     required = {path.relative_to(run).as_posix() for path in sources["required_files"]}
     assert "metrics/trajectory_discontinuity.json" not in required
+
+
+def test_legacy_run_without_unified_timeline_is_marked_for_rebuild(tmp_path):
+    run = tmp_path / "run"
+    (run / "metadata").mkdir(parents=True)
+    (run / "metrics").mkdir(parents=True)
+    (run / "standardized" / "trajectories").mkdir(parents=True)
+    algorithms = {"fast_livo2": {}, "dlio": {}}
+    (run / "manifest.json").write_text(
+        json.dumps({"dataset": {}, "algorithms": algorithms}), encoding="utf-8"
+    )
+    (run / "metadata" / "run_status.json").write_text(
+        json.dumps({"run_id": "legacy-run", "state": "completed"}), encoding="utf-8"
+    )
+    (run / "metrics" / "full_comparison.json").write_text(
+        json.dumps(
+            {
+                "algorithms": [
+                    {"algorithm": "fast_livo2", "status": "SUCCESS"},
+                    {"algorithm": "dlio", "status": "SUCCESS"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    for algorithm in algorithms:
+        (run / "standardized" / "trajectories" / f"{algorithm}.csv").write_text(
+            "timestamp_s,x_m,y_m,z_m,yaw_rad\n0,0,0,0,0\n1,1,0,0,0\n",
+            encoding="utf-8",
+        )
+
+    sources = discover_freeze_sources(run)
+
+    assert sources["algorithms"] == ["fast_livo2", "dlio"]
+    compatibility = sources["diagnostic_compatibility"]
+    assert compatibility["source_timeline_present"] is False
+    assert compatibility["rebuild_required"] is True
+    required = {path.relative_to(run).as_posix() for path in sources["required_files"]}
+    assert "metrics/diagnostic_timeline.json" not in required
+    assert "standardized/trajectories/fast_livo2.csv" in required
+    assert "standardized/trajectories/dlio.csv" in required
