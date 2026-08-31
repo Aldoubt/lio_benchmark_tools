@@ -1,34 +1,19 @@
+import os
+import runpy
 from pathlib import Path
-from types import SimpleNamespace
-
-from lio_benchmark.frozen_bundle import _resolve_rerun_executable
 
 
-def test_resolve_rerun_executable_falls_back_to_repo_local_freeze_venv(tmp_path):
-    repo_root = tmp_path / "repo"
-    executable = repo_root / ".venv-freeze" / "bin" / "rerun"
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\n", encoding="utf-8")
-    executable.chmod(0o755)
-
-    resolved = _resolve_rerun_executable(
-        executable_resolver=lambda _: None,
-        repo_root=repo_root,
-    )
-
-    assert resolved == str(executable.resolve())
+ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER = ROOT / "benchmark_base" / "bin" / "lio-benchmark"
 
 
-def test_resolve_rerun_executable_prefers_path_lookup(tmp_path):
-    repo_root = tmp_path / "repo"
-    executable = repo_root / ".venv-freeze" / "bin" / "rerun"
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\n", encoding="utf-8")
-    executable.chmod(0o755)
+def test_repo_cli_exposes_freeze_venv_bin_to_native_viewer_lookup(monkeypatch):
+    original_path = "/usr/local/bin:/usr/bin:/bin"
+    monkeypatch.setenv("PATH", original_path)
 
-    resolved = _resolve_rerun_executable(
-        executable_resolver=lambda _: "/opt/rerun/bin/rerun",
-        repo_root=repo_root,
-    )
+    runpy.run_path(str(LAUNCHER), run_name="lio_benchmark_launcher_contract")
 
-    assert resolved == "/opt/rerun/bin/rerun"
+    expected = str((ROOT / ".venv-freeze" / "bin").resolve())
+    parts = os.environ["PATH"].split(os.pathsep)
+    assert parts[0] == expected
+    assert os.pathsep.join(parts[1:]) == original_path
