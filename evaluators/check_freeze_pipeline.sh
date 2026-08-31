@@ -9,6 +9,8 @@ baseline="fast_livo2"
 language="zh-CN"
 export_output=""
 open_after=0
+system_python="${LIO_SYSTEM_PYTHON:-python3}"
+freeze_python="${LIO_FREEZE_PYTHON:-$repo_root/.venv-freeze/bin/python}"
 
 usage() {
   cat <<'EOF'
@@ -19,15 +21,22 @@ Static/unit gate (no real run required):
   evaluators/check_freeze_pipeline.sh
 
 Real completed-run acceptance:
+  evaluators/setup_freeze_venv.sh
   evaluators/check_freeze_pipeline.sh --run <RUN_DIR> [--baseline fast_livo2] [--lang zh-CN|en]
 
 Options:
-  --run DIR            completed benchmark run to freeze and validate
-  --baseline NAME      baseline algorithm (default: fast_livo2)
-  --lang LANG          report language: zh-CN or en (default: zh-CN)
-  --export-output DIR  explicit export destination for real-run acceptance
-  --open               launch Native Rerun after freeze validation
-  -h, --help           show this help
+  --run DIR             completed benchmark run to freeze and validate
+  --baseline NAME       baseline algorithm (default: fast_livo2)
+  --lang LANG           report language: zh-CN or en (default: zh-CN)
+  --freeze-python FILE  isolated freeze Python (default: .venv-freeze/bin/python)
+  --export-output DIR   explicit export destination for real-run acceptance
+  --open                 launch Native Rerun after freeze validation
+  -h, --help             show this help
+
+Environment policy:
+  - static/unit tests use the ROS/system Python with PYTHONNOUSERSITE=1
+  - real freeze/viewer work uses the isolated freeze Python
+  - do not install rerun-sdk / NumPy 2 into the ROS system or ~/.local stack
 EOF
 }
 
@@ -36,6 +45,7 @@ while (($#)); do
     --run) run_dir=${2:?--run requires a directory}; shift 2 ;;
     --baseline) baseline=${2:?--baseline requires a value}; shift 2 ;;
     --lang) language=${2:?--lang requires zh-CN or en}; shift 2 ;;
+    --freeze-python) freeze_python=${2:?--freeze-python requires a file}; shift 2 ;;
     --export-output) export_output=${2:?--export-output requires a directory}; shift 2 ;;
     --open) open_after=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -53,7 +63,20 @@ export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/lio-benchmark-matplotlib}"
 mkdir -p "$MPLCONFIGDIR"
 export PYTHONPATH="$repo_root/evaluators:$repo_root/benchmark_base${PYTHONPATH:+:$PYTHONPATH}"
 
-python3 -m py_compile \
+system_py() {
+  env PYTHONNOUSERSITE=1 "$system_python" "$@"
+}
+
+system_py - <<'PY'
+import numpy
+import scipy
+from scipy.spatial import cKDTree
+
+_ = cKDTree([[0.0, 0.0, 0.0]])
+print(f"system scientific stack: numpy={numpy.__version__} scipy={scipy.__version__}")
+PY
+
+system_py -m py_compile \
   evaluators/freeze_experiment.py \
   evaluators/freeze_rerun.py \
   evaluators/freeze_workflow.py \
@@ -64,7 +87,8 @@ python3 -m py_compile \
   benchmark_base/lio_benchmark/entry.py \
   benchmark_base/lio_benchmark/frozen_bundle.py
 
-python3 -m pytest -q \
+system_py -m pytest -q \
+  tests/test_freeze_environment_contract.py \
   tests/test_freeze_experiment.py \
   tests/test_freeze_failure_audit.py \
   tests/test_freeze_provenance.py \
@@ -96,18 +120,48 @@ EOF
   exit 0
 fi
 
-run_dir=$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$run_dir")
+run_dir=$(system_py -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$run_dir")
 if [[ ! -d "$run_dir" || ! -f "$run_dir/manifest.json" ]]; then
   echo "invalid benchmark run: $run_dir" >&2
   exit 2
 fi
+
+freeze_python=$(system_py -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$freeze_python")
+if [[ ! -x "$freeze_python" ]]; then
+  cat >&2 <<EOF
+isolated freeze Python is unavailable: $freeze_python
+Create it first with:
+  ./evaluators/setup_freeze_venv.sh
+Or pass an equivalent environment with:
+  --freeze-python /path/to/venv/bin/python
+EOF
+  exit 2
+fi
+
+freeze_bin_dir=$(dirname "$freeze_python")
+env PYTHONNOUSERSITE=1 "$freeze_python" - <<'PY'
+import matplotlib
+import numpy
+import rerun
+import scipy
+from scipy.spatial import cKDTree
+
+_ = cKDTree([[0.0, 0.0, 0.0]])
+if int(numpy.__version__.split('.', 1)[0]) < 2:
+    raise SystemExit(f"freeze Python must use NumPy 2 for rerun-sdk 0.36.3: {numpy.__version__}")
+print(
+    "freeze scientific stack: "
+    f"numpy={numpy.__version__} scipy={scipy.__version__} "
+    f"matplotlib={matplotlib.__version__} rerun={rerun.__version__}"
+)
+PY
 
 before_hashes=$(mktemp)
 after_hashes=$(mktemp)
 cleanup() { rm -f "$before_hashes" "$after_hashes"; }
 trap cleanup EXIT
 
-python3 - "$run_dir" >"$before_hashes" <<'PY'
+system_py - "$run_dir" >"$before_hashes" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
 run = Path(sys.argv[1])
@@ -127,13 +181,16 @@ for path in paths:
 print(json.dumps(result, sort_keys=True))
 PY
 
-freeze_output=$(benchmark_base/bin/lio-benchmark freeze \
-  --run "$run_dir" \
-  --baseline "$baseline" \
-  --lang "$language")
+freeze_output=$(env \
+  PYTHONNOUSERSITE=1 \
+  PATH="$freeze_bin_dir:$PATH" \
+  benchmark_base/bin/lio-benchmark freeze \
+    --run "$run_dir" \
+    --baseline "$baseline" \
+    --lang "$language")
 printf '%s\n' "$freeze_output"
 
-frozen=$(printf '%s\n' "$freeze_output" | python3 -c '
+frozen=$(printf '%s\n' "$freeze_output" | env PYTHONNOUSERSITE=1 "$system_python" -c '
 import json, sys
 selected = None
 for line in sys.stdin:
@@ -153,7 +210,7 @@ if selected.get("freeze_state") != "COMPLETE":
 print(selected["frozen"])
 ')
 
-python3 - "$run_dir" >"$after_hashes" <<'PY'
+system_py - "$run_dir" >"$after_hashes" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
 run = Path(sys.argv[1])
@@ -179,7 +236,7 @@ if ! cmp -s "$before_hashes" "$after_hashes"; then
   exit 1
 fi
 
-python3 - "$frozen" <<'PY'
+system_py - "$frozen" <<'PY'
 import json, sys
 from pathlib import Path
 from lio_benchmark.frozen_bundle import verify_registered_artifact
@@ -215,7 +272,10 @@ if [[ -e "$export_output" ]]; then
   exit 2
 fi
 
-benchmark_base/bin/lio-benchmark export "$frozen" --output "$export_output"
+env \
+  PYTHONNOUSERSITE=1 \
+  PATH="$freeze_bin_dir:$PATH" \
+  benchmark_base/bin/lio-benchmark export "$frozen" --output "$export_output"
 for path in \
   "$export_output/report.html" \
   "$export_output/report.pdf" \
@@ -226,13 +286,17 @@ for path in \
 done
 
 if ((open_after)); then
-  benchmark_base/bin/lio-benchmark open "$frozen"
+  env \
+    PYTHONNOUSERSITE=1 \
+    PATH="$freeze_bin_dir:$PATH" \
+    benchmark_base/bin/lio-benchmark open "$frozen"
 fi
 
 cat <<EOF
 real completed-run freeze acceptance passed:
-  source run: $run_dir
-  frozen:     $frozen
-  export:     $export_output
+  source run:    $run_dir
+  frozen:        $frozen
+  export:        $export_output
+  freeze Python: $freeze_python
   native open executed: $open_after
 EOF
