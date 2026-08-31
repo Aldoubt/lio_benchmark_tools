@@ -50,6 +50,18 @@ def normalize_language(value: str) -> str:
     return language
 
 
+def native_viewer_language(value: str) -> str:
+    """Return a display language that is safe in the pinned Native Viewer.
+
+    Rerun 0.36.3's desktop viewer font atlas does not reliably cover CJK on all
+    hosts, which renders Chinese TextLog/blueprint labels as square glyphs.
+    Frozen HTML/PDF reports keep their requested language; the Native Viewer
+    uses English labels for deterministic cross-host readability.
+    """
+    normalize_language(value)
+    return "en"
+
+
 def tr(lang: str, key: str, **values: object) -> str:
     language = normalize_language(lang)
     try:
