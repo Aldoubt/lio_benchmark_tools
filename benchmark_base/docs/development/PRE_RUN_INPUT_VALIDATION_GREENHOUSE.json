@@ -1,0 +1,32 @@
+{
+  "dataset": "date/green-house",
+  "lidar_topic": "/agt/sensors/lidar/custom",
+  "lidar_type": "livox_ros_driver2/msg/CustomMsg",
+  "sampled_lidar_frames": 50,
+  "sampled_points": 999264,
+  "non_finite_points": 0,
+  "input_time_backtracks": 6730,
+  "output_time_backtracks_after_sort": 0,
+  "dropped_ratio": 0.0,
+  "frame_id": "livox_frame",
+  "point_time_field": "offset_time",
+  "point_time_datatype": "uint32",
+  "point_time_unit": "ns",
+  "point_time_semantics": "relative_to_header",
+  "recorded_first_s": 1767659506.403452,
+  "header_first_s": 1767659506.302108,
+  "record_minus_header_s": 0.10134387016296387,
+  "line_counts": {"0": 249816, "1": 249816, "2": 249816, "3": 249816},
+  "imu": {
+    "frame_id": "livox_frame",
+    "acceleration_norm_sample_median": 0.988725,
+    "declared_unit": "g",
+    "orientation_valid": false,
+    "orientation_reason": "zero quaternion and zero covariance"
+  },
+  "limitations": [
+    "No independent ground truth is present in the bag.",
+    "IMU unit is inferred from acceleration magnitude and must remain explicitly recorded as g.",
+    "Input point offsets are interleaved; the canonical adapter must sort by offset_time."
+  ]
+}

@@ -23,6 +23,7 @@
     imuGyrBiasN: 0.0001
     imuGravity: 9.80665
     imuRPYWeight: 0.01
+    allow6AxisImu: true
     extrinsicTrans: [0.011, 0.02329, -0.04412]
     extrinsicRot: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
     extrinsicRPY: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]

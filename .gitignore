@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.venv-freeze/
+.venv-viewer/
 build/
 install/
 log/
@@ -14,8 +16,11 @@ output/
 *.bag
 *.bag2
 navigation_*/
+/date/green-house/
 *.pcd
 *.ply
 *.png
 *.csv
 *.jsonl
+/benchmark_base/web_viewer/node_modules/
+/benchmark_base/web_viewer/dist/

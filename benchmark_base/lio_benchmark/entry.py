@@ -2,12 +2,26 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
 from .postprocess import execute_stage
+from .frozen_bundle import export_frozen_bundle, open_frozen_recording
 
-POSTPROCESS_COMMANDS = {"standardize", "evaluate", "visualize", "report", "compare"}
+POSTPROCESS_COMMANDS = {
+    "standardize",
+    "evaluate",
+    "visualize",
+    "report",
+    "compare",
+    "phase-analysis",
+    "diagnostics",
+    "viewer",
+    "open",
+    "export",
+    "freeze",
+}
 
 
 def _postprocess_parser() -> argparse.ArgumentParser:
@@ -29,11 +43,106 @@ def _postprocess_parser() -> argparse.ArgumentParser:
         parser.add_argument("--voxel", type=float, default=0.12)
         parser.add_argument("--dry-run", action="store_true")
 
+    parser = sub.add_parser("diagnostics")
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--baseline", default="fast_livo2")
+    parser.add_argument("--hz", type=float, default=10.0, help="fixed trajectory diagnostic rate")
+    parser.add_argument("--window-gap", type=float, default=1.0, help="merge anomaly events separated by at most this many seconds")
+    parser.add_argument("--with-pointcloud-index", action="store_true", help="also deserialize LiDAR headers and build an on-demand rosbag frame index")
+    parser.add_argument("--dry-run", action="store_true")
+
+    parser = sub.add_parser("viewer")
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--mode", choices=("native", "web"), default="native")
+    parser.add_argument("--baseline", default="fast_livo2")
+    parser.add_argument("--algorithms", help="comma-separated algorithms; default: all diagnostic algorithms")
+    parser.add_argument(
+        "--lang",
+        choices=("auto", "zh-CN", "en"),
+        default="auto",
+        help="display language; auto uses English for native Rerun labels and Chinese for the web shell",
+    )
+    parser.add_argument(
+        "--web-profile",
+        choices=("empty", "trajectory", "scalar", "pose", "full"),
+        default="full",
+        help="web diagnostic recording ladder; ignored by native mode",
+    )
+    maps = parser.add_mutually_exclusive_group()
+    maps.add_argument(
+        "--with-maps",
+        dest="viewer_maps",
+        action="store_true",
+        help="include reconstructed PLY maps; opt-in for web mode",
+    )
+    maps.add_argument(
+        "--no-maps",
+        dest="viewer_maps",
+        action="store_false",
+        help="skip reconstructed PLY maps",
+    )
+    parser.set_defaults(viewer_maps=None)
+    parser.add_argument(
+        "--pointcloud-mode",
+        choices=("none", "anomaly", "sampled"),
+        default=None,
+        help="raw LiDAR mode; default: anomaly in native mode, none in web mode",
+    )
+    parser.add_argument("--pointcloud-period", type=float, default=1.0, help="seconds between raw scans in sampled mode")
+    parser.add_argument("--point-step", type=int, default=20, help="legacy raw LiDAR display stride")
+    parser.add_argument("--point-lods", default="10,20,80", help="dense,medium,sparse LiDAR point strides")
+    parser.add_argument(
+        "--world-pointcloud-mode",
+        choices=("none", "anomaly", "sampled"),
+        default=None,
+        help="world LiDAR mode; default: anomaly in native mode, none in web mode",
+    )
+    parser.add_argument("--world-algorithm", help="world LiDAR algorithm visible by default; default: baseline")
+    parser.add_argument("--map-point-step", type=int, default=4, help="display every Nth reconstructed map point")
+    parser.add_argument("--save", type=Path, help="native mode only: write a .rrd recording")
+    parser.add_argument("--no-spawn", action="store_true", help="native: no app spawn; web: no browser auto-open")
+    parser.add_argument("--dry-run", action="store_true")
+
     parser = sub.add_parser("report")
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--no-plot", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+
+    parser = sub.add_parser("freeze")
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--baseline", default="fast_livo2")
+    parser.add_argument("--lang", choices=("zh-CN", "en"), default="zh-CN")
+
+    parser = sub.add_parser("open")
+    parser.add_argument("frozen_run", type=Path)
+
+    parser = sub.add_parser("export")
+    parser.add_argument("frozen_run", type=Path)
+    parser.add_argument("--output", type=Path)
+
+    parser = sub.add_parser("phase-analysis")
+    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--baseline", default="fast_livo2")
+    parser.add_argument("--phase-param", action="append", default=[])
+    parser.add_argument("--no-plot", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
     return root
+
+
+def execute_freeze(run: Path, *, baseline: str, language: str) -> int:
+    repo_root = Path(__file__).resolve().parents[2]
+    command = [
+        sys.executable,
+        str(repo_root / "evaluators" / "freeze_workflow.py"),
+        "--run",
+        str(run),
+        "--baseline",
+        baseline,
+        "--lang",
+        language,
+    ]
+    result = subprocess.run(command, check=False)
+    return int(result.returncode or 0)
 
 
 def _legacy_main(argv: list[str]) -> int:
@@ -53,6 +162,21 @@ def main(argv: list[str] | None = None) -> int:
         return _legacy_main(argsv)
 
     args = _postprocess_parser().parse_args(argsv)
+    try:
+        if args.command == "freeze":
+            return execute_freeze(
+                args.run, baseline=args.baseline, language=args.lang
+            )
+        if args.command == "open":
+            return open_frozen_recording(args.frozen_run)
+        if args.command == "export":
+            output = export_frozen_bundle(args.frozen_run, output=args.output)
+            print(output)
+            return 0
+    except (ValueError, FileNotFoundError, FileExistsError, RuntimeError) as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 2
+
     kwargs = {"dry_run": args.dry_run}
     if args.command in {"visualize", "compare"}:
         kwargs.update({
@@ -62,10 +186,53 @@ def main(argv: list[str] | None = None) -> int:
             "point_step": args.point_step,
             "voxel": args.voxel,
         })
+    elif args.command == "diagnostics":
+        kwargs.update({
+            "baseline": args.baseline,
+            "diagnostic_hz": args.hz,
+            "anomaly_window_gap_s": args.window_gap,
+            "with_pointcloud_index": args.with_pointcloud_index,
+        })
+    elif args.command == "viewer":
+        viewer_language = args.lang
+        if viewer_language == "auto":
+            viewer_language = "en" if args.mode == "native" else "zh-CN"
+        viewer_with_maps = args.viewer_maps
+        if viewer_with_maps is None:
+            viewer_with_maps = args.mode == "native"
+        viewer_pointcloud_mode = args.pointcloud_mode
+        if viewer_pointcloud_mode is None:
+            viewer_pointcloud_mode = "anomaly" if args.mode == "native" else "none"
+        viewer_world_pointcloud_mode = args.world_pointcloud_mode
+        if viewer_world_pointcloud_mode is None:
+            viewer_world_pointcloud_mode = "anomaly" if args.mode == "native" else "none"
+        kwargs.update({
+            "baseline": args.baseline,
+            "viewer_mode": args.mode,
+            "viewer_algorithms": args.algorithms,
+            "viewer_language": viewer_language,
+            "viewer_web_profile": args.web_profile,
+            "viewer_with_maps": viewer_with_maps,
+            "viewer_pointcloud_mode": viewer_pointcloud_mode,
+            "viewer_pointcloud_period_s": args.pointcloud_period,
+            "viewer_point_step": args.point_step,
+            "viewer_point_lods": args.point_lods,
+            "viewer_world_pointcloud_mode": viewer_world_pointcloud_mode,
+            "viewer_world_algorithm": args.world_algorithm,
+            "viewer_map_point_step": args.map_point_step,
+            "viewer_save": args.save,
+            "viewer_spawn": not args.no_spawn,
+        })
     elif args.command == "report":
         kwargs["no_plot"] = args.no_plot
+    elif args.command == "phase-analysis":
+        kwargs.update({
+            "baseline": args.baseline,
+            "phase_params": args.phase_param,
+            "no_plot": args.no_plot,
+        })
     try:
         return execute_stage(args.run, args.command, **kwargs)
-    except (ValueError, FileNotFoundError) as exc:
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
         print(f"错误: {exc}", file=sys.stderr)
         return 2

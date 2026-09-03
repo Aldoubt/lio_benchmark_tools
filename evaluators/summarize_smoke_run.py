@@ -12,6 +12,7 @@ import rosbag2_py
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
+from health_policy import nominal_stable_path_length_m, trajectory_short
 from standardize_trajectory import normalize_samples, write_outputs
 
 
@@ -172,7 +173,7 @@ def summarize_algorithm(run: Path, algorithm: str, expected_duration_s: float | 
     input_validation_path = raw / "input_validation.json"
     input_validation = json.loads(input_validation_path.read_text(encoding="utf-8")) if input_validation_path.is_file() else {}
     health_flags: list[str] = []
-    if metrics and expected_duration_s and metrics["duration_s"] < expected_duration_s * 0.98:
+    if metrics and trajectory_short(metrics.get("duration_s"), result, expected_duration_s):
         health_flags.append("trajectory_short")
     return {
         "algorithm": algorithm,
@@ -223,7 +224,7 @@ def write_report(output: Path, rows: list[dict], title: str, description: str) -
     lines.extend(
         [
             "",
-            "Health flags are diagnostic: trajectory_short means the canonical trajectory covers less than 98% of the manifest duration; path_divergence means the path is an order-of-magnitude outlier from the stable trajectory group. "
+            "Health flags are diagnostic: trajectory_short compares a smoke trajectory with its requested smoke duration using a 5 s startup margin, while full-bag runs require at least 98% of the manifest duration; path_divergence means the path is an order-of-magnitude outlier from the stable trajectory group. "
             "Resource values come from the monitored algorithm process tree. Parent-process values from GNU time are retained in the JSON but are not used for the peak RSS column. "
             "Samples, path length, endpoint displacement, and Z range are diagnostic health signals only. "
             "No absolute accuracy ranking is valid without independent ground truth.",
@@ -244,11 +245,12 @@ def main() -> int:
     expected_duration_s = float(manifest.get("dataset", {}).get("duration_s") or 0.0) or None
     algorithms = [algorithm for algorithm, entry in status["algorithms"].items() if entry.get("result")]
     rows = [summarize_algorithm(run, algorithm, expected_duration_s) for algorithm in algorithms]
-    stable_paths = [item["trajectory"].get("path_length_m") for item in rows if item["trajectory"].get("path_length_m", 0.0) <= 1000.0]
-    if stable_paths:
-        nominal_path = sorted(stable_paths)[len(stable_paths) // 2]
+    nominal_path = nominal_stable_path_length_m(
+        item.get("trajectory", {}).get("path_length_m") for item in rows
+    )
+    if nominal_path is not None:
         for item in rows:
-            path_length = item["trajectory"].get("path_length_m")
+            path_length = item.get("trajectory", {}).get("path_length_m")
             if path_length is not None and path_length > max(1000.0, nominal_path * 5.0):
                 item["health_flags"].append("path_divergence")
     full_bag = all((item["result"].get("smoke_duration_s") is None and item["result"].get("duration_s") is None) for item in status["algorithms"].values() if item.get("result"))
