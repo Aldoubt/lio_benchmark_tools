@@ -61,7 +61,17 @@ def main() -> int:
         rosbag2_py.ConverterOptions("cdr", "cdr"),
     )
     type_map = {item.name: item.type for item in reader.get_all_topics_and_types()}
-    message_types = {topic: get_message(type_name) for topic, type_name in type_map.items()}
+    message_types = {}
+    unavailable_topics: dict[str, str] = {}
+    for topic, type_name in type_map.items():
+        try:
+            message_types[topic] = get_message(type_name)
+        except (ImportError, ModuleNotFoundError) as exc:
+            # Bags may contain zero-count custom topics from an unavailable
+            # driver package. They are irrelevant to the benchmark inputs.
+            unavailable_topics[topic] = f"{type_name}: {exc}"
+    if unavailable_topics:
+        print("Skipping unavailable message types: " + "; ".join(f"{topic} ({detail})" for topic, detail in unavailable_topics.items()))
     recorded_times: dict[str, list[float]] = {topic: [] for topic in type_map}
     header_times: dict[str, list[float]] = {topic: [] for topic in type_map}
     point_fields: dict[str, list[dict[str, Any]]] = {}
@@ -74,6 +84,8 @@ def main() -> int:
 
     while reader.has_next():
         topic, raw, recorded_ns = reader.read_next()
+        if topic not in message_types:
+            continue
         message = deserialize_message(raw, message_types[topic])
         recorded_times[topic].append(recorded_ns * 1e-9)
         if hasattr(message, "header"):
@@ -155,6 +167,7 @@ def main() -> int:
             "已有 odometry/TF 可作为系统历史输出参考，但不是独立真值，不能用于绝对精度。",
             "IMU 全程统计不能代替已识别静止区间的零偏和噪声估计。",
         ],
+        "unavailable_message_types": unavailable_topics,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
