@@ -1,0 +1,7 @@
+# Development / unit-test environment (.venv-dev).
+# It inherits ROS Humble and Ubuntu 22.04 apt packages (NumPy 1.21, SciPy 1.8)
+# via --system-site-packages, and must never see ~/.local: a user-site NumPy 2.x
+# breaks the apt SciPy ABI. Create it with ./evaluators/setup_dev_venv.sh and run
+# tests with ./evaluators/run_tests.sh. Rerun-based freeze tooling keeps using
+# .venv-freeze (requirements-freeze.txt).
+-r requirements-report.txt

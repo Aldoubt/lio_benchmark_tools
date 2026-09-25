@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 .venv-freeze/
 .venv-viewer/
+.venv-dev/
 build/
 install/
 log/
@@ -16,6 +17,7 @@ output/
 *.bag
 *.bag2
 navigation_*/
+/mid360_rtk_first_test/
 /date/green-house/
 *.pcd
 *.ply

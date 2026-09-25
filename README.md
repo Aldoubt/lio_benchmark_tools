@@ -61,11 +61,11 @@ benchmark_base/bin/lio-benchmark-viewer \
 | MOLA-LIO | LiDAR-IMU odometry | MOLA Humble binary：`mola_launcher 2.9.0`、`mola_state_estimation 2.4.2`、`mola_lidar_odometry 2.2.1` | binary | 无 |
 | FAST-LIVO2 | LiDAR-IMU odometry | `fast_livo` package，来自 `agt_navigation_v2` | `1e96f08f` | 无 |
 | Point-LIO | LiDAR-IMU odometry | `point_lio` ROS 2 fork | `a8e2d0d5` | 无 |
-| DLIO | LiDAR-IMU odometry | `direct_lidar_inertial_odometry` 1.1.1，`feature/ros2` | `c8acc371` | [spaciousness_bounds.patch](patches/dlio/spaciousness_bounds.patch) |
+| DLIO | LiDAR-IMU odometry | `direct_lidar_inertial_odometry` 1.1.1，`feature/ros2` | `c8acc371` | [spaciousness_bounds.patch](patches/dlio/spaciousness_bounds.patch)；MID360 时间处理见 [mid360_time_handling.patch](patches/dlio_ros2/mid360_time_handling.patch) |
 | GLIM odometry | LiDAR-IMU odometry | GLIM v1.2.2 CPU odometry | `faa264a1` | [gtsam_points_v1.2.2_boost_none.patch](patches/glim/gtsam_points_v1.2.2_boost_none.patch) |
 | GLIM full SLAM | Full SLAM | GLIM v1.2.2 CPU full SLAM | `faa264a1` | [gtsam_points_v1.2.2_boost_none.patch](patches/glim/gtsam_points_v1.2.2_boost_none.patch) |
-| LIO-SAM no-loop | Full SLAM | LIO-SAM ROS 2 package 1.0.0 | `08af3f32` | 无 |
-| LIO-SAM loop | Full SLAM | LIO-SAM ROS 2 package 1.0.0 | `08af3f32` | 无 |
+| LIO-SAM no-loop | Full SLAM | LIO-SAM ROS 2 package 1.0.0 | `08af3f32` | 6 轴 IMU 数据集需 [allow_6axis_imu.patch](patches/lio_sam/allow_6axis_imu.patch)（`allow6AxisImu`，默认关闭） |
+| LIO-SAM loop | Full SLAM | LIO-SAM ROS 2 package 1.0.0 | `08af3f32` | 同上 |
 
 完整 40 位 commit、仓库 URL、分支、依赖和补丁说明以版本锁定 JSON 及每个 run 内冻结的 `manifest.json` 为准。DLIO 和 GLIM 的 patch 是构建前提，不能只 checkout 上游 commit。
 
@@ -188,8 +188,11 @@ benchmark_base/bin/lio-benchmark doctor \
 benchmark_base/bin/lio-benchmark commands \
   --config benchmark_base/config/mapping_20260719_172810.json
 
-python3 -m pytest -q
+./evaluators/setup_dev_venv.sh   # 首次：创建 .venv-dev
+./evaluators/run_tests.sh
 ```
+
+单元测试在 `.venv-dev` 中运行，并通过 `PYTHONNOUSERSITE=1` 屏蔽 `~/.local`。直接执行 `python3 -m pytest` 时，如果 `~/.local` 装有 NumPy 2.x，Ubuntu 22.04 自带的 SciPy 1.8 会在导入阶段报 `numpy.dtype size changed`。Rerun/冻结工具链仍使用独立的 `.venv-freeze`，见 [冻结环境](benchmark_base/docs/FREEZE_ENVIRONMENT.md)。
 
 验证通过后必须使用新的 run ID，不能覆盖归档结果：
 
