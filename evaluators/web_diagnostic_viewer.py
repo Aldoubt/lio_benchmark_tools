@@ -152,6 +152,7 @@ def main() -> int:
         world_pointcloud_mode=args.world_pointcloud_mode,
         world_algorithm=world_algorithm,
         language=RERUN_LABEL_LANGUAGE,
+        web_profile=args.web_profile,
     )
     apply_state(initial_state)
 

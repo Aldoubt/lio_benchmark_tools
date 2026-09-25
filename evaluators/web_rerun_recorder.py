@@ -143,21 +143,57 @@ def log_recording_web_safe(
     world_pointcloud_mode: str,
     world_algorithm: str | None,
     language: str,
+    web_profile: str = "full",
 ) -> dict[str, Any]:
     """Populate the WebViewer recording with columnar high-rate series.
 
     Static trajectories/maps and the bounded anomaly-near LiDAR frames remain
     row-oriented because they are only a handful of chunks. Dense 10 Hz series
     use ``send_columns`` exclusively.
+
+    ``web_profile`` selects a cumulative diagnostic ladder (see
+    ``web_profile_layers``) so browser memory problems can be bisected:
+    ``empty`` logs nothing and does not touch the run directory or Rerun API,
+    ``trajectory`` adds static trajectories, ``scalar`` adds motion/resource
+    series, ``pose`` adds the moving current-pose markers and ``full`` adds
+    anomaly events plus maps/LiDAR frames.
     """
+    layers = web_profile_layers(web_profile)
     run = Path(run).resolve()
     world_algorithm = world_algorithm or baseline
     if world_algorithm not in algorithms:
         raise ValueError(f"world algorithm must be selected for the viewer: {world_algorithm}")
 
-    timeline = load_json(run / "metrics" / "diagnostic_timeline.json", {}) or {}
-    windows = list(timeline.get("anomaly_windows") or [])
-    selected_windows = [item for item in windows if item.get("algorithm") in algorithms]
+    pointcloud_mode = pointcloud_mode if "heavy" in layers else "none"
+    world_pointcloud_mode = world_pointcloud_mode if "heavy" in layers else "none"
+    with_maps = bool(with_maps) and "heavy" in layers
+
+    result: dict[str, Any] = {
+        "run": str(run),
+        "algorithms": algorithms,
+        "baseline": baseline,
+        "language": language,
+        "web_profile": str(web_profile),
+        "web_profile_layers": sorted(layers),
+        "anomaly_windows": 0,
+        "pointcloud_mode": pointcloud_mode,
+        "pointcloud_frames_logged": 0,
+        "pointcloud_lods": point_lods,
+        "world_pointcloud_mode": world_pointcloud_mode,
+        "world_algorithm": world_algorithm,
+        "world_pointcloud_frames_logged": 0,
+        "columnar_rows": 0,
+        "columnar_chunks": 0,
+        "recording_profile": "web-safe-columnar",
+    }
+    if not layers:
+        return result
+
+    selected_windows: list[dict[str, Any]] = []
+    if "anomaly" in layers or "heavy" in layers:
+        timeline = load_json(run / "metrics" / "diagnostic_timeline.json", {}) or {}
+        windows = list(timeline.get("anomaly_windows") or [])
+        selected_windows = [item for item in windows if item.get("algorithm") in algorithms]
     trajectories, alignments, origin = _projection_context(run, algorithms, baseline)
 
     columnar_rows = 0
@@ -167,17 +203,20 @@ def log_recording_web_safe(
         paths = algorithm_entity_paths(algorithm)
         trajectory = trajectories[algorithm]
         rotation, translation = alignments[algorithm]
-        aligned = apply_alignment(trajectory.positions, rotation, translation) - origin
-        rr.log(
-            paths["trajectory"],
-            rr.LineStrips3D(
-                [aligned],
-                colors=COLOR_RGB.get(algorithm, [180, 180, 180]),
-                radii=0.025,
-            ),
-            static=True,
-        )
+        if "trajectory" in layers:
+            aligned = apply_alignment(trajectory.positions, rotation, translation) - origin
+            rr.log(
+                paths["trajectory"],
+                rr.LineStrips3D(
+                    [aligned],
+                    colors=COLOR_RGB.get(algorithm, [180, 180, 180]),
+                    radii=0.025,
+                ),
+                static=True,
+            )
 
+        if "pose" not in layers:
+            continue
         times, positions = _timeline_positions(run, algorithm)
         aligned_positions = apply_alignment(positions, rotation, translation) - origin
         sent = send_point_series_columns(
@@ -211,7 +250,7 @@ def log_recording_web_safe(
                 static=True,
             )
 
-    for algorithm in algorithms:
+    for algorithm in algorithms if "scalar" in layers else []:
         timeline_rows = load_csv(
             run / "metrics" / "diagnostic_timeline" / f"{algorithm}.csv"
         )
@@ -250,7 +289,7 @@ def log_recording_web_safe(
                     columnar_rows += sent
                     columnar_chunks += 1
 
-    for window in selected_windows:
+    for window in selected_windows if "anomaly" in layers else []:
         start = float(window["start_bag_time_s"])
         rr.set_time("bag_time", duration=start)
         types_display = ",".join(translate_anomaly_types(language, list(window["types"])))
@@ -368,19 +407,13 @@ def log_recording_web_safe(
                         )
                 world_pointcloud_frames_logged += 1
 
-    return {
-        "run": str(run),
-        "algorithms": algorithms,
-        "baseline": baseline,
-        "language": language,
-        "anomaly_windows": len(selected_windows),
-        "pointcloud_mode": pointcloud_mode,
-        "pointcloud_frames_logged": pointcloud_frames_logged,
-        "pointcloud_lods": point_lods,
-        "world_pointcloud_mode": world_pointcloud_mode,
-        "world_algorithm": world_algorithm,
-        "world_pointcloud_frames_logged": world_pointcloud_frames_logged,
-        "columnar_rows": columnar_rows,
-        "columnar_chunks": columnar_chunks,
-        "recording_profile": "web-safe-columnar",
-    }
+    result.update(
+        {
+            "anomaly_windows": len(selected_windows) if "anomaly" in layers else 0,
+            "pointcloud_frames_logged": pointcloud_frames_logged,
+            "world_pointcloud_frames_logged": world_pointcloud_frames_logged,
+            "columnar_rows": columnar_rows,
+            "columnar_chunks": columnar_chunks,
+        }
+    )
+    return result
