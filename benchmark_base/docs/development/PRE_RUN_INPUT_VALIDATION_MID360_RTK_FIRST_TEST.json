@@ -1,0 +1,22 @@
+{
+  "dataset": "mid360_rtk_first_test",
+  "sampled_lidar_frames": 2068,
+  "total_lidar_frames": 2068,
+  "input_points": 0,
+  "output_points": 0,
+  "invalid_tag_points": 0,
+  "non_finite_points": 0,
+  "invalid_time_points": 0,
+  "input_time_backtracks": 0,
+  "output_time_backtracks_after_sort": 0,
+  "dropped_points": 0,
+  "dropped_ratio": 0.0,
+  "pointcloud_contract": {
+    "point_time_field": "timestamp",
+    "point_time_datatype": "uint64",
+    "point_time_unit": "ns",
+    "point_time_semantics": "absolute_from_epoch",
+    "ring_semantics": "real PointCloud2 line values"
+  },
+  "conclusion": "PointCloud2 metadata inspection passed; runner uses direct PointCloud2 passthrough for this bag."
+}

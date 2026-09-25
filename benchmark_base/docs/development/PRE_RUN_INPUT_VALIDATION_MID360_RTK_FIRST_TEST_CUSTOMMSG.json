@@ -1,0 +1,24 @@
+{
+  "dataset": "mid360_rtk_first_test_custommsg",
+  "sampled_lidar_frames": 2068,
+  "total_lidar_frames": 2068,
+  "input_points": 0,
+  "output_points": 0,
+  "invalid_tag_points": 0,
+  "non_finite_points": 0,
+  "invalid_time_points": 0,
+  "input_time_backtracks": 0,
+  "output_time_backtracks_after_sort": 0,
+  "dropped_points": 0,
+  "dropped_ratio": 0.0,
+  "imu_sample_count": 41361,
+  "imu_acceleration_unit": "g",
+  "pointcloud_contract": {
+    "point_time_field": "offset_time",
+    "point_time_datatype": "uint32",
+    "point_time_unit": "ns",
+    "point_time_semantics": "relative_to_header",
+    "ring_semantics": "converted from PointCloud2 line values"
+  },
+  "conclusion": "PointCloud2 was converted to Livox CustomMsg with the ros2 branch of livox_lidar_rosbag_converter."
+}
