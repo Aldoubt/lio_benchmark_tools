@@ -6,31 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import statistics
 from pathlib import Path
 from typing import Any
 
-import rosbag2_py
-from rclpy.serialization import deserialize_message
-from rosidl_runtime_py.utilities import get_message
+from timing_audit import audit_timestamps, nearest_header_offsets, series_stats
 
 
 def stamp_seconds(message: Any) -> float:
     stamp = message.header.stamp
     return float(stamp.sec) + float(stamp.nanosec) * 1e-9
-
-
-def series_stats(values: list[float]) -> dict[str, float | int | None]:
-    if not values:
-        return {"count": 0, "mean": None, "median": None, "std": None, "min": None, "max": None}
-    return {
-        "count": len(values),
-        "mean": statistics.fmean(values),
-        "median": statistics.median(values),
-        "std": statistics.pstdev(values),
-        "min": min(values),
-        "max": max(values),
-    }
 
 
 def vector_stats(rows: list[tuple[float, float, float]]) -> dict[str, Any]:
@@ -46,9 +30,17 @@ def main() -> int:
     parser.add_argument("bag", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--gap-threshold-s", type=float, default=0.5)
+    parser.add_argument("--offset-threshold-s", type=float, default=0.2)
     args = parser.parse_args()
+    audit_timestamps([], [], gap_threshold_s=args.gap_threshold_s,
+                     offset_threshold_s=args.offset_threshold_s)
     if not args.bag.is_dir():
         raise FileNotFoundError(f"rosbag2 目录不存在: {args.bag}")
+
+    import rosbag2_py
+    from rclpy.serialization import deserialize_message
+    from rosidl_runtime_py.utilities import get_message
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8")) if args.manifest else {}
     dataset = manifest.get("dataset", {})
@@ -74,6 +66,7 @@ def main() -> int:
         print("Skipping unavailable message types: " + "; ".join(f"{topic} ({detail})" for topic, detail in unavailable_topics.items()))
     recorded_times: dict[str, list[float]] = {topic: [] for topic in type_map}
     header_times: dict[str, list[float]] = {topic: [] for topic in type_map}
+    paired_headers: dict[str, list[float | None]] = {topic: [] for topic in type_map}
     point_fields: dict[str, list[dict[str, Any]]] = {}
     frame_ids: dict[str, set[str]] = {topic: set() for topic in type_map}
     acceleration: list[tuple[float, float, float]] = []
@@ -84,12 +77,14 @@ def main() -> int:
 
     while reader.has_next():
         topic, raw, recorded_ns = reader.read_next()
+        recorded_times[topic].append(recorded_ns * 1e-9)
+        paired_headers[topic].append(None)
         if topic not in message_types:
             continue
         message = deserialize_message(raw, message_types[topic])
-        recorded_times[topic].append(recorded_ns * 1e-9)
         if hasattr(message, "header"):
             header_times[topic].append(stamp_seconds(message))
+            paired_headers[topic][-1] = header_times[topic][-1]
             frame_ids[topic].add(message.header.frame_id)
         if hasattr(message, "fields") and topic not in point_fields:
             point_fields[topic] = [
@@ -113,6 +108,9 @@ def main() -> int:
         hdr = header_times[topic]
         rec_dt = [b - a for a, b in zip(rec, rec[1:])]
         hdr_dt = [b - a for a, b in zip(hdr, hdr[1:])]
+        timing = audit_timestamps(rec, paired_headers[topic],
+                                  gap_threshold_s=args.gap_threshold_s,
+                                  offset_threshold_s=args.offset_threshold_s)
         topics[topic] = {
             "type": type_map[topic],
             "count": len(rec),
@@ -125,7 +123,9 @@ def main() -> int:
             "header_last_s": hdr[-1] if hdr else None,
             "header_dt_s": series_stats(hdr_dt),
             "header_time_reversals": sum(value <= 0.0 for value in hdr_dt),
-            "record_minus_header_s": series_stats([a - b for a, b in zip(rec, hdr)]),
+            "record_minus_header_s": timing["record_minus_header_s"],
+            "timing_audit": timing,
+            "decode_status": "unavailable_type" if topic in unavailable_topics else "available",
             "point_fields": point_fields.get(topic),
         }
 
@@ -133,13 +133,7 @@ def main() -> int:
     gyro_norm = [math.sqrt(x * x + y * y + z * z) for x, y, z in angular_velocity]
     lidar_hdr = header_times.get(lidar_topic, [])
     imu_hdr = header_times.get(imu_topic, [])
-    nearest: list[float] = []
-    index = 0
-    for lidar_time in lidar_hdr:
-        while index + 1 < len(imu_hdr) and abs(imu_hdr[index + 1] - lidar_time) <= abs(imu_hdr[index] - lidar_time):
-            index += 1
-        if imu_hdr:
-            nearest.append(lidar_time - imu_hdr[index])
+    nearest = nearest_header_offsets(lidar_hdr, imu_hdr)
 
     result = {
         "bag": str(args.bag.resolve()),
@@ -164,6 +158,9 @@ def main() -> int:
             "note": "Livox CustomMsg points can be interleaved by line; adapters sort by offset_time before emitting PointCloud2."
         },
         "limitations": [
+            "record_minus_header_s 是跨时钟域时差观测，不是已证实的传输延迟。",
+            "长间隔不证明丢包；旧 reversal 字段包括重复戳，严格回退与重复计数见 timing_audit。",
+            "nearest-header 仅按时间数值关联；时钟重置后不保证同一采集时段。",
             "已有 odometry/TF 可作为系统历史输出参考，但不是独立真值，不能用于绝对精度。",
             "IMU 全程统计不能代替已识别静止区间的零偏和噪声估计。",
         ],

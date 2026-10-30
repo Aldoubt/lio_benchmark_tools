@@ -5,7 +5,26 @@ from diagnostic_timeline import (
     cluster_anomaly_windows,
     nearest_resource_sample,
     resample_fixed_rate,
+    detect_resampled_events,
 )
+
+
+def test_resampling_preserves_outage_and_marks_restart_motion_unavailable():
+    data = trajectory([100, 100.1, 102, 102.1],
+                      [[0, 0, 0], [0.1, 0, 0], [10, 0, 0], [10.1, 0, 0]], [0, 0, 0, 0])
+    rows = resample_fixed_rate(data, 100, hz=10, max_gap_s=0.5)
+    assert len(rows) == 4
+    assert [r['motion_valid'] for r in rows] == [False, True, False, True]
+    assert rows[2]['delta_position_m'] == 0
+    assert detect_resampled_events('test', rows)[0] == []
+
+
+def test_sub_grid_gap_cannot_create_motion_across_outage():
+    data = trajectory([100, 100.4, 101, 101.4],
+                      [[0, 0, 0], [0.1, 0, 0], [10, 0, 0], [10.1, 0, 0]], [0, 0, 0, 0])
+    rows = resample_fixed_rate(data, 100, hz=1, max_gap_s=0.5)
+    assert [r['motion_valid'] for r in rows] == [False, False]
+    assert detect_resampled_events('test', rows)[0] == []
 
 
 def trajectory(times, positions, yaw):

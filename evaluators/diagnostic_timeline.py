@@ -67,10 +67,13 @@ def resample_fixed_rate(
     trajectory: dict[str, np.ndarray],
     origin_timestamp_s: float,
     hz: float = DEFAULT_RESAMPLE_HZ,
+    max_gap_s: float = 0.5,
 ) -> list[dict[str, float]]:
     """Resample one trajectory on a grid anchored to the run sensor-time origin."""
-    if hz <= 0:
-        raise ValueError("hz must be > 0")
+    if not math.isfinite(hz) or hz <= 0:
+        raise ValueError("hz must be finite and > 0")
+    if not math.isfinite(max_gap_s) or max_gap_s <= 0:
+        raise ValueError("max_gap_s must be finite and > 0")
     timestamps, positions, yaw = _finite_trajectory(trajectory)
     origin = float(origin_timestamp_s)
     step = 1.0 / float(hz)
@@ -84,6 +87,21 @@ def resample_fixed_rate(
     grid_index = np.arange(first_index, last_index + 1, dtype=np.int64)
     grid = origin + grid_index.astype(np.float64) * step
 
+    # Remove grid points strictly inside observed outages. Keep source endpoints
+    # but never compute motion across the missing region (even if no grid point
+    # happened to fall inside it).
+    gaps = np.where(np.diff(timestamps) > max_gap_s)[0]
+    keep = np.ones(len(grid), dtype=bool)
+    for index in gaps:
+        keep &= ~((grid > timestamps[index] + 1e-9) & (grid < timestamps[index + 1] - 1e-9))
+    grid = grid[keep]
+    motion_valid = np.ones(len(grid), dtype=bool)
+    if len(grid):
+        motion_valid[0] = False
+    for index in gaps:
+        motion_valid[1:] &= ~((grid[:-1] <= timestamps[index] + 1e-9) &
+                              (grid[1:] >= timestamps[index + 1] - 1e-9))
+
     xyz = np.column_stack(
         [np.interp(grid, timestamps, positions[:, axis]) for axis in range(3)]
     )
@@ -94,16 +112,20 @@ def resample_fixed_rate(
     if len(grid) > 1:
         delta_position[1:] = np.linalg.norm(np.diff(xyz, axis=0), axis=1)
         delta_yaw_signed_deg[1:] = np.diff(yaw_interp) * 180.0 / np.pi
+    delta_position[~motion_valid] = 0.0
+    delta_yaw_signed_deg[~motion_valid] = 0.0
     delta_yaw = np.abs(delta_yaw_signed_deg)
     speed = delta_position / step
     yaw_rate = delta_yaw_signed_deg / step
     acceleration = np.zeros(len(grid), dtype=np.float64)
     if len(grid) > 1:
         acceleration[1:] = np.diff(speed) / step
+        acceleration[1:][~(motion_valid[1:] & motion_valid[:-1])] = 0.0
 
     return [
         {
             "timestamp_s": float(grid[index]),
+            "motion_valid": bool(motion_valid[index]),
             "bag_time_s": float(grid[index] - origin),
             "x_m": float(xyz[index, 0]),
             "y_m": float(xyz[index, 1]),
@@ -139,6 +161,8 @@ def detect_resampled_events(
 
     events: list[dict[str, Any]] = []
     for row in rows[1:]:
+        if not row.get("motion_valid", True):
+            continue
         common = {
             "algorithm": algorithm,
             "timestamp_s": float(row["timestamp_s"]),
@@ -542,6 +566,7 @@ def main() -> int:
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--baseline", default="fast_livo2")
     parser.add_argument("--hz", type=float, default=DEFAULT_RESAMPLE_HZ)
+    parser.add_argument("--max-gap-s", type=float, default=0.5)
     parser.add_argument("--window-gap", type=float, default=DEFAULT_WINDOW_GAP_S)
     parser.add_argument("--window-context", type=float, default=DEFAULT_WINDOW_CONTEXT_S)
     parser.add_argument("--resource-max-age", type=float, default=DEFAULT_RESOURCE_MAX_AGE_S)
@@ -581,6 +606,7 @@ def main() -> int:
             trajectories[algorithm],
             origin_timestamp_s,
             hz=args.hz,
+            max_gap_s=args.max_gap_s,
         )
         events, thresholds = detect_resampled_events(
             algorithm,
@@ -639,6 +665,7 @@ def main() -> int:
     resource_dir = timeline_dir / "resources"
     timeline_fields = [
         "timestamp_s",
+        "motion_valid",
         "bag_time_s",
         "x_m",
         "y_m",
@@ -679,6 +706,7 @@ def main() -> int:
         "origin_timestamp_s": origin_timestamp_s,
         "origin_source": origin_source,
         "resample_hz": float(args.hz),
+        "max_interpolation_gap_s": float(args.max_gap_s),
         "window_policy": {
             "max_gap_s": float(args.window_gap),
             "context_s": float(args.window_context),

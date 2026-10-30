@@ -224,6 +224,7 @@ python3 evaluators/manual_run_controller.py \
 
 ## 其他文档
 
+- [离线飞行 bag 审计、合成回归与 WSL 环境边界](benchmark_base/docs/FLIGHT_BAG_AUDIT.md)：无 ROS 的合成回归入口、可选真实 CDR/sqlite3 测试、注入事实与观测/推测的分离。
 - [中文使用手册](benchmark_base/docs/USER_MANUAL_ZH.md)
 - [实验协议](benchmark_base/docs/EXPERIMENT_PROTOCOL.md)
 - [实现审计](benchmark_base/docs/IMPLEMENTATION_AUDIT.md)

@@ -1,0 +1,93 @@
+{
+  "baseline_commit": "bdbe60622a6370b20db0940a599f170571ce0414",
+  "baseline": {
+    "passed": 183,
+    "failed": 11,
+    "skipped": 1,
+    "collection_errors": 8
+  },
+  "modified": {
+    "passed": 219,
+    "failed": 11,
+    "skipped": 7,
+    "collection_errors": 8
+  },
+  "focused": {
+    "passed": 47,
+    "skipped": 6
+  },
+  "synthetic_cases": {
+    "passed": 15,
+    "total": 15
+  },
+  "identical_baseline_failures": true,
+  "baseline_problems": [
+    "ERROR tests/test_map_comparison_enhancement.py",
+    "ERROR tests/test_map_consistency.py",
+    "ERROR tests/test_native_visual_acceptance.py",
+    "ERROR tests/test_rerun_columnar_logging.py",
+    "ERROR tests/test_rerun_diagnostic_viewer.py",
+    "ERROR tests/test_viewer_projection.py",
+    "ERROR tests/test_web_diagnostic_viewer_profile_cli.py",
+    "ERROR tests/test_web_rerun_profiles.py",
+    "FAILED tests/test_freeze_experiment.py::test_prepare_freeze_creates_incomplete_bundle_and_copies_small_core_files",
+    "FAILED tests/test_manifest_validation.py::test_current_manifest_v2_is_valid",
+    "FAILED tests/test_manual_run_controller.py::test_process_snapshot_uses_mocked_psutil_tree",
+    "FAILED tests/test_native_trajectory_qa.py::test_collect_aligned_trajectory_extent_qa_uses_viewer_alignment",
+    "FAILED tests/test_report_html.py::test_render_report_html_is_offline_local_and_registers_artifact",
+    "FAILED tests/test_report_html.py::test_render_report_html_refuses_complete_bundle",
+    "FAILED tests/test_report_html.py::test_render_report_html_rejects_missing_manifest_listed_evidence",
+    "FAILED tests/test_report_html.py::test_render_report_html_supports_english_and_escapes_untrusted_text",
+    "FAILED tests/test_report_pdf.py::test_render_report_pdf_fails_clearly_when_cjk_font_is_unavailable",
+    "FAILED tests/test_report_pdf.py::test_render_report_pdf_generates_and_registers_english_pdf",
+    "FAILED tests/test_report_pdf.py::test_render_report_pdf_refuses_complete_bundle"
+  ],
+  "ros2_cdr_integration": "NOT_RUN",
+  "real_flight_bag": "NOT_RUN",
+  "robot_operations": "NONE",
+  "status": "WAITING_FOR_REAL_DATA",
+  "date": "2026-10-30",
+  "branch": "feat/offline-flight-bag-audit",
+  "verification_scope": "Focused tests, full test suite and synthetic suite rerun after fixing Windows fixture byte hashes; failure IDs remain identical to baseline.",
+  "source_sha256": {
+    "evaluators/analyze_bag.py": "524bc5e29bb60d3b7828e4275b0f3c7bcbf89259fa71b64502418c5d28280b3b",
+    "evaluators/diagnostic_timeline.py": "e8d76b1f8e77a2bb1edac90fdd1b5029ba351daf19ea6f99807c7aba38fbe15e",
+    "evaluators/trajectory_discontinuity.py": "9f5c468140b37baa5dccf2db56815c4fa789016027760f7eff43c56ace07f23b",
+    "tests/test_diagnostic_timeline.py": "ed826e52a0c9274fc15d7b3d6e9b6da7bf92119df4a8ba937839713e6bdd7afd",
+    "evaluators/flight_bag_audit.py": "4726202da2825f2ed014f007de39f2fb02aa9a929f752baefc08fc8ef8db4ff8",
+    "evaluators/synthetic_bag_regression.py": "410d512866c23a934cab2d4fe363e4f0576837a49d0cfa092392225ee685a928",
+    "evaluators/timing_audit.py": "ca4d5f475c63f6efaeadbaf35947cd0ba69ebf051a686b05599809caad2c42fb",
+    "tests/test_analyze_bag_timing.py": "d2cbd21f3f233f61842e3f7af60b24915a5d6150aa2b01664c21000e1d072434",
+    "tests/test_flight_bag_audit.py": "42a2b22083de885e1c964617652c5e33b9443c7efcf94aa49c7f7e70f839900b",
+    "tests/test_flight_bag_ros2.py": "cc3463e42f4f5b3f9298ba1cedabdaf2d468eec535bb45e6b34c38676762985e",
+    "tests/test_timing_audit.py": "144a303eeb911e8972a506277235dd20cf7c9810c7ec93c4fe0ff29ec5afc677"
+  },
+  "focused_test_files": [
+    "tests/test_timing_audit.py",
+    "tests/test_flight_bag_audit.py",
+    "tests/test_analyze_bag_timing.py",
+    "tests/test_flight_bag_ros2.py",
+    "tests/test_trajectory_discontinuity.py",
+    "tests/test_trajectory_standardization.py",
+    "tests/test_diagnostic_timeline.py",
+    "tests/test_metric_naming.py"
+  ],
+  "full_suite_command": "python -X utf8 -m pytest -q tests --continue-on-collection-errors --disable-warnings --tb=line",
+  "synthetic_command": "python -X utf8 evaluators/synthetic_bag_regression.py --output-dir output/flight_audit_push_20261030_002",
+  "environment": {
+    "python": "3.12.0",
+    "numpy": "2.2.6",
+    "pytest": "9.1.1",
+    "os": "Windows",
+    "PYTHONNOUSERSITE": "1",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONUTF8": "1"
+  },
+  "remote_snapshot": {
+    "main": "bdbe60622a6370b20db0940a599f170571ce0414",
+    "feat/phase-aware-benchmark": "bdbe60622a6370b20db0940a599f170571ce0414",
+    "feat/paper1-map-source-benchmark-freeze": "3747464ea472df3d0c06f820a2fc8d5403bc5e7c"
+  },
+  "source_hash_encoding": "SHA-256 of Git index blob bytes (canonical LF); do not hash CRLF-converted checkout bytes.",
+  "fixture_file_hash_verified": true
+}

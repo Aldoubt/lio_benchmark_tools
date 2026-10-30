@@ -1,0 +1,501 @@
+{
+  "schema_version": 1,
+  "source_kind": "synthetic/message-sequence",
+  "metric_class": "diagnostic/non-ground-truth",
+  "passed": true,
+  "cases": [
+    {
+      "case": "normal",
+      "passed": true,
+      "known_injected_faults": [],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "421c9d3b44c30acdc91610d373bbad508a9bb0f418756ee383b05791371f068d"
+    },
+    {
+      "case": "header_backtrack",
+      "passed": true,
+      "known_injected_faults": [
+        "Subtract 0.4 s from headers at original indices 20..79; record clock unchanged."
+      ],
+      "expected": {
+        "header_backtracks": 1,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 60,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 1,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 60,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "cbf0bb1c77191c852dca5ce70d80d93c08bf68d522e1dcfcd1aee0571922d309"
+    },
+    {
+      "case": "recorded_backtrack",
+      "passed": true,
+      "known_injected_faults": [
+        "Subtract 0.3 s from record timestamp at index 20; preserve fixture reader order."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 1,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 1,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 1,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 1,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "fcb69427666d5274538fdf46ab21d58126e34408490ee75395b449c0f5b9afa4"
+    },
+    {
+      "case": "duplicate_header",
+      "passed": true,
+      "known_injected_faults": [
+        "Copy header 19 to header 20; retain both records."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 1,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 1,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "6599eed35b4b2b4f35da069727f73c54aaa9a03fec85ed5001125fdee172f233"
+    },
+    {
+      "case": "dropout",
+      "passed": true,
+      "known_injected_faults": [
+        "Remove original indices 20..29 (10 messages); remaining timestamps unchanged."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 1,
+        "recorded_gaps": 1,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 1,
+        "recorded_gaps": 1,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "eda8dcfdbf5b3c154577f2a271a77c0ad9b0ee81f53fe0f57d5942ffc4fc28e0"
+    },
+    {
+      "case": "delay_step",
+      "passed": true,
+      "known_injected_faults": [
+        "Add 0.35 s to record timestamps at indices 20..79, simulating delayed recording."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 60,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 60,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "26793b3c349fb77484366d1259b27459456187a6346fb80a52491a24c7f4d0f7"
+    },
+    {
+      "case": "constant_delay",
+      "passed": true,
+      "known_injected_faults": [
+        "Add 0.35 s to all record times: designated synthetic buffering delay."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 80,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 80,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "9f4b86f1834ccb90a5a6ab36fd66852c309f799af760835a83c2caae98cbd2fd"
+    },
+    {
+      "case": "clock_offset",
+      "passed": true,
+      "known_injected_faults": [
+        "Add 0.35 s to all record times: designated clock offset; observationally identical to constant_delay."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 80,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 80,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "9f4b86f1834ccb90a5a6ab36fd66852c309f799af760835a83c2caae98cbd2fd"
+    },
+    {
+      "case": "negative_offset",
+      "passed": true,
+      "known_injected_faults": [
+        "Add 10 s to all header timestamps: distinct clock domains."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 80,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 80,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "00c8ba70aed915c33947d596bd6bcf44c5bcf6f8a57f7b3a48812a4f58f88ba2"
+    },
+    {
+      "case": "position_jump",
+      "passed": true,
+      "known_injected_faults": [
+        "Add 2 m to x at original indices 40..79."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 1,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 1,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "f482e282a723afa1e7f689d1fdffa8a34fc437551ff3db4ab869fbf1beaea206"
+    },
+    {
+      "case": "yaw_jump",
+      "passed": true,
+      "known_injected_faults": [
+        "Apply a 90 degree yaw step at original indices 40..79."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 1,
+        "rotation_jumps": 1
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 1,
+        "rotation_jumps": 1
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "f1cf4e3f6d526458221091730eff8341e5e821235f1c206e472ff3d694719194"
+    },
+    {
+      "case": "roll_jump",
+      "passed": true,
+      "known_injected_faults": [
+        "Apply a 60 degree roll_jump at original indices 40..79; yaw unchanged."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 1
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 1
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "f0b6ddcd9dee3212df74ae293dd4d86960ebb05572355a64fde04174626b313b"
+    },
+    {
+      "case": "pitch_jump",
+      "passed": true,
+      "known_injected_faults": [
+        "Apply a 60 degree pitch_jump at original indices 40..79; yaw unchanged."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 1
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 1
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "69adb079f06b17cb30923f4261908d45d9e5e460da0c059f14018909f695618b"
+    },
+    {
+      "case": "quaternion_sign",
+      "passed": true,
+      "known_injected_faults": [
+        "Negate all quaternion components at indices 40..79; same physical orientation."
+      ],
+      "expected": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 0,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 0,
+        "recorded_gaps": 0,
+        "high_offsets": 0,
+        "negative_offsets": 0,
+        "position_jumps": 0,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "27ee46517e3a1367a4b47a1b32f705ee2bbfabd2469a2996076d26cde948197e"
+    },
+    {
+      "case": "combined",
+      "passed": true,
+      "known_injected_faults": [
+        "Remove indices 20..29; subtract 0.4 s from headers at original 40..79; add 2 m x at original 50..79."
+      ],
+      "expected": {
+        "header_backtracks": 1,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 1,
+        "recorded_gaps": 1,
+        "high_offsets": 40,
+        "negative_offsets": 0,
+        "position_jumps": 1,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "tool_observations": {
+        "header_backtracks": 1,
+        "recorded_backtracks": 0,
+        "header_duplicates": 0,
+        "header_gaps": 1,
+        "recorded_gaps": 1,
+        "high_offsets": 40,
+        "negative_offsets": 0,
+        "position_jumps": 1,
+        "yaw_jumps": 0,
+        "rotation_jumps": 0
+      },
+      "cause_status": "UNCONFIRMED_BY_TOOL",
+      "input_sha256": "798a2773af9da2dded323019d5ca5225b473598f8e21324aaed58bca033962fa"
+    }
+  ]
+}

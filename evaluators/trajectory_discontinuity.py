@@ -69,16 +69,18 @@ def resolve_time_origin(
 def step_series(
     trajectory: dict[str, np.ndarray],
     origin_timestamp_s: float,
+    max_gap_s: float | None = None,
 ) -> dict[str, np.ndarray]:
     timestamps = np.asarray(trajectory["timestamp_s"], dtype=np.float64)
     positions = np.asarray(trajectory["positions"], dtype=np.float64)
-    yaw = np.unwrap(np.asarray(trajectory["yaw_rad"], dtype=np.float64))
+    yaw = np.asarray(trajectory["yaw_rad"], dtype=np.float64)
     if len(timestamps) < 2 or len(positions) != len(timestamps) or len(yaw) != len(timestamps):
         raise ValueError("trajectory must contain at least two aligned timestamp/pose samples")
 
     dt = np.diff(timestamps)
     position_step = np.linalg.norm(np.diff(positions, axis=0), axis=1)
-    yaw_step_deg = np.abs(np.diff(yaw)) * 180.0 / np.pi
+    # Pairwise wrapping prevents one NaN from poisoning the remaining series.
+    yaw_step_deg = np.abs((np.diff(yaw) + np.pi) % (2 * np.pi) - np.pi) * 180.0 / np.pi
     current_positions = positions[1:]
     current_timestamps = timestamps[1:]
     valid = (
@@ -88,6 +90,10 @@ def step_series(
         & np.isfinite(yaw_step_deg)
         & np.isfinite(current_positions).all(axis=1)
     )
+    if max_gap_s is not None:
+        if not np.isfinite(max_gap_s) or max_gap_s <= 0:
+            raise ValueError("max_gap_s must be finite and > 0")
+        valid &= dt <= max_gap_s
     dt = dt[valid]
     position_step = position_step[valid]
     yaw_step_deg = yaw_step_deg[valid]
@@ -114,8 +120,9 @@ def summarize_discontinuities(
     *,
     position_floor_m: float = POSITION_JUMP_FLOOR_M,
     yaw_floor_deg: float = YAW_JUMP_FLOOR_DEG,
+    max_gap_s: float | None = None,
 ) -> dict[str, Any]:
-    series = step_series(trajectory, origin_timestamp_s)
+    series = step_series(trajectory, origin_timestamp_s, max_gap_s=max_gap_s)
     position_threshold = robust_jump_threshold(series["position_step_m"], position_floor_m)
     yaw_threshold = robust_jump_threshold(series["yaw_step_deg"], yaw_floor_deg)
     position_mask = series["position_step_m"] > position_threshold
